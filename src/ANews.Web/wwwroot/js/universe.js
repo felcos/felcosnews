@@ -256,6 +256,7 @@
                     for (let pos = 0; pos < countInRing; pos++, evIdx++) {
                         const ev = evList[evIdx];
                         const angle = (pos / countInRing) * Math.PI * 2 + stagger;
+                        const pp = (ev.id * 0.6173 + pos * 0.314) % (Math.PI * 2);
                         this.nodes.push({
                             id: ev.id,
                             x: sys.x + Math.cos(angle) * ring.radius,
@@ -263,7 +264,8 @@
                             radius: this._planetRadius(ev),
                             event: ev,
                             system: sys,
-                            pulsePhase: Math.random() * Math.PI * 2,
+                            pulsePhase: pp,
+                            planetType: ev.id % 8,
                             color: pColors[ev.priority] || '#4a90e2',
                             isModuleMatch: false,
                             frozenMoonAngles: {}
@@ -277,6 +279,7 @@
                     for (let pos = 0; pos < remaining; pos++, evIdx++) {
                         const ev = evList[evIdx];
                         const angle = (pos / remaining) * Math.PI * 2;
+                        const pp = (ev.id * 0.6173 + pos * 0.314) % (Math.PI * 2);
                         this.nodes.push({
                             id: ev.id,
                             x: sys.x + Math.cos(angle) * 335,
@@ -284,7 +287,8 @@
                             radius: this._planetRadius(ev),
                             event: ev,
                             system: sys,
-                            pulsePhase: Math.random() * Math.PI * 2,
+                            pulsePhase: pp,
+                            planetType: ev.id % 8,
                             color: pColors[ev.priority] || '#4a90e2',
                             isModuleMatch: false,
                             frozenMoonAngles: {}
@@ -606,6 +610,10 @@
             const wpt = this._screenToWorld(sx, sy);
             const ts = Date.now() / 1000;
 
+            // Close callout if clicking in callout box area (handled by HTML events)
+            // Close if clicking empty space (after checking planets below)
+
+
             // Check moon clicks first
             for (const node of this.nodes) {
                 const moons = node.event.articles || [];
@@ -637,12 +645,17 @@
             for (const node of this.nodes) {
                 const dist = Math.hypot(wpt.x - node.x, wpt.y - node.y);
                 if (dist < node.radius + 4) {
-                    if (this._dotnet) {
-                        try { this._dotnet.invokeMethodAsync('OpenEventById', node.event.id); } catch(e) { console.warn('[universe] OpenEventById failed:', e); }
+                    if (this._callout && this._callout.node === node) {
+                        this._closeCallout();
+                    } else {
+                        this._openCallout(node);
                     }
                     return;
                 }
             }
+
+            // Click on empty space: close callout
+            this._closeCallout();
         }
 
         // ─────────────────────────────────────────────────────────
@@ -711,7 +724,7 @@
                 <div style="font-size:11px;color:#4a90e2;margin-bottom:4px;">${ev.articleCount || 0} artículos · Impacto: ${(ev.impactScore || 0).toFixed(0)}</div>
                 ${moonsList ? `<div style="margin-top:6px;">${moonsList}</div>` : ''}
                 <div style="margin-top:10px;text-align:right;">
-                    <a href="/situation/${ev.id}" style="font-size:12px;color:#4a90e2;text-decoration:none;">Ver cronología →</a>
+                    <button id="_univ_callout_modal" style="font-size:12px;color:#fff;background:rgba(74,144,226,0.8);border:none;border-radius:5px;padding:4px 10px;cursor:pointer;text-decoration:none;">Ver cronología →</button>
                 </div>
             `;
 
@@ -719,6 +732,11 @@
             this._calloutBox = box;
 
             document.getElementById('_univ_callout_close')?.addEventListener('click', () => this._closeCallout());
+            document.getElementById('_univ_callout_modal')?.addEventListener('click', () => {
+                if (this._dotnet) {
+                    try { this._dotnet.invokeMethodAsync('OpenEventById', ev.id); } catch(e) { console.warn('[universe] OpenEventById failed:', e); }
+                }
+            });
         }
 
         _updateCalloutPosition() {
@@ -1001,15 +1019,8 @@
                 ctx.setLineDash([]);
             }
 
-            // Planet core
-            const grad = ctx.createRadialGradient(x - dr * 0.3, y - dr * 0.3, 0, x, y, dr * pulse);
-            grad.addColorStop(0, '#ffffff');
-            grad.addColorStop(0.2, color);
-            grad.addColorStop(1, `rgba(${rgb},0.5)`);
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(x, y, dr * pulse, 0, Math.PI * 2);
-            ctx.fill();
+            // Planet core — diverse realistic types
+            this._drawPlanetSurface(ctx, x, y, dr * pulse, color, rgb, ts, node);
 
             // Moons
             const moons = (ev.articles || []).slice(0, 5);
@@ -1060,6 +1071,211 @@
                     ctx.restore();
                 }
             }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  PLANET SURFACE RENDERING
+        // ─────────────────────────────────────────────────────────
+        _drawPlanetSurface(ctx, x, y, r, color, rgb, ts, node) {
+            const type = node.planetType;
+            const seed = node.pulsePhase; // deterministic per planet
+
+            ctx.save();
+            // Clip to planet circle
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.clip();
+
+            // Base sphere — no white highlight, use the color's own luminosity
+            const lx = x - r * 0.35, ly = y - r * 0.35;
+            const base = ctx.createRadialGradient(lx, ly, 0, x, y, r);
+
+            switch (type) {
+                case 0: // Rocky — grey-brown, rough
+                    base.addColorStop(0, this._mix(color, '#c0a080', 0.4));
+                    base.addColorStop(0.5, color);
+                    base.addColorStop(1, this._mix(color, '#000', 0.65));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Craters
+                    ctx.globalAlpha = 0.25;
+                    for (let i = 0; i < 5; i++) {
+                        const ca = seed + i * 1.3;
+                        const cr = r * (0.12 + (i * 0.09) % 0.2);
+                        const cx2 = x + Math.cos(ca) * r * 0.45;
+                        const cy2 = y + Math.sin(ca) * r * 0.45;
+                        ctx.strokeStyle = '#000'; ctx.lineWidth = cr * 0.4;
+                        ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI * 2); ctx.stroke();
+                        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                        ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI * 2); ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 1: // Gas giant — Jupiter bands
+                    base.addColorStop(0, this._mix(color, '#fff', 0.3));
+                    base.addColorStop(0.6, color);
+                    base.addColorStop(1, this._mix(color, '#000', 0.7));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Horizontal bands
+                    const bandCount = 5 + (seed | 0) % 4;
+                    ctx.globalAlpha = 0.22;
+                    for (let b = 0; b < bandCount; b++) {
+                        const by2 = y - r + (b / bandCount) * r * 2;
+                        const bh = r * (0.08 + (b % 3) * 0.05);
+                        ctx.fillStyle = b % 2 === 0 ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.3)';
+                        ctx.fillRect(x - r, by2, r * 2, bh);
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 2: // Ice planet — pale with polar caps
+                    base.addColorStop(0, '#d8eeff');
+                    base.addColorStop(0.4, this._mix(color, '#aaccff', 0.7));
+                    base.addColorStop(1, this._mix(color, '#000033', 0.6));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Polar ice caps
+                    ctx.globalAlpha = 0.5;
+                    ctx.fillStyle = 'rgba(220,240,255,0.8)';
+                    ctx.beginPath(); ctx.ellipse(x, y - r * 0.7, r * 0.5, r * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.ellipse(x, y + r * 0.75, r * 0.35, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 3: // Desert — reddish, sandy with wind arcs
+                    base.addColorStop(0, this._mix(color, '#ffaa44', 0.5));
+                    base.addColorStop(0.5, this._mix(color, '#cc6633', 0.4));
+                    base.addColorStop(1, this._mix(color, '#220000', 0.7));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    ctx.globalAlpha = 0.15;
+                    for (let i = 0; i < 4; i++) {
+                        ctx.strokeStyle = 'rgba(255,180,80,0.8)';
+                        ctx.lineWidth = r * 0.06;
+                        ctx.beginPath();
+                        ctx.arc(x + Math.cos(seed + i) * r * 0.3,
+                                y + Math.sin(seed + i) * r * 0.2,
+                                r * (0.3 + i * 0.1), 0.1, 1.5);
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 4: // Ocean — deep blue swirls
+                    base.addColorStop(0, '#4488cc');
+                    base.addColorStop(0.4, this._mix(color, '#001166', 0.5));
+                    base.addColorStop(1, this._mix(color, '#000022', 0.8));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Continent patches
+                    ctx.globalAlpha = 0.3;
+                    for (let i = 0; i < 3; i++) {
+                        const pa = seed + i * 2.1;
+                        const pr = r * (0.15 + (i * 0.07) % 0.15);
+                        ctx.fillStyle = 'rgba(0,180,80,0.5)';
+                        ctx.beginPath();
+                        ctx.ellipse(x + Math.cos(pa) * r * 0.5, y + Math.sin(pa) * r * 0.45,
+                            pr, pr * 0.7, pa, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 5: // Volcanic — dark with lava cracks
+                    base.addColorStop(0, this._mix(color, '#331100', 0.3));
+                    base.addColorStop(0.5, this._mix(color, '#110000', 0.5));
+                    base.addColorStop(1, '#050000');
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Lava veins
+                    ctx.globalAlpha = 0.6;
+                    for (let i = 0; i < 6; i++) {
+                        const va = seed + i * 1.05;
+                        const grd = ctx.createLinearGradient(
+                            x + Math.cos(va) * r * 0.1, y + Math.sin(va) * r * 0.1,
+                            x + Math.cos(va) * r * 0.7, y + Math.sin(va) * r * 0.7);
+                        grd.addColorStop(0, 'rgba(255,80,0,0.8)');
+                        grd.addColorStop(1, 'rgba(255,0,0,0)');
+                        ctx.strokeStyle = grd;
+                        ctx.lineWidth = r * 0.05;
+                        ctx.beginPath();
+                        ctx.moveTo(x + Math.cos(va) * r * 0.05, y + Math.sin(va) * r * 0.05);
+                        ctx.lineTo(x + Math.cos(va + 0.3) * r * 0.75, y + Math.sin(va + 0.3) * r * 0.75);
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 6: // Lush/Jungle — green swirl
+                    base.addColorStop(0, this._mix(color, '#44ff88', 0.4));
+                    base.addColorStop(0.5, this._mix(color, '#004422', 0.4));
+                    base.addColorStop(1, this._mix(color, '#000', 0.7));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    ctx.globalAlpha = 0.2;
+                    for (let i = 0; i < 3; i++) {
+                        const sa = seed + i * 2.1 + ts * 0.005;
+                        ctx.strokeStyle = 'rgba(0,255,100,0.7)';
+                        ctx.lineWidth = r * 0.07;
+                        ctx.beginPath();
+                        ctx.arc(x + Math.cos(sa) * r * 0.2, y + Math.sin(sa) * r * 0.2,
+                            r * (0.3 + i * 0.15), sa, sa + Math.PI * 1.2);
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+
+                case 7: // Ringed (Saturn-style) — drawn AFTER clip restore
+                default:
+                    base.addColorStop(0, this._mix(color, '#ffeecc', 0.3));
+                    base.addColorStop(0.5, color);
+                    base.addColorStop(1, this._mix(color, '#000', 0.7));
+                    ctx.fillStyle = base; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    break;
+            }
+
+            // Atmosphere rim — subtle edge glow
+            const rim = ctx.createRadialGradient(x, y, r * 0.75, x, y, r);
+            rim.addColorStop(0, 'rgba(0,0,0,0)');
+            rim.addColorStop(1, `rgba(${rgb},0.25)`);
+            ctx.fillStyle = rim; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+
+            // Specular highlight — small, subtle, off-center
+            const hl = ctx.createRadialGradient(lx + r * 0.1, ly + r * 0.1, 0, lx + r * 0.1, ly + r * 0.1, r * 0.45);
+            hl.addColorStop(0, 'rgba(255,255,255,0.28)');
+            hl.addColorStop(0.6, 'rgba(255,255,255,0.06)');
+            hl.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = hl; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+
+            ctx.restore();
+
+            // Rings drawn OUTSIDE clip (type 7)
+            if (type === 7) {
+                ctx.save();
+                ctx.globalAlpha = 0.35;
+                ctx.strokeStyle = `rgba(${rgb},0.8)`;
+                for (let ri = 0; ri < 3; ri++) {
+                    ctx.lineWidth = 2 - ri * 0.5;
+                    ctx.beginPath();
+                    ctx.ellipse(x, y, r * (1.6 + ri * 0.25), r * 0.22, node.pulsePhase * 0.3, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+
+        _mix(hex, hex2, t) {
+            const a = this._hexToRgbArr(hex), b = this._hexToRgbArr(hex2);
+            const r = Math.round(a[0] + (b[0]-a[0])*t);
+            const g = Math.round(a[1] + (b[1]-a[1])*t);
+            const bv = Math.round(a[2] + (b[2]-a[2])*t);
+            return `rgb(${r},${g},${bv})`;
+        }
+
+        _hexToRgbArr(hex) {
+            if (!hex || typeof hex !== 'string') return [74,144,226];
+            hex = hex.replace('#','');
+            if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
+            if (hex.startsWith('rgb')) {
+                const m = hex.match(/\d+/g); return m ? m.map(Number) : [74,144,226];
+            }
+            const n = parseInt(hex,16);
+            return isNaN(n) ? [74,144,226] : [(n>>16)&255,(n>>8)&255,n&255];
         }
 
         _drawConnections(ctx) {
@@ -1147,7 +1363,9 @@
                 this._drawNode(ctx, node, ts);
             }
 
-            // 10. (callout removed — modal handled by Blazor)
+            // 10. Callout line (screen space)
+            this._drawCalloutLine(ctx);
+            this._updateCalloutPosition();
 
             // 11. Reset + HUD
             ctx.setTransform(1, 0, 0, 1, 0, 0);

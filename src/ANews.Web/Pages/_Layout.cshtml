@@ -27,6 +27,20 @@
         <a href="" class="reload">Recargar</a>
         <a class="dismiss">X</a>
     </div>
+    <script>
+    (function(){
+        var t=localStorage.getItem('anews-theme')||'dark';
+        if(t!=='dark') document.documentElement.setAttribute('data-theme',t);
+        window.themeManager={
+            setTheme:function(name){
+                if(name==='dark') document.documentElement.removeAttribute('data-theme');
+                else document.documentElement.setAttribute('data-theme',name);
+                localStorage.setItem('anews-theme',name);
+            },
+            getTheme:function(){ return localStorage.getItem('anews-theme')||'dark'; }
+        };
+    })();
+    </script>
     <script src="_framework/blazor.server.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

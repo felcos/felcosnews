@@ -2,7 +2,10 @@
 @inject IJSRuntime JS
 @inject AppDbContext Ctx
 @inject AuthenticationStateProvider AuthStateProvider
+@inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @using ANews.Infrastructure.Data
+@using ANews.Infrastructure.AI
+@using ANews.Domain.Interfaces
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
 @using Microsoft.EntityFrameworkCore
@@ -59,6 +62,29 @@
                 </button>
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
+
+            <!-- Theme selector -->
+            <div class="theme-selector" @onclick:stopPropagation>
+                <button class="theme-btn" @onclick="ToggleThemeMenu" title="Cambiar tema"></button>
+                @if (_themeMenuOpen)
+                {
+                    <div class="theme-dropdown">
+                        @foreach (var th in _themes)
+                        {
+                            <div class="theme-swatch-wrap">
+                                <div class="theme-swatch @(_currentTheme == th.Key ? "active" : "")"
+                                     style="background:@th.Value.Bg"
+                                     title="@th.Value.Name"
+                                     @onclick="@(() => SetTheme(th.Key))">
+                                    <span style="color:@th.Value.Accent;font-size:10px;font-weight:900;">A</span>
+                                </div>
+                                <div class="theme-swatch-label">@th.Value.Name</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
             <AuthorizeView>
                 <Authorized>
                     <a href="/user" class="btn-user"><i class="fa fa-user"></i></a>
@@ -267,7 +293,15 @@
                         </div>
                     }
 
-                    <div class="em-timeline-header"><i class="fa fa-stream"></i> CRONOLOGÍA</div>
+                    <div class="em-timeline-header">
+                        <span><i class="fa fa-stream"></i> CRONOLOGÍA</span>
+                        <div class="lang-toggle" title="Idioma de resúmenes">
+                            <button class="lang-btn @(_modalSummaryLang == "es" ? "lang-active" : "")"
+                                    @onclick="@(() => _modalSummaryLang = "es")">ES</button>
+                            <button class="lang-btn @(_modalSummaryLang == "en" ? "lang-active" : "")"
+                                    @onclick="@(() => _modalSummaryLang = "en")">EN</button>
+                        </div>
+                    </div>
                     <div class="em-timeline">
                         @if (!_articlesByDay.Any())
                         {
@@ -294,19 +328,44 @@
                                             {
                                                 <div class="em-art-detail" @onclick:stopPropagation>
                                                     <div class="em-art-meta">
+                                                        <i class="fa fa-rss-square" style="color:var(--accent);font-size:10px"></i>
                                                         <span>@art.SourceName</span>
                                                         <span>@art.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
                                                     </div>
-                                                    @if (!string.IsNullOrEmpty(art.Summary))
+                                                    <div class="em-ai-label">
+                                                        <i class="fa fa-robot"></i>
+                                                        @(_modalSummaryLang == "en" ? "AI Analysis (EN)" : "Análisis IA (ES)")
+                                                    </div>
+                                                    @if (_modalSummaryLang == "en")
                                                     {
-                                                        <p class="em-art-summary">@art.Summary</p>
+                                                        @if (_articleSummariesEn.TryGetValue(art.Id, out var enSum))
+                                                        {
+                                                            <p class="em-art-summary">@enSum</p>
+                                                        }
+                                                        else if (_generatingEnSummary.Contains(art.Id))
+                                                        {
+                                                            <p class="em-art-no-summary"><i class="fa fa-spinner fa-spin"></i> Translating...</p>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button class="em-gen-btn" @onclick="@(async () => await GenerateEnSummaryAsync(art))">
+                                                                <i class="fa fa-language"></i> Generate EN summary
+                                                            </button>
+                                                        }
                                                     }
                                                     else
                                                     {
-                                                        <p class="em-art-no-summary">Sin resumen disponible aún.</p>
+                                                        @if (!string.IsNullOrEmpty(art.Summary))
+                                                        {
+                                                            <p class="em-art-summary">@art.Summary</p>
+                                                        }
+                                                        else
+                                                        {
+                                                            <p class="em-art-no-summary">Sin resumen disponible aún.</p>
+                                                        }
                                                     }
                                                     <a href="@art.SourceUrl" target="_blank" rel="noopener" class="em-art-source-link">
-                                                        <i class="fa fa-external-link-alt"></i> Ver en @art.SourceName
+                                                        <i class="fa fa-external-link-alt"></i> @(_modalSummaryLang == "en" ? "Read at" : "Ver en") @art.SourceName
                                                     </a>
                                                 </div>
                                             }
@@ -436,6 +495,9 @@
     private EventItem? SelectedEvent;
     private List<ArticleItem> SelectedEventArticles = [];
     private HashSet<int> _expandedArticles = [];
+    private string _modalSummaryLang = "es";
+    private Dictionary<int, string> _articleSummariesEn = [];
+    private HashSet<int> _generatingEnSummary = [];
     private DotNetObjectReference<Index>? _dotnetRef;
     private Dictionary<DateTime, List<ArticleItem>> _articlesByDay = [];
     private List<RelatedEventItem> _relatedEvents = [];
@@ -499,7 +561,7 @@
                 await LoadEventsAsync();
                 await InvokeAsync(StateHasChanged);
                 if (ViewMode == "universe")
-                    try { await JS.InvokeVoidAsync("universe.updateData", Events, Sections); } catch { }
+                    try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
             });
 
             _hub.On<object>("CriticalAlert", async _ =>
@@ -520,10 +582,36 @@
     private bool _pendingUniverseInit = false;
     private bool _pendingMapInit = false;
 
+    // ── Theme ──────────────────────────────────────────────
+    private bool _themeMenuOpen = false;
+    private string _currentTheme = "dark";
+    record ThemeInfo(string Name, string Bg, string Accent);
+    private static readonly Dictionary<string, ThemeInfo> _themes = new()
+    {
+        ["dark"]   = new ThemeInfo("Oscuro",  "#000511", "#4a90e2"),
+        ["light"]  = new ThemeInfo("Claro",   "#f0f4f8", "#1a6fd4"),
+        ["blue"]   = new ThemeInfo("Océano",  "#020c1b", "#00b4ff"),
+        ["matrix"] = new ThemeInfo("Matrix",  "#000800", "#00cc44"),
+        ["amber"]  = new ThemeInfo("Ámbar",   "#0a0400", "#ff9900"),
+        ["neon"]   = new ThemeInfo("Neon",    "#05000f", "#ff00cc"),
+        ["cosmos"] = new ThemeInfo("Cosmos",  "#0a0515", "#a855f7"),
+        ["red"]    = new ThemeInfo("Rojo",    "#0f0000", "#ff2020"),
+    };
+
+    private void ToggleThemeMenu() => _themeMenuOpen = !_themeMenuOpen;
+
+    private async Task SetTheme(string theme)
+    {
+        _currentTheme = theme;
+        _themeMenuOpen = false;
+        try { await JS.InvokeVoidAsync("themeManager.setTheme", theme); } catch { }
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
+            try { _currentTheme = await JS.InvokeAsync<string>("themeManager.getTheme") ?? "dark"; } catch { }
             await SetupSignalRAsync();
 
             if (AutoOpenEventId.HasValue)
@@ -588,7 +676,8 @@
 
     private async Task InitUniverseAsync()
     {
-        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", Events, Sections); }
+        _dotnetRef ??= DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", FilteredEvents, Sections, _dotnetRef); }
         catch { /* universe.js no disponible */ }
     }
 
@@ -654,7 +743,7 @@
                 var allKws = UserModules.SelectMany(m => m.Keywords).Distinct().ToList();
                 try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKws); } catch { }
             }
-            try { await JS.InvokeVoidAsync("universe.updateData", Events, Sections); } catch { }
+            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
         }
     }
 
@@ -662,15 +751,65 @@
     {
         SelectedEvent = ev;
         _expandedArticles.Clear();
+        _articleSummariesEn.Clear();
+        _generatingEnSummary.Clear();
+
         SelectedEventArticles = await Ctx.NewsArticles
             .Where(a => a.NewsEventId == ev.Id && !a.IsDeleted)
-            .OrderByDescending(a => a.Relevance)
+            .OrderByDescending(a => a.PublishedAt)
             .Select(a => new ArticleItem(a.Id, a.Title, a.SourceName, a.SourceUrl,
                 a.Relevance, a.ArticleType.ToString(), a.Summary, a.PublishedAt))
             .ToListAsync();
+
+        _articlesByDay = SelectedEventArticles
+            .GroupBy(a => a.PublishedAt.Date)
+            .OrderByDescending(g => g.Key)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var evDb = await Ctx.NewsEvents.FindAsync(ev.Id);
+        if (evDb != null)
+        {
+            _selectedEventEnd = evDb.EndDate;
+            _selectedEventIsActive = evDb.IsActive;
+        }
+
+        _relatedEvents = await Ctx.NewsEvents
+            .Where(e => e.NewsSectionId == evDb!.NewsSectionId && e.Id != ev.Id && e.IsActive && !e.IsDeleted)
+            .OrderByDescending(e => e.ImpactScore)
+            .Take(5)
+            .Select(e => new RelatedEventItem(e.Id, e.Title, e.Priority.ToString()))
+            .ToListAsync();
     }
 
-    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); }
+    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); }
+
+    private async Task GenerateEnSummaryAsync(ArticleItem art)
+    {
+        if (_generatingEnSummary.Contains(art.Id)) return;
+        _generatingEnSummary.Add(art.Id);
+        StateHasChanged();
+        try
+        {
+            var provider = await AiFactory.GetDefaultProviderAsync();
+            var text = string.IsNullOrEmpty(art.Summary) ? art.Title : art.Summary;
+            var response = await provider.CompleteAsync(new AiRequest
+            {
+                SystemPrompt = "You are an expert news editor. Summarize or translate the following into 2-3 clear, objective sentences in English.",
+                UserPrompt = $"Title: {art.Title}\n\nContent: {text}",
+                MaxTokens = 300,
+                Temperature = 0.3,
+                OperationTag = "article_summary_en"
+            });
+            if (response.Success && !string.IsNullOrEmpty(response.Content))
+                _articleSummariesEn[art.Id] = response.Content.Trim();
+        }
+        catch { }
+        finally
+        {
+            _generatingEnSummary.Remove(art.Id);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
 
     private void ToggleArticlePreview(int id)
     {

@@ -83,7 +83,14 @@
                 <div class="ai-summary-box">
                     <div class="ai-summary-header">
                         <i class="fa fa-robot"></i>
-                        <span>Resumen IA</span>
+                        <span>AI Summary / Resumen IA</span>
+                        <!-- EN/ES language toggle -->
+                        <div class="lang-toggle" title="Cambiar idioma del resumen">
+                            <button class="lang-btn @(_summaryLang == "en" ? "lang-active" : "")"
+                                    @onclick="@(() => SetSummaryLang("en"))">EN</button>
+                            <button class="lang-btn @(_summaryLang == "es" ? "lang-active" : "")"
+                                    @onclick="@(() => SetSummaryLang("es"))">ES</button>
+                        </div>
                         @if (!_generatingSummary)
                         {
                             <button class="btn-regenerate" @onclick="GenerateSummaryAsync" title="Regenerar resumen">
@@ -93,18 +100,18 @@
                     </div>
                     @if (_generatingSummary)
                     {
-                        <div class="ai-summary-loading"><div class="loading-spinner-sm"></div> Generando resumen...</div>
+                        <div class="ai-summary-loading"><div class="loading-spinner-sm"></div> @(_summaryLang == "en" ? "Generating summary..." : "Generando resumen...")</div>
                     }
-                    else if (!string.IsNullOrEmpty(_article.Summary))
+                    else if (!string.IsNullOrEmpty(_activeSummary))
                     {
-                        <p class="ai-summary-text">@_article.Summary</p>
+                        <p class="ai-summary-text">@_activeSummary</p>
                     }
                     else
                     {
                         <div class="ai-summary-empty">
-                            <p>No hay resumen disponible.</p>
+                            <p>@(_summaryLang == "en" ? "No summary available." : "No hay resumen disponible.")</p>
                             <button class="btn-primary" @onclick="GenerateSummaryAsync">
-                                <i class="fa fa-magic"></i> Generar resumen con IA
+                                <i class="fa fa-magic"></i> @(_summaryLang == "en" ? "Generate AI summary" : "Generar resumen con IA")
                             </button>
                         </div>
                     }
@@ -166,6 +173,10 @@
     private bool _loading = true;
     private bool _generatingSummary = false;
     private string? _summaryError;
+    private string _summaryLang = "es";
+    private string? _summaryEn;   // cached EN summary
+    private string? _summaryEs;   // cached ES summary (same as _article.Summary)
+    private string? _activeSummary => _summaryLang == "en" ? _summaryEn : _summaryEs;
 
     protected override async Task OnInitializedAsync()
     {
@@ -177,6 +188,7 @@
 
         if (_article != null)
         {
+            _summaryEs = _article.Summary;
             _relatedArticles = await Ctx.NewsArticles
                 .Where(a => a.NewsEventId == _article.NewsEventId && a.Id != Id && !a.IsDeleted)
                 .OrderByDescending(a => a.PublishedAt)
@@ -185,6 +197,15 @@
         }
 
         _loading = false;
+    }
+
+    private async Task SetSummaryLang(string lang)
+    {
+        if (_summaryLang == lang) return;
+        _summaryLang = lang;
+        // Auto-generate EN summary if not cached
+        if (lang == "en" && _summaryEn == null && _article != null)
+            await GenerateSummaryAsync();
     }
 
     private async Task GenerateSummaryAsync()
@@ -198,11 +219,16 @@
         {
             var provider = await AiFactory.GetDefaultProviderAsync();
             var textToSummarize = !string.IsNullOrEmpty(_article.Content) ? _article.Content : _article.Title;
+            bool isEn = _summaryLang == "en";
+
+            var systemPrompt = isEn
+                ? "You are an expert news editor. Summarize the following article in 2-3 clear, objective sentences in English."
+                : "Eres un editor de noticias experto. Resume el siguiente artículo en 2-3 frases claras y objetivas en español.";
 
             var response = await provider.CompleteAsync(new AiRequest
             {
-                SystemPrompt = "Eres un editor de noticias experto. Resume el siguiente artículo en 2-3 frases claras y objetivas en español.",
-                UserPrompt = $"Titulo: {_article.Title}\n\nContenido: {Truncate(textToSummarize, 3000)}",
+                SystemPrompt = systemPrompt,
+                UserPrompt = $"Title: {_article.Title}\n\nContent: {Truncate(textToSummarize, 3000)}",
                 MaxTokens = 300,
                 Temperature = 0.3,
                 OperationTag = "article_summary"
@@ -210,17 +236,29 @@
 
             if (response.Success && !string.IsNullOrEmpty(response.Content))
             {
-                var dbArticle = await Ctx.NewsArticles.FindAsync(_article.Id);
-                if (dbArticle != null)
+                var trimmed = response.Content.Trim();
+                if (isEn)
                 {
-                    dbArticle.Summary = response.Content.Trim();
-                    await Ctx.SaveChangesAsync();
-                    _article.Summary = dbArticle.Summary;
+                    _summaryEn = trimmed;
+                }
+                else
+                {
+                    _summaryEs = trimmed;
+                    // Persist ES summary to DB
+                    var dbArticle = await Ctx.NewsArticles.FindAsync(_article.Id);
+                    if (dbArticle != null)
+                    {
+                        dbArticle.Summary = trimmed;
+                        await Ctx.SaveChangesAsync();
+                        _article.Summary = trimmed;
+                    }
                 }
             }
             else
             {
-                _summaryError = "No se pudo generar el resumen. Verifica que hay un proveedor IA activo.";
+                _summaryError = isEn
+                    ? "Could not generate summary. Check that an AI provider is active."
+                    : "No se pudo generar el resumen. Verifica que hay un proveedor IA activo.";
             }
         }
         catch (Exception ex)
