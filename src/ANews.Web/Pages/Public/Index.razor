@@ -317,7 +317,12 @@
                 e.Id, e.Title, e.Description, e.Priority.ToString(),
                 e.ImpactScore, e.Trend.ToString(), e.Tags,
                 e.Section.Name, e.Section.Slug, e.StartDate,
-                e.Articles.Count(a => !a.IsDeleted)))
+                e.Articles.Count(a => !a.IsDeleted),
+                e.Articles.Where(a => !a.IsDeleted)
+                    .OrderByDescending(a => a.Relevance)
+                    .Take(6)
+                    .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
+                    .ToArray()))
             .ToListAsync();
 
         CriticalAlerts = await Ctx.AlertTriggers
@@ -474,7 +479,8 @@
     record SectionItem(int Id, string Name, string Slug, string Color, string IconClass);
     record EventItem(int Id, string Title, string? Description, string Priority,
         decimal ImpactScore, string Trend, string[] Tags, string SectionName, string SectionSlug,
-        DateTime StartDate, int ArticleCount);
+        DateTime StartDate, int ArticleCount, MoonArticle[] Articles);
+    record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
     record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary);
 }
