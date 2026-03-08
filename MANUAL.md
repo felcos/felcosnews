@@ -290,8 +290,90 @@ GET /health                   Estado del servidor
 
 ### Endpoints admin (requieren rol Admin)
 ```
-POST /api/admin/agents/newsscanner/trigger         Forzar ciclo de escáner
-POST /api/admin/agents/eventdetector/trigger       Forzar clasificación IA
-POST /api/admin/agents/alertgenerator/trigger      Forzar generación de alertas
+POST /api/admin/agents/newsscanner/trigger             Forzar ciclo de escáner
+POST /api/admin/agents/eventdetector/trigger           Forzar clasificación IA
+POST /api/admin/agents/alertgenerator/trigger          Forzar generación de alertas
 POST /api/admin/agents/notificationdispatcher/trigger  Forzar envío notificaciones
+POST /api/admin/agents/articlesummarizer/trigger       Forzar resumen de artículos
+POST /api/admin/agents/digestsender/trigger            Forzar envío de digests
+```
+
+### Endpoints usuario (requieren auth)
+```
+GET /api/user/module-keywords    Lista de keywords activas del usuario (para universe)
+```
+
+---
+
+## Repositorio y Despliegue
+
+### Repositorio
+- **GitHub:** `https://github.com/felcos/felcosnews`
+- **Branch principal:** `main`
+- **CI/CD:** `.github/workflows/deploy.yml` — push a `main` → build → SCP → restart VM
+
+### Configurar CI/CD (GitHub Actions)
+Añadir en **GitHub → Settings → Secrets → Actions**:
+| Secret | Valor |
+|---|---|
+| `VM_SSH_KEY` | Contenido de `ssh-key-2026-01-16.key` |
+| `VM_HOST` | `79.72.56.98` |
+| `VM_USER` | `ubuntu` |
+
+### Configurar canales de notificación en producción
+
+Editar en la VM: `/opt/anews/appsettings.Production.json`
+
+**Telegram:**
+```json
+"Telegram": {
+  "BotToken": "XXXXXXXXX:YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY"
+}
+```
+Obtener el token: busca `@BotFather` en Telegram → `/newbot` → copia el token.
+Los usuarios ponen su Chat ID (obtenido con `@userinfobot`).
+
+**Email (Gmail):**
+```json
+"Smtp": {
+  "Host": "smtp.gmail.com",
+  "Port": 587,
+  "User": "tucuenta@gmail.com",
+  "Password": "xxxx xxxx xxxx xxxx",
+  "From": "AgenteNews <tucuenta@gmail.com>"
+}
+```
+La contraseña debe ser una **App Password** de Google (no la contraseña normal).
+Activar en: Cuenta Google → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones.
+
+**Discord:** No requiere config en servidor. El usuario introduce directamente la Webhook URL de su servidor Discord.
+
+**WhatsApp (Twilio):**
+```json
+"Twilio": {
+  "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "AuthToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "WhatsAppFrom": "whatsapp:+14155238886"
+}
+```
+Requiere cuenta Twilio + sandbox o número verificado. Sin esto el servicio arranca igual (no crashea).
+
+### Vista Universo — Módulos del usuario
+Cuando un usuario logueado abre la vista Universo (`/` → botón Universo), los planetas que coinciden con las keywords de sus módulos activos aparecen con un **anillo verde** pulsante. El callout al hacer hover muestra la etiqueta "tu módulo".
+
+---
+
+## Guía rápida de primer despliegue
+
+```bash
+# 1. Desde tu máquina: subir código
+git remote add origin https://github.com/felcos/felcosnews.git
+git push -u origin main
+
+# 2. En la VM (primera vez): aplicar nueva migración
+cd /opt/anews
+dotnet ef database update --project ... # o via deploy manual
+
+# 3. La próxima vez: push a main activa CI/CD automáticamente
+git push origin main  # → GitHub Actions construye y despliega solo
 ```

@@ -2,7 +2,7 @@
 
 ## Estado del Proyecto
 - **Última revisión:** 2026-03-08
-- **Fase actual:** Sprint 4 EN PROGRESO
+- **Fase actual:** Sprint 4 COMPLETADO
 
 ---
 
@@ -15,6 +15,9 @@
 | HTTPS landing `websoftware.es` | ✅ |
 | Login funcional (fix Blazor Server cookie) | ✅ |
 | Logout funcional | ✅ |
+| Repositorio git local inicializado (commit `7d26a49`) | ✅ |
+| GitHub repo `felcos/felcosnews` — push pendiente (manual) | ⏳ |
+| CI/CD GitHub Actions → VM (requiere secrets en GitHub) | ⏳ |
 
 ---
 
@@ -112,7 +115,7 @@
 
 ---
 
-## Sprint 4 — Agentes Avanzados y UX (EN PROGRESO)
+## Sprint 4 — Agentes Avanzados y UX ✅ COMPLETADO
 
 | # | Descripción | Estado |
 |---|---|---|
@@ -123,6 +126,48 @@
 | S4-05 | Index.razor: auto-abrir evento desde query param `?eventId=` | ✅ |
 | S4-06 | LastDigestSentAt en ApplicationUser + migración AddDigestTracking | ✅ |
 | S4-07 | DigestSenderAgent registrado en GodMode, AgentsMonitor, trigger endpoint | ✅ |
+| S4-08 | WhatsAppService: graceful si Twilio no configurado (no crashea) | ✅ |
+| S4-09 | Universe v2: callout HTML con línea elbow 90° al hacer hover | ✅ |
+| S4-10 | Universe v2: texto en planeta con sombra para contraste garantizado | ✅ |
+| S4-11 | Universe v2: anillo verde en planetas que coinciden con módulos del usuario | ✅ |
+| S4-12 | Index.razor: carga keywords de módulos del usuario logueado → canvas | ✅ |
+| S4-13 | Git repo inicializado con .gitignore correcto (excluye secretos) | ✅ |
+
+---
+
+## Sprint 5 — Producción Real y Canales Funcionales (PRÓXIMO)
+
+### Prerequisitos de infraestructura
+| # | Descripción | Estado |
+|---|---|---|
+| P-01 | Push a GitHub `felcos/felcosnews` + configurar secrets CI/CD | ⬜ |
+| P-02 | `VM_SSH_KEY`, `VM_HOST=79.72.56.98`, `VM_USER=ubuntu` en GitHub Secrets | ⬜ |
+| P-03 | Deploy del código actual con migración `AddDigestTracking` aplicada en producción | ⬜ |
+
+### Canales de notificación end-to-end
+| # | Descripción | Estado |
+|---|---|---|
+| C-01 | Telegram: bot creado con @BotFather + `Telegram:BotToken` en appsettings.Production.json | ⬜ |
+| C-02 | Email: SMTP configurado (Gmail App Password o Brevo/SendGrid) | ⬜ |
+| C-03 | Discord: webhook URL por usuario (ya funciona si el usuario la pone) | ⬜ |
+| C-04 | WhatsApp: Twilio account + sandbox (o número verificado) | ⬜ |
+| C-05 | Test de cada canal desde `/user/notifications` → botón "Probar" | ⬜ |
+
+### Mejoras UX prioritarias
+| # | Descripción | Estado |
+|---|---|---|
+| U-11 | Bookmark desde ArticlePage (botón "Guardar" para usuarios logueados) | ⬜ |
+| U-12 | Indicador numérico de módulos coincidentes en header del universo | ⬜ |
+| U-13 | Búsqueda en módulos del usuario (filter bar en /user/modules) | ⬜ |
+| U-14 | Notificación in-app (badge en el icono de campana del header) | ⬜ |
+
+### Features nuevas
+| # | Descripción | Estado |
+|---|---|---|
+| F-21 | Trending: sección "Más activo hoy" en portada (eventos con más artículos nuevos) | ⬜ |
+| F-22 | Universe: modo "Mis Módulos" filtrado — solo muestra eventos que coinciden con el usuario | ⬜ |
+| F-23 | API pública documentada con Swagger/OpenAPI | ⬜ |
+| F-24 | Exportar eventos a CSV/JSON desde /admin/news | ⬜ |
 
 ---
 
