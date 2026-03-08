@@ -1,0 +1,211 @@
+@page "/user/profile"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using ANews.Infrastructure.Data
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthState
+@inject ANews.Web.Services.ToastService Toast
+
+<PageTitle>Mi Perfil — AgenteNews</PageTitle>
+
+<div class="user-section">
+    <div class="section-header">
+        <h2><i class="fa fa-user-circle"></i> Mi Perfil</h2>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="loading-spinner-wrap"><div class="loading-spinner"></div></div>
+    }
+    else if (_user != null)
+    {
+        <div class="profile-grid">
+
+            <!-- Datos personales -->
+            <div class="profile-card">
+                <h3><i class="fa fa-id-card"></i> Datos de cuenta</h3>
+
+                <div class="form-group">
+                    <label>Nombre visible</label>
+                    <input class="form-control" @bind="_displayName" placeholder="Tu nombre" />
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input class="form-control" value="@_user.Email" disabled />
+                    @if (_user.EmailConfirmed)
+                    {
+                        <small style="color:var(--accent-green)"><i class="fa fa-check-circle"></i> Email verificado</small>
+                    }
+                    else
+                    {
+                        <small style="color:var(--accent-red)"><i class="fa fa-exclamation-circle"></i> Email no verificado</small>
+                    }
+                </div>
+                <div class="form-group">
+                    <label>Rol</label>
+                    <input class="form-control" value="@_user.Role" disabled />
+                </div>
+                <div class="form-group">
+                    <label>Miembro desde</label>
+                    <input class="form-control" value="@_user.CreatedAt.ToString("dd/MM/yyyy")" disabled />
+                </div>
+
+                <button class="btn btn-primary" @onclick="SaveProfileAsync" disabled="@_savingProfile">
+                    @(_savingProfile ? "Guardando..." : "Guardar cambios")
+                </button>
+            </div>
+
+            <!-- Cambiar contraseña -->
+            <div class="profile-card">
+                <h3><i class="fa fa-lock"></i> Cambiar contraseña</h3>
+
+                <div class="form-group">
+                    <label>Contraseña actual</label>
+                    <input type="password" class="form-control" @bind="_currentPassword" autocomplete="current-password" />
+                </div>
+                <div class="form-group">
+                    <label>Nueva contraseña</label>
+                    <input type="password" class="form-control" @bind="_newPassword" autocomplete="new-password" />
+                    <small style="color:var(--text-muted)">Mínimo 8 caracteres con símbolo especial</small>
+                </div>
+                <div class="form-group">
+                    <label>Confirmar nueva contraseña</label>
+                    <input type="password" class="form-control" @bind="_confirmNewPassword" autocomplete="new-password" />
+                </div>
+
+                @if (!string.IsNullOrEmpty(_passwordError))
+                {
+                    <div class="alert alert-danger mt-2">@_passwordError</div>
+                }
+
+                <button class="btn btn-primary" @onclick="ChangePasswordAsync" disabled="@_savingPassword">
+                    @(_savingPassword ? "Cambiando..." : "Cambiar contraseña")
+                </button>
+            </div>
+
+            <!-- Preferencias de digest -->
+            <div class="profile-card">
+                <h3><i class="fa fa-newspaper"></i> Digest de noticias</h3>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="_receiveDigest" />
+                        Recibir resumen periódico de eventos
+                    </label>
+                </div>
+                @if (_receiveDigest)
+                {
+                    <div class="form-group">
+                        <label>Frecuencia</label>
+                        <select class="form-control" @bind="_digestFrequency">
+                            @foreach (var f in Enum.GetValues<ANews.Domain.Enums.DigestionFrequency>())
+                            {
+                                <option value="@f">@f</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <button class="btn btn-secondary" @onclick="SavePreferencesAsync" disabled="@_savingPrefs">
+                    @(_savingPrefs ? "Guardando..." : "Guardar preferencias")
+                </button>
+            </div>
+
+        </div>
+    }
+</div>
+
+@code {
+    private ApplicationUser? _user;
+    private bool _loading = true;
+
+    private string _displayName = "";
+    private bool _savingProfile;
+
+    private string _currentPassword = "";
+    private string _newPassword = "";
+    private string _confirmNewPassword = "";
+    private string _passwordError = "";
+    private bool _savingPassword;
+
+    private bool _receiveDigest;
+    private ANews.Domain.Enums.DigestionFrequency _digestFrequency;
+    private bool _savingPrefs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userName = auth.User.Identity?.Name;
+        if (userName != null)
+            _user = await UserManager.FindByNameAsync(userName);
+
+        if (_user != null)
+        {
+            _displayName = _user.DisplayName;
+            _receiveDigest = _user.ReceiveDigest;
+            _digestFrequency = _user.DigestFrequency;
+        }
+        _loading = false;
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        if (_user == null) return;
+        if (string.IsNullOrWhiteSpace(_displayName)) { Toast.Warning("El nombre no puede estar vacío."); return; }
+
+        _savingProfile = true;
+        try
+        {
+            _user.DisplayName = _displayName.Trim();
+            var result = await UserManager.UpdateAsync(_user);
+            if (result.Succeeded)
+                Toast.Success("Perfil actualizado");
+            else
+                Toast.Error(result.Errors.First().Description);
+        }
+        finally { _savingProfile = false; }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        if (_user == null) return;
+        _passwordError = "";
+
+        if (string.IsNullOrWhiteSpace(_currentPassword) || string.IsNullOrWhiteSpace(_newPassword))
+        { _passwordError = "Todos los campos son obligatorios."; return; }
+
+        if (_newPassword != _confirmNewPassword)
+        { _passwordError = "Las contraseñas no coinciden."; return; }
+
+        _savingPassword = true;
+        try
+        {
+            var result = await UserManager.ChangePasswordAsync(_user, _currentPassword, _newPassword);
+            if (result.Succeeded)
+            {
+                Toast.Success("Contraseña cambiada correctamente");
+                _currentPassword = _newPassword = _confirmNewPassword = "";
+            }
+            else
+            {
+                _passwordError = result.Errors.First().Description;
+            }
+        }
+        finally { _savingPassword = false; }
+    }
+
+    private async Task SavePreferencesAsync()
+    {
+        if (_user == null) return;
+        _savingPrefs = true;
+        try
+        {
+            _user.ReceiveDigest = _receiveDigest;
+            _user.DigestFrequency = _digestFrequency;
+            var result = await UserManager.UpdateAsync(_user);
+            if (result.Succeeded) Toast.Success("Preferencias guardadas");
+            else Toast.Error(result.Errors.First().Description);
+        }
+        finally { _savingPrefs = false; }
+    }
+}

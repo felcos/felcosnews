@@ -1,0 +1,239 @@
+@page "/article/{Id:int}"
+@inject AppDbContext Ctx
+@inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
+@inject NavigationManager Nav
+@using ANews.Domain.Interfaces
+@using ANews.Infrastructure.AI
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_article?.Title ?? "Artículo") — AgenteNews</PageTitle>
+
+<div class="public-layout article-layout">
+    <header class="site-header">
+        <div class="header-brand">
+            <a href="/" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:8px;">
+                <i class="fa fa-satellite"></i>
+                <span class="brand-name">AGENTE<strong>NEWS</strong></span>
+            </a>
+        </div>
+        <div class="header-right">
+            <button class="btn-login" @onclick="GoBack"><i class="fa fa-arrow-left"></i> Volver</button>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="loading-screen"><div class="loading-spinner"></div><p>Cargando artículo...</p></div>
+    }
+    else if (_article == null)
+    {
+        <div class="empty-universe">
+            <i class="fa fa-file-times"></i>
+            <h2>Artículo no encontrado</h2>
+            <a href="/" class="btn-login">Volver al inicio</a>
+        </div>
+    }
+    else
+    {
+        <main class="article-main">
+            <div class="article-container">
+
+                <!-- Breadcrumb -->
+                <nav class="article-breadcrumb">
+                    <a href="/">Inicio</a>
+                    @if (_article.Event != null)
+                    {
+                        <span>/</span>
+                        <a href="/?section=@_article.Event.NewsSectionId">@_article.Event.Section?.Name</a>
+                        <span>/</span>
+                        <span>@Truncate(_article.Event.Title, 60)</span>
+                    }
+                </nav>
+
+                <!-- Article header -->
+                <div class="article-header">
+                    <div class="article-meta-top">
+                        <span class="article-source">@_article.SourceName</span>
+                        <span class="article-date">@_article.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                        @if (!string.IsNullOrEmpty(_article.Language))
+                        {
+                            <span class="article-lang">@_article.Language.ToUpper()</span>
+                        }
+                    </div>
+                    <h1 class="article-title">@_article.Title</h1>
+                    @{
+                        var displayKeywords = _article.Keywords
+                            .Where(k => k != "ai" && k != "rss")
+                            .Take(8)
+                            .ToArray();
+                    }
+                    @if (displayKeywords.Length > 0)
+                    {
+                        <div class="article-keywords">
+                            @foreach (var kw in displayKeywords)
+                            {
+                                <span class="article-kw">#@kw</span>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <!-- AI Summary -->
+                <div class="ai-summary-box">
+                    <div class="ai-summary-header">
+                        <i class="fa fa-robot"></i>
+                        <span>Resumen IA</span>
+                        @if (!_generatingSummary)
+                        {
+                            <button class="btn-regenerate" @onclick="GenerateSummaryAsync" title="Regenerar resumen">
+                                <i class="fa fa-refresh"></i>
+                            </button>
+                        }
+                    </div>
+                    @if (_generatingSummary)
+                    {
+                        <div class="ai-summary-loading"><div class="loading-spinner-sm"></div> Generando resumen...</div>
+                    }
+                    else if (!string.IsNullOrEmpty(_article.Summary))
+                    {
+                        <p class="ai-summary-text">@_article.Summary</p>
+                    }
+                    else
+                    {
+                        <div class="ai-summary-empty">
+                            <p>No hay resumen disponible.</p>
+                            <button class="btn-primary" @onclick="GenerateSummaryAsync">
+                                <i class="fa fa-magic"></i> Generar resumen con IA
+                            </button>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(_summaryError))
+                    {
+                        <p class="ai-summary-error"><i class="fa fa-warning"></i> @_summaryError</p>
+                    }
+                </div>
+
+                <!-- Article content -->
+                @if (!string.IsNullOrEmpty(_article.Content))
+                {
+                    <div class="article-content">
+                        @((MarkupString)_article.Content)
+                    </div>
+                }
+                else
+                {
+                    <div class="article-no-content">
+                        <p>El contenido completo está disponible en la fuente original.</p>
+                    </div>
+                }
+
+                <!-- Source link -->
+                <div class="article-source-link">
+                    <a href="@_article.SourceUrl" target="_blank" rel="noopener noreferrer" class="btn-source">
+                        <i class="fa fa-external-link"></i> Ver artículo original en @_article.SourceName
+                    </a>
+                </div>
+
+                <!-- Related articles from same event -->
+                @if (_relatedArticles.Count > 0)
+                {
+                    <div class="related-articles">
+                        <h3><i class="fa fa-link"></i> Artículos relacionados del mismo evento</h3>
+                        <div class="related-list">
+                            @foreach (var rel in _relatedArticles)
+                            {
+                                <a href="/article/@rel.Id" class="related-item">
+                                    <div class="related-source">@rel.SourceName</div>
+                                    <div class="related-title">@rel.Title</div>
+                                    <div class="related-date">@rel.PublishedAt.ToString("dd/MM HH:mm")</div>
+                                </a>
+                            }
+                        </div>
+                    </div>
+                }
+
+            </div>
+        </main>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private ANews.Domain.Entities.NewsArticle? _article;
+    private List<ANews.Domain.Entities.NewsArticle> _relatedArticles = [];
+    private bool _loading = true;
+    private bool _generatingSummary = false;
+    private string? _summaryError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _article = await Ctx.NewsArticles
+            .Include(a => a.Event)
+                .ThenInclude(e => e.Section)
+            .Include(a => a.Source)
+            .FirstOrDefaultAsync(a => a.Id == Id && !a.IsDeleted);
+
+        if (_article != null)
+        {
+            _relatedArticles = await Ctx.NewsArticles
+                .Where(a => a.NewsEventId == _article.NewsEventId && a.Id != Id && !a.IsDeleted)
+                .OrderByDescending(a => a.PublishedAt)
+                .Take(5)
+                .ToListAsync();
+        }
+
+        _loading = false;
+    }
+
+    private async Task GenerateSummaryAsync()
+    {
+        if (_article == null) return;
+        _generatingSummary = true;
+        _summaryError = null;
+        StateHasChanged();
+
+        try
+        {
+            var provider = await AiFactory.GetDefaultProviderAsync();
+            var textToSummarize = !string.IsNullOrEmpty(_article.Content) ? _article.Content : _article.Title;
+
+            var response = await provider.CompleteAsync(new AiRequest
+            {
+                SystemPrompt = "Eres un editor de noticias experto. Resume el siguiente artículo en 2-3 frases claras y objetivas en español.",
+                UserPrompt = $"Titulo: {_article.Title}\n\nContenido: {Truncate(textToSummarize, 3000)}",
+                MaxTokens = 300,
+                Temperature = 0.3,
+                OperationTag = "article_summary"
+            });
+
+            if (response.Success && !string.IsNullOrEmpty(response.Content))
+            {
+                var dbArticle = await Ctx.NewsArticles.FindAsync(_article.Id);
+                if (dbArticle != null)
+                {
+                    dbArticle.Summary = response.Content.Trim();
+                    await Ctx.SaveChangesAsync();
+                    _article.Summary = dbArticle.Summary;
+                }
+            }
+            else
+            {
+                _summaryError = "No se pudo generar el resumen. Verifica que hay un proveedor IA activo.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _summaryError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _generatingSummary = false;
+        }
+    }
+
+    private void GoBack() => Nav.NavigateTo("/");
+
+    private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "..." : s;
+}

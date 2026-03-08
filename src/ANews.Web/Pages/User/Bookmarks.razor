@@ -1,0 +1,144 @@
+@page "/user/bookmarks"
+@using Microsoft.AspNetCore.Authorization
+@layout ANews.Web.Components.Layout.UserLayout
+@using Microsoft.AspNetCore.Identity
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize]
+@inject UserManager<ApplicationUser> UserManager
+@inject AppDbContext Db
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Guardados - AgenteNews</PageTitle>
+
+<div class="user-page">
+    <div class="page-header">
+        <h2><i class="fa fa-bookmark"></i> Articulos Guardados</h2>
+        <p class="text-muted">@_bookmarks.Count articulos guardados</p>
+    </div>
+
+    @if (_bookmarks.Count == 0)
+    {
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="fa fa-bookmark"></i></div>
+            <h3>Sin artículos guardados</h3>
+            <p>Guarda artículos desde la portada para leerlos después o añadir notas.</p>
+            <a href="/" class="btn btn-primary"><i class="fa fa-globe"></i> Ir a la portada</a>
+        </div>
+    }
+    else
+    {
+        <div class="bookmark-grid">
+            @foreach (var bm in _bookmarks)
+            {
+                <div class="bookmark-card">
+                    <div class="bookmark-header">
+                        <span class="badge badge-priority-@bm.Article?.Event?.Priority.ToString().ToLower()">
+                            @bm.Article?.Event?.Priority
+                        </span>
+                        <button class="btn-icon text-danger" @onclick="() => RemoveBookmark(bm)" title="Eliminar">
+                            <i class="fa fa-bookmark"></i>
+                        </button>
+                    </div>
+                    <h4 class="bookmark-title">@bm.Article?.Title</h4>
+                    @if (!string.IsNullOrEmpty(bm.Article?.Summary))
+                    {
+                        <p class="bookmark-summary">@bm.Article.Summary[..Math.Min(150, bm.Article.Summary.Length)]...</p>
+                    }
+                    <div class="bookmark-meta">
+                        <span class="text-muted">@bm.Article?.Source?.Name</span>
+                        <span class="text-muted">@bm.CreatedAt.ToString("dd/MM/yyyy")</span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(bm.Note))
+                    {
+                        <div class="bookmark-note">
+                            <i class="fa fa-sticky-note-o"></i> @bm.Note
+                        </div>
+                    }
+                    <div class="bookmark-actions">
+                        @if (!string.IsNullOrEmpty(bm.Article?.SourceUrl))
+                        {
+                            <a href="@bm.Article.SourceUrl" target="_blank" class="btn btn-sm btn-outline">
+                                <i class="fa fa-external-link"></i> Ver articulo
+                            </a>
+                        }
+                        <button class="btn btn-sm btn-secondary" @onclick="() => EditNote(bm)">
+                            <i class="fa fa-pencil"></i> Nota
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (_editingBookmark != null)
+{
+    <div class="modal-backdrop" @onclick="CloseNoteModal"></div>
+    <div class="modal-panel modal-sm">
+        <div class="modal-header">
+            <h3>Editar Nota</h3>
+            <button class="modal-close" @onclick="CloseNoteModal"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <textarea class="form-control" rows="4" @bind="_noteText" placeholder="Agrega una nota personal..."></textarea>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="CloseNoteModal">Cancelar</button>
+            <button class="btn btn-primary" @onclick="SaveNote">Guardar</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Bookmark> _bookmarks = new();
+    private Bookmark? _editingBookmark;
+    private string _noteText = "";
+    private int _userId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(auth.User);
+        if (user == null) { Nav.NavigateTo("/login"); return; }
+        _userId = user.Id;
+        await LoadBookmarks();
+    }
+
+    private async Task LoadBookmarks()
+    {
+        _bookmarks = await Db.Set<Bookmark>()
+            .Include(b => b.Article)
+                .ThenInclude(a => a!.Source)
+            .Include(b => b.Article)
+                .ThenInclude(a => a!.Event)
+            .Where(b => b.UserId == _userId)
+            .OrderByDescending(b => b.CreatedAt)
+            .ToListAsync();
+    }
+
+    private async Task RemoveBookmark(Bookmark bm)
+    {
+        bm.IsDeleted = true;
+        await Db.SaveChangesAsync();
+        _bookmarks.Remove(bm);
+    }
+
+    private void EditNote(Bookmark bm)
+    {
+        _editingBookmark = bm;
+        _noteText = bm.Note ?? "";
+    }
+
+    private void CloseNoteModal() => _editingBookmark = null;
+
+    private async Task SaveNote()
+    {
+        if (_editingBookmark == null) return;
+        _editingBookmark.Note = _noteText;
+        await Db.SaveChangesAsync();
+        _editingBookmark = null;
+    }
+}

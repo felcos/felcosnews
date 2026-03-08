@@ -1,0 +1,11 @@
+@page "/logout"
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        // El logout real se hace via HTTP GET /account/logout (endpoint en Program.cs)
+        // Desde Blazor Server no se pueden borrar cookies en el circuito SignalR
+        Nav.NavigateTo("/account/logout", forceLoad: true);
+    }
+}

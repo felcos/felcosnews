@@ -1,0 +1,54 @@
+@page "/login"
+
+<PageTitle>Iniciar sesión — AgenteNews</PageTitle>
+
+<div class="auth-page">
+    <div class="auth-card">
+        <div class="auth-logo">
+            <i class="fa fa-satellite"></i>
+            <span>AGENTE<strong>NEWS</strong></span>
+        </div>
+        <h2>Iniciar sesión</h2>
+
+        @if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="auth-error"><i class="fa fa-exclamation-circle"></i> @ErrorMessage</div>
+        }
+
+        <form method="post" action="/account/login">
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" name="email" class="form-input" autocomplete="username" required />
+            </div>
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" name="password" class="form-input" autocomplete="current-password" required />
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="rememberMe" value="true" />
+                    Recordarme
+                </label>
+            </div>
+            <button type="submit" class="btn-auth">Entrar</button>
+        </form>
+
+        <div class="auth-links">
+            <a href="/register">¿No tienes cuenta? Regístrate</a>
+            <a href="/forgot-password">¿Olvidaste tu contraseña?</a>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery] private string? Error { get; set; }
+
+    private string? ErrorMessage => Error switch
+    {
+        "locked" => "Cuenta bloqueada temporalmente. Intenta de nuevo en unos minutos.",
+        "invalid" => "Email o contraseña incorrectos.",
+        _ => null
+    };
+}

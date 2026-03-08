@@ -1,0 +1,188 @@
+@page "/admin/audit"
+@using Microsoft.AspNetCore.Authorization
+@using ANews.Infrastructure.Data
+@using AuditLogEntity = ANews.Domain.Entities.AuditLog
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout ANews.Web.Components.Layout.AdminLayout
+@inject AppDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>Auditoria - Admin</PageTitle>
+
+<div class="admin-page-header">
+    <div>
+        <h2>Log de Auditoria</h2>
+        <p class="text-muted">Registro de todas las acciones del sistema</p>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <input class="form-control search-input" placeholder="Buscar por accion, entidad o usuario..."
+           @bind="_search" @bind:event="oninput" />
+    <select class="form-control" @bind="_filterAction" @bind:after="LoadData">
+        <option value="">Todas las acciones</option>
+        <option value="Create">Create</option>
+        <option value="Update">Update</option>
+        <option value="Delete">Delete</option>
+        <option value="Login">Login</option>
+        <option value="Logout">Logout</option>
+    </select>
+    <input type="date" class="form-control" @bind="_filterDate" @bind:after="LoadData" />
+</div>
+
+<div class="data-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>Accion</th>
+                <th>Entidad</th>
+                <th>IP</th>
+                <th>Detalles</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var log in FilteredLogs)
+            {
+                <tr>
+                    <td style="font-size:12px; white-space:nowrap">@log.Timestamp.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                    <td>
+                        @if (log.UserId != 0)
+                        {
+                            <span class="text-muted" style="font-size:12px">@log.UserEmail</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Sistema</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="action-badge action-@log.Action.ToLower()">@log.Action</span>
+                    </td>
+                    <td style="font-size:12px">
+                        <strong>@log.EntityType</strong>
+                        @if (!string.IsNullOrEmpty(log.EntityId))
+                        {
+                            <span class="text-muted"> #@log.EntityId</span>
+                        }
+                    </td>
+                    <td style="font-size:12px; font-family:monospace; color:var(--text-muted)">@log.IpAddress</td>
+                    <td>
+                        @if (!string.IsNullOrEmpty(log.NewValues) || !string.IsNullOrEmpty(log.OldValues))
+                        {
+                            <button class="btn-icon" @onclick="() => ShowDetail(log)" title="Ver cambios">
+                                <i class="fa fa-search"></i>
+                            </button>
+                        }
+                    </td>
+                </tr>
+            }
+            @if (!FilteredLogs.Any())
+            {
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">Sin registros de auditoria</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<div class="pagination-bar">
+    <button class="btn btn-sm btn-secondary" @onclick="PrevPage" disabled="@(_page == 0)">
+        <i class="fa fa-chevron-left"></i>
+    </button>
+    <span class="text-muted">Pagina @(_page + 1) de @_totalPages</span>
+    <button class="btn btn-sm btn-secondary" @onclick="NextPage" disabled="@(_page >= _totalPages - 1)">
+        <i class="fa fa-chevron-right"></i>
+    </button>
+</div>
+
+<!-- Detail Modal -->
+@if (_detail != null)
+{
+    <div class="modal-backdrop" @onclick="() => _detail = null"></div>
+    <div class="modal-panel modal-sm">
+        <div class="modal-header">
+            <h3>Detalle — @_detail.Action @_detail.EntityType</h3>
+            <button class="modal-close" @onclick="() => _detail = null"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            @if (!string.IsNullOrEmpty(_detail.OldValues))
+            {
+                <h4 class="text-muted" style="font-size:12px; margin-bottom:6px">ANTES</h4>
+                <pre class="audit-json">@FormatJson(_detail.OldValues)</pre>
+            }
+            @if (!string.IsNullOrEmpty(_detail.NewValues))
+            {
+                <h4 class="text-muted" style="font-size:12px; margin:10px 0 6px">DESPUES</h4>
+                <pre class="audit-json">@FormatJson(_detail.NewValues)</pre>
+            }
+            @if (!string.IsNullOrEmpty(_detail.UserAgent))
+            {
+                <p class="text-muted" style="font-size:11px; margin-top:10px">UA: @_detail.UserAgent</p>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="() => _detail = null">Cerrar</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AuditLogEntity> _auditLogs = new();
+    private AuditLogEntity? _detail;
+    private string _search = "";
+    private string _filterAction = "";
+    private DateTime? _filterDate;
+    private int _page;
+    private int _pageSize = 50;
+    private int _totalPages = 1;
+
+    private IEnumerable<AuditLogEntity> FilteredLogs => _auditLogs
+        .Where(l =>
+            string.IsNullOrEmpty(_search) ||
+            l.Action.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+            l.EntityType.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        var query = Db.AuditLogs.AsQueryable();
+
+        if (!string.IsNullOrEmpty(_filterAction))
+            query = query.Where(l => l.Action == _filterAction);
+
+        if (_filterDate.HasValue)
+            query = query.Where(l => l.Timestamp.Date == _filterDate.Value.Date);
+
+        var total = await query.CountAsync();
+        _totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)_pageSize));
+        if (_page >= _totalPages) _page = 0;
+
+        _auditLogs = await query.IgnoreQueryFilters()
+            .OrderByDescending(l => l.Timestamp)
+            .Skip(_page * _pageSize)
+            .Take(_pageSize)
+            .ToListAsync();
+    }
+
+    private void ShowDetail(AuditLogEntity log) => _detail = log;
+
+    private async Task PrevPage() { _page--; await LoadData(); }
+    private async Task NextPage() { _page++; await LoadData(); }
+
+    private static string FormatJson(string json)
+    {
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+}

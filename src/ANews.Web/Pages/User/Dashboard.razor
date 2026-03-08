@@ -1,0 +1,319 @@
+@page "/user"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject UserManager<ApplicationUser> UserManager
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Mi Panel - AgenteNews</PageTitle>
+
+<div class="user-dashboard">
+    <div class="dashboard-header">
+        <div class="user-greeting">
+            <div class="user-avatar">@_initials</div>
+            <div>
+                <h1>Hola, @_displayName</h1>
+                <p class="text-muted">@DateTime.Now.ToString("dddd, d 'de' MMMM", new System.Globalization.CultureInfo("es-ES"))</p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <a href="/user/modules" class="btn btn-primary">
+                <i class="fa fa-plus"></i> Nuevo Modulo
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats row -->
+    <div class="user-stats-row">
+        <div class="user-stat-card">
+            <div class="stat-icon"><i class="fa fa-th-large"></i></div>
+            <div class="stat-body">
+                <div class="stat-value">@_moduleCount</div>
+                <div class="stat-label">Modulos activos</div>
+            </div>
+        </div>
+        <div class="user-stat-card">
+            <div class="stat-icon"><i class="fa fa-bell"></i></div>
+            <div class="stat-body">
+                <div class="stat-value">@_channelCount</div>
+                <div class="stat-label">Canales de notificacion</div>
+            </div>
+        </div>
+        <div class="user-stat-card">
+            <div class="stat-icon"><i class="fa fa-newspaper-o"></i></div>
+            <div class="stat-body">
+                <div class="stat-value">@_totalMatches</div>
+                <div class="stat-label">Eventos recibidos</div>
+            </div>
+        </div>
+        <div class="user-stat-card">
+            <div class="stat-icon"><i class="fa fa-bookmark"></i></div>
+            <div class="stat-body">
+                <div class="stat-value">@_bookmarkCount</div>
+                <div class="stat-label">Guardados</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-grid">
+        <!-- My Modules -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h3><i class="fa fa-th-large"></i> Mis Modulos</h3>
+                <a href="/user/modules" class="panel-link">Ver todos <i class="fa fa-arrow-right"></i></a>
+            </div>
+            <div class="panel-body">
+                @if (_modules.Count == 0)
+                {
+                    <div class="empty-panel">
+                        <i class="fa fa-th-large fa-2x"></i>
+                        <p>No tienes modulos todavia.</p>
+                        <a href="/user/modules" class="btn btn-sm btn-primary">Crear mi primer modulo</a>
+                    </div>
+                }
+                else
+                {
+                    <div class="module-list">
+                        @foreach (var mod in _modules.Take(4))
+                        {
+                            <div class="module-item @(mod.IsActive ? "" : "inactive")">
+                                <div class="module-item-info">
+                                    <strong>@mod.Name</strong>
+                                    <small class="text-muted">@mod.Keywords.Count palabras clave · @mod.TotalMatchedEvents eventos</small>
+                                </div>
+                                <div class="module-item-badges">
+                                    @if (!mod.IsActive)
+                                    {
+                                        <span class="badge badge-secondary">Pausado</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(mod.RssFeedToken))
+                                    {
+                                        <span class="badge badge-info" title="RSS disponible"><i class="fa fa-rss"></i></span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Notifications -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h3><i class="fa fa-bell"></i> Notificaciones</h3>
+                <a href="/user/notifications" class="panel-link">Configurar <i class="fa fa-arrow-right"></i></a>
+            </div>
+            <div class="panel-body">
+                @if (_channels.Count == 0)
+                {
+                    <div class="empty-panel">
+                        <i class="fa fa-bell-slash fa-2x"></i>
+                        <p>Sin canales configurados.</p>
+                        <a href="/user/notifications" class="btn btn-sm btn-primary">Agregar canal</a>
+                    </div>
+                }
+                else
+                {
+                    <div class="channel-list">
+                        @foreach (var ch in _channels)
+                        {
+                            <div class="channel-item">
+                                <div class="channel-icon @GetChannelClass(ch.Type)">
+                                    <i class="fa @GetChannelIcon(ch.Type)"></i>
+                                </div>
+                                <div class="channel-info">
+                                    <strong>@GetChannelName(ch.Type)</strong>
+                                    <small>@(ch.IsVerified ? "Verificado" : "Pendiente verificacion")</small>
+                                </div>
+                                <div class="channel-status">
+                                    @if (ch.IsVerified)
+                                    {
+                                        <span class="status-dot active" title="Activo"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="status-dot warning" title="Sin verificar"></span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Recent Events for my modules -->
+        <div class="dashboard-panel panel-wide">
+            <div class="panel-header">
+                <h3><i class="fa fa-newspaper-o"></i> Ultimas Noticias para Ti</h3>
+                <a href="/" class="panel-link">Ver universo <i class="fa fa-arrow-right"></i></a>
+            </div>
+            <div class="panel-body">
+                @if (_recentEvents.Count == 0)
+                {
+                    <div class="empty-panel">
+                        <i class="fa fa-satellite-dish fa-2x"></i>
+                        <p>Configura modulos con palabras clave para recibir noticias personalizadas.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="event-list">
+                        @foreach (var ev in _recentEvents)
+                        {
+                            <a href="/?eventId=@ev.Id" class="event-item priority-@ev.Priority.ToString().ToLower()">
+                                <div class="event-priority-bar"></div>
+                                <div class="event-content">
+                                    <div class="event-title">@ev.Title</div>
+                                    <div class="event-meta">
+                                        <span class="badge badge-priority-@ev.Priority.ToString().ToLower()">@ev.Priority</span>
+                                        <span class="text-muted">@ev.Section?.Name</span>
+                                        <span class="text-muted">@ev.CreatedAt.ToString("dd/MM HH:mm")</span>
+                                    </div>
+                                </div>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Quick links -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <h3><i class="fa fa-link"></i> Accesos Rapidos</h3>
+            </div>
+            <div class="panel-body">
+                <div class="quick-links">
+                    <a href="/" class="quick-link">
+                        <i class="fa fa-globe"></i>
+                        <span>Universo de Noticias</span>
+                    </a>
+                    <a href="/user/modules" class="quick-link">
+                        <i class="fa fa-th-large"></i>
+                        <span>Mis Modulos</span>
+                    </a>
+                    <a href="/user/notifications" class="quick-link">
+                        <i class="fa fa-bell"></i>
+                        <span>Notificaciones</span>
+                    </a>
+                    <a href="/user/bookmarks" class="quick-link">
+                        <i class="fa fa-bookmark"></i>
+                        <span>Guardados</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _displayName = "";
+    private string _initials = "?";
+    private int _moduleCount;
+    private int _channelCount;
+    private int _totalMatches;
+    private int _bookmarkCount;
+    private List<UserModule> _modules = new();
+    private List<NotificationChannel> _channels = new();
+    private List<NewsEvent> _recentEvents = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(auth.User);
+        if (user == null) { Nav.NavigateTo("/login"); return; }
+
+        _displayName = user.DisplayName;
+        _initials = string.Join("", _displayName.Split(' ').Take(2).Select(w => w[0])).ToUpper();
+
+        var userId = user.Id;
+
+        _modules = await Db.Set<UserModule>()
+            .Include(m => m.Keywords)
+            .Where(m => m.UserId == userId)
+            .OrderByDescending(m => m.CreatedAt)
+            .ToListAsync();
+
+        _channels = await Db.Set<NotificationChannel>()
+            .Where(c => c.UserId == userId)
+            .ToListAsync();
+
+        _bookmarkCount = await Db.Set<Bookmark>()
+            .CountAsync(b => b.UserId == userId);
+
+        _moduleCount = _modules.Count(m => m.IsActive);
+        _channelCount = _channels.Count;
+        _totalMatches = _modules.Sum(m => m.TotalMatchedEvents);
+
+        // Recent events from sections the user has modules tracking
+        var allKeywords = _modules
+            .SelectMany(m => m.Keywords.Select(k => k.Keyword.ToLower()))
+            .Distinct()
+            .ToList();
+
+        if (allKeywords.Any())
+        {
+            _recentEvents = await Db.Set<NewsEvent>()
+                .Include(e => e.Section)
+                .Where(e => e.IsActive)
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(20)
+                .ToListAsync();
+
+            // Filter by keyword relevance (simple contains check)
+            _recentEvents = _recentEvents
+                .Where(e => allKeywords.Any(kw =>
+                    e.Title.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                    (e.Description != null && e.Description.Contains(kw, StringComparison.OrdinalIgnoreCase))))
+                .Take(8)
+                .ToList();
+        }
+
+        if (!_recentEvents.Any())
+        {
+            _recentEvents = await Db.Set<NewsEvent>()
+                .Include(e => e.Section)
+                .Where(e => e.IsActive)
+                .OrderByDescending(e => e.ImpactScore)
+                .Take(5)
+                .ToListAsync();
+        }
+    }
+
+    private string GetChannelIcon(ANews.Domain.Enums.NotificationChannelType type) => type switch
+    {
+        ANews.Domain.Enums.NotificationChannelType.Telegram => "fa-paper-plane",
+        ANews.Domain.Enums.NotificationChannelType.WhatsApp => "fa-whatsapp",
+        ANews.Domain.Enums.NotificationChannelType.Email => "fa-envelope",
+        ANews.Domain.Enums.NotificationChannelType.Discord => "fa-comments",
+        ANews.Domain.Enums.NotificationChannelType.Webhook => "fa-code",
+        _ => "fa-bell"
+    };
+
+    private string GetChannelName(ANews.Domain.Enums.NotificationChannelType type) => type switch
+    {
+        ANews.Domain.Enums.NotificationChannelType.Telegram => "Telegram",
+        ANews.Domain.Enums.NotificationChannelType.WhatsApp => "WhatsApp",
+        ANews.Domain.Enums.NotificationChannelType.Email => "Email",
+        ANews.Domain.Enums.NotificationChannelType.Discord => "Discord",
+        ANews.Domain.Enums.NotificationChannelType.Webhook => "Webhook",
+        _ => type.ToString()
+    };
+
+    private string GetChannelClass(ANews.Domain.Enums.NotificationChannelType type) => type switch
+    {
+        ANews.Domain.Enums.NotificationChannelType.Telegram => "channel-telegram",
+        ANews.Domain.Enums.NotificationChannelType.WhatsApp => "channel-whatsapp",
+        ANews.Domain.Enums.NotificationChannelType.Email => "channel-email",
+        ANews.Domain.Enums.NotificationChannelType.Discord => "channel-discord",
+        _ => "channel-default"
+    };
+}

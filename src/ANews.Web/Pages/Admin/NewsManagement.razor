@@ -1,0 +1,499 @@
+@page "/admin/news"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout AdminLayout
+@inject AppDbContext Ctx
+@inject IJSRuntime JS
+@inject ANews.Web.Services.ToastService Toast
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ANews.Web.Components.Shared
+
+<PageTitle>Gestión Noticias — Admin</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <h1><i class="fa fa-newspaper"></i> Gestión de Noticias</h1>
+        <div class="header-actions">
+            <button class="btn btn-primary" @onclick="OpenCreateEventModal">
+                <i class="fa fa-plus"></i> Nuevo Evento
+            </button>
+        </div>
+        <div class="header-tabs">
+            <button class="tab-btn @(ActiveTab == "events" ? "active" : "")" @onclick="@(() => SetTab("events"))">Eventos</button>
+            <button class="tab-btn @(ActiveTab == "articles" ? "active" : "")" @onclick="@(() => SetTab("articles"))">Artículos</button>
+        </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="filter-bar">
+        <input class="search-input" @bind="SearchTerm" @oninput="OnSearch" placeholder="Buscar..." />
+        @if (ActiveTab == "events")
+        {
+            <select class="filter-select" @onchange="OnPriorityFilter">
+                <option value="">Todas las prioridades</option>
+                @foreach (var p in Enum.GetValues<EventPriority>())
+                {
+                    <option value="@p">@p</option>
+                }
+            </select>
+        }
+        <select class="filter-select" @onchange="OnSectionFilter">
+            <option value="">Todas las secciones</option>
+            @foreach (var s in Sections)
+            {
+                <option value="@s.Id">@s.Name</option>
+            }
+        </select>
+        <span class="filter-count">@TotalItems registros</span>
+    </div>
+
+    @if (ActiveTab == "events")
+    {
+        <!-- CRUD de Eventos -->
+        <div class="data-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th class="th-sortable" @onclick="@(() => SortBy("Title"))">Título <i class="fa @SortIcon("Title")"></i></th>
+                        <th>Sección</th>
+                        <th class="th-sortable" @onclick="@(() => SortBy("Priority"))">Prioridad <i class="fa @SortIcon("Priority")"></i></th>
+                        <th class="th-sortable" @onclick="@(() => SortBy("ImpactScore"))">Impact <i class="fa @SortIcon("ImpactScore")"></i></th>
+                        <th class="th-sortable" @onclick="@(() => SortBy("ArticleCount"))">Artículos <i class="fa @SortIcon("ArticleCount")"></i></th>
+                        <th>Estado</th>
+                        <th class="th-sortable" @onclick="@(() => SortBy("CreatedAt"))">Fecha <i class="fa @SortIcon("CreatedAt")"></i></th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var ev in PagedEvents)
+                    {
+                        <tr>
+                            <td class="td-id">#@ev.Id</td>
+                            <td class="td-title">
+                                <span title="@ev.Title">@Truncate(ev.Title, 50)</span>
+                            </td>
+                            <td><span class="section-badge">@ev.SectionName</span></td>
+                            <td><span class="priority-badge priority-@ev.Priority.ToLower()">@ev.Priority</span></td>
+                            <td>@ev.ImpactScore.ToString("F0")</td>
+                            <td>@ev.ArticleCount</td>
+                            <td>
+                                <span class="status-dot @(ev.IsActive ? "dot-active" : "dot-inactive")"></span>
+                                @(ev.IsActive ? "Activo" : "Inactivo")
+                            </td>
+                            <td>@ev.CreatedAt.ToString("dd/MM/yy")</td>
+                            <td class="td-actions">
+                                <button class="btn-icon" @onclick="() => EditEventAsync(ev.Id)" title="Editar">
+                                    <i class="fa fa-edit"></i>
+                                </button>
+                                <button class="btn-icon btn-toggle" @onclick="() => ToggleEventAsync(ev.Id)" title="@(ev.IsActive ? "Desactivar" : "Activar")">
+                                    <i class="fa @(ev.IsActive ? "fa-eye-slash" : "fa-eye")"></i>
+                                </button>
+                                <button class="btn-icon btn-danger" @onclick="() => DeleteEventAsync(ev.Id)" title="Eliminar">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Paginación -->
+        <div class="pagination">
+            <button @onclick="PrevPage" disabled="@(CurrentPage == 1)"><i class="fa fa-chevron-left"></i></button>
+            <span>@CurrentPage / @TotalPages</span>
+            <button @onclick="NextPage" disabled="@(CurrentPage >= TotalPages)"><i class="fa fa-chevron-right"></i></button>
+        </div>
+
+        <!-- Purga de eventos archivados (H-E) -->
+        <div class="purge-section">
+            <h4><i class="fa fa-trash-alt"></i> Purgar eventos archivados</h4>
+            <p class="text-muted">
+                Eventos archivados: <strong>@_archivedCount</strong> total,
+                <strong>@_archived30Count</strong> con más de 30 días,
+                <strong>@_archived90Count</strong> con más de 90 días.
+            </p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn btn-warning btn-sm" @onclick="() => OpenPurgeConfirm(30)" disabled="@(_archived30Count == 0)">
+                    <i class="fa fa-trash-alt"></i> Purgar &gt;30 días (@_archived30Count)
+                </button>
+                <button class="btn btn-danger btn-sm" @onclick="() => OpenPurgeConfirm(90)" disabled="@(_archived90Count == 0)">
+                    <i class="fa fa-trash-alt"></i> Purgar &gt;90 días (@_archived90Count)
+                </button>
+            </div>
+        </div>
+
+        <ConfirmDialog IsVisible="_showPurgeConfirm"
+                       Title="Confirmar purga"
+                       Message="@($"Se eliminarán permanentemente los {(_purgeDays == 30 ? _archived30Count : _archived90Count)} eventos archivados con más de {_purgeDays} días. Esta acción no se puede deshacer.")"
+                       ConfirmText="Purgar"
+                       OnConfirm="ExecutePurge"
+                       OnCancel="() => _showPurgeConfirm = false" />
+    }
+    else
+    {
+        <!-- CRUD de Artículos -->
+        <div class="data-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Título</th>
+                        <th>Fuente</th>
+                        <th>Relevancia</th>
+                        <th>Tipo</th>
+                        <th>Publicado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var art in PagedArticles)
+                    {
+                        <tr>
+                            <td class="td-id">#@art.Id</td>
+                            <td class="td-title">
+                                <a href="@art.SourceUrl" target="_blank" title="@art.Title">
+                                    @Truncate(art.Title, 60) <i class="fa fa-external-link-alt"></i>
+                                </a>
+                            </td>
+                            <td>@art.SourceName</td>
+                            <td>
+                                <div class="mini-bar">
+                                    <div class="mini-fill" style="width:@art.Relevance%"></div>
+                                </div>
+                            </td>
+                            <td><span class="type-badge">@art.ArticleType</span></td>
+                            <td>@art.PublishedAt.ToString("dd/MM HH:mm")</td>
+                            <td class="td-actions">
+                                <button class="btn-icon btn-danger" @onclick="() => DeleteArticleAsync(art.Id)">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination">
+            <button @onclick="PrevPage" disabled="@(CurrentPage == 1)"><i class="fa fa-chevron-left"></i></button>
+            <span>@CurrentPage / @TotalPages</span>
+            <button @onclick="NextPage" disabled="@(CurrentPage >= TotalPages)"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    }
+</div>
+
+@if (_showCreateEvent)
+{
+    <div class="modal-backdrop" @onclick="CloseCreateEvent"></div>
+    <div class="modal-panel">
+        <div class="modal-header">
+            <h3>Nuevo Evento</h3>
+            <button class="modal-close" @onclick="CloseCreateEvent"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-grid">
+                <div class="form-group form-group-full">
+                    <label>Título *</label>
+                    <input class="form-control" @bind="_newEvent.Title" />
+                </div>
+                <div class="form-group form-group-full">
+                    <label>Descripción</label>
+                    <textarea class="form-control" rows="3" @bind="_newEvent.Description"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Prioridad</label>
+                    <select class="form-control" @bind="_newEvent.Priority">
+                        @foreach (var p in Enum.GetValues<EventPriority>())
+                        {
+                            <option value="@p">@p</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Impact Score (0-100)</label>
+                    <input type="number" class="form-control" @bind="_newEvent.ImpactScore" min="0" max="100" />
+                </div>
+                <div class="form-group">
+                    <label>Sección</label>
+                    <select class="form-control" @bind="_newEvent.NewsSectionId">
+                        @foreach (var s in Sections)
+                        {
+                            <option value="@s.Id">@s.Name</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            @if (!string.IsNullOrEmpty(_createEventError))
+            {
+                <div class="alert alert-danger mt-2">@_createEventError</div>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="CloseCreateEvent">Cancelar</button>
+            <button class="btn btn-primary" @onclick="SaveNewEventAsync" disabled="@_creatingEvent">
+                @(_creatingEvent ? "Guardando..." : "Crear evento")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private string ActiveTab = "events";
+    private string SearchTerm = "";
+    private string? PriorityFilter;
+    private int? SectionFilter;
+    private int CurrentPage = 1;
+    private const int PageSize = 25;
+    private int TotalItems;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(TotalItems / (double)PageSize));
+    private string SortColumn = "CreatedAt";
+    private bool SortAsc = false;
+
+    private List<NewsSection> Sections = [];
+    private List<EventRow> PagedEvents = [];
+    private List<ArticleRow> PagedArticles = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Sections = await Ctx.NewsSections.OrderBy(s => s.Name).ToListAsync();
+        await LoadEventsAsync();
+        await LoadPurgeStatsAsync();
+    }
+
+    private async Task LoadEventsAsync()
+    {
+        var q = Ctx.NewsEvents.Where(e => !e.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(SearchTerm))
+            q = q.Where(e => e.Title.Contains(SearchTerm));
+        if (!string.IsNullOrEmpty(PriorityFilter) && Enum.TryParse<EventPriority>(PriorityFilter, out var pri))
+            q = q.Where(e => e.Priority == pri);
+        if (SectionFilter.HasValue)
+            q = q.Where(e => e.NewsSectionId == SectionFilter.Value);
+
+        TotalItems = await q.CountAsync();
+
+        var ordered = (SortColumn, SortAsc) switch
+        {
+            ("Title",       true)  => q.OrderBy(e => e.Title),
+            ("Title",       false) => q.OrderByDescending(e => e.Title),
+            ("Priority",    true)  => q.OrderBy(e => e.Priority),
+            ("Priority",    false) => q.OrderByDescending(e => e.Priority),
+            ("ImpactScore", true)  => q.OrderBy(e => e.ImpactScore),
+            ("ImpactScore", false) => q.OrderByDescending(e => e.ImpactScore),
+            ("ArticleCount",true)  => q.OrderBy(e => e.Articles.Count(a => !a.IsDeleted)),
+            ("ArticleCount",false) => q.OrderByDescending(e => e.Articles.Count(a => !a.IsDeleted)),
+            ("CreatedAt",   true)  => q.OrderBy(e => e.CreatedAt),
+            _                      => q.OrderByDescending(e => e.CreatedAt),
+        };
+
+        PagedEvents = await ordered
+            .Skip((CurrentPage - 1) * PageSize)
+            .Take(PageSize)
+            .Select(e => new EventRow(e.Id, e.Title, e.Priority.ToString(),
+                e.ImpactScore, e.IsActive, e.NewsSectionId, e.Section.Name,
+                e.Articles.Count(a => !a.IsDeleted), e.CreatedAt))
+            .ToListAsync();
+    }
+
+    private async Task LoadArticlesAsync()
+    {
+        var q = Ctx.NewsArticles.Where(a => !a.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(SearchTerm))
+            q = q.Where(a => a.Title.Contains(SearchTerm));
+        if (SectionFilter.HasValue)
+            q = q.Where(a => a.Event.NewsSectionId == SectionFilter.Value);
+
+        TotalItems = await q.CountAsync();
+
+        PagedArticles = await q
+            .OrderByDescending(a => a.PublishedAt)
+            .Skip((CurrentPage - 1) * PageSize)
+            .Take(PageSize)
+            .Select(a => new ArticleRow(a.Id, a.Title, a.SourceName, a.SourceUrl,
+                a.Relevance, a.ArticleType.ToString(), a.PublishedAt))
+            .ToListAsync();
+    }
+
+    private async Task SetTab(string tab)
+    {
+        ActiveTab = tab;
+        CurrentPage = 1;
+        SearchTerm = "";
+        PriorityFilter = null;
+        SectionFilter = null;
+        if (tab == "articles") await LoadArticlesAsync();
+        else await LoadEventsAsync();
+    }
+
+    private async Task OnSearch(ChangeEventArgs e) { SearchTerm = e.Value?.ToString() ?? ""; CurrentPage = 1; await ReloadCurrentTab(); }
+    private async Task OnPriorityFilter(ChangeEventArgs e) { PriorityFilter = e.Value?.ToString(); CurrentPage = 1; await ReloadCurrentTab(); }
+    private async Task OnSectionFilter(ChangeEventArgs e)
+    {
+        SectionFilter = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        CurrentPage = 1;
+        await ReloadCurrentTab();
+    }
+    private async Task PrevPage() { if (CurrentPage > 1) { CurrentPage--; await ReloadCurrentTab(); } }
+    private async Task NextPage() { if (CurrentPage < TotalPages) { CurrentPage++; await ReloadCurrentTab(); } }
+    private Task ReloadCurrentTab() => ActiveTab == "events" ? LoadEventsAsync() : LoadArticlesAsync();
+
+    private async Task SortBy(string column)
+    {
+        if (SortColumn == column) SortAsc = !SortAsc;
+        else { SortColumn = column; SortAsc = false; }
+        CurrentPage = 1;
+        await LoadEventsAsync();
+    }
+
+    private string SortIcon(string column)
+    {
+        if (SortColumn != column) return "fa-sort";
+        return SortAsc ? "fa-sort-up" : "fa-sort-down";
+    }
+
+    private async Task ToggleEventAsync(int id)
+    {
+        var ev = await Ctx.NewsEvents.FindAsync(id);
+        if (ev != null)
+        {
+            ev.IsActive = !ev.IsActive;
+            await Ctx.SaveChangesAsync();
+            Toast.Info(ev.IsActive ? "Evento activado" : "Evento desactivado");
+            await LoadEventsAsync();
+        }
+    }
+
+    private async Task DeleteEventAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este evento y todos sus artículos?")) return;
+        var ev = await Ctx.NewsEvents.FindAsync(id);
+        if (ev != null)
+        {
+            ev.IsDeleted = true;
+            await Ctx.SaveChangesAsync();
+            Toast.Success("Evento eliminado");
+            if (CurrentPage > 1 && PagedEvents.Count == 1) CurrentPage--;
+            await LoadEventsAsync();
+        }
+    }
+
+    private async Task DeleteArticleAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este artículo?")) return;
+        var art = await Ctx.NewsArticles.FindAsync(id);
+        if (art != null)
+        {
+            art.IsDeleted = true;
+            await Ctx.SaveChangesAsync();
+            Toast.Success("Artículo eliminado");
+            if (CurrentPage > 1 && PagedArticles.Count == 1) CurrentPage--;
+            await LoadArticlesAsync();
+        }
+    }
+
+    private Task EditEventAsync(int id) { Nav.NavigateTo($"/admin/events/{id}"); return Task.CompletedTask; }
+    [Inject] NavigationManager Nav { get; set; } = null!;
+
+    private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "…" : s;
+
+    record EventRow(int Id, string Title, string Priority, decimal ImpactScore,
+        bool IsActive, int SectionId, string SectionName, int ArticleCount, DateTime CreatedAt);
+    record ArticleRow(int Id, string Title, string SourceName, string SourceUrl,
+        decimal Relevance, string ArticleType, DateTime PublishedAt);
+
+    // --- Crear evento ---
+    private bool _showCreateEvent;
+    private bool _creatingEvent;
+    private string _createEventError = "";
+    private NewEventForm _newEvent = new();
+
+    private void OpenCreateEventModal()
+    {
+        _newEvent = new NewEventForm { Priority = EventPriority.Medium, ImpactScore = 50 };
+        _createEventError = "";
+        _showCreateEvent = true;
+    }
+
+    private void CloseCreateEvent() => _showCreateEvent = false;
+
+    private async Task SaveNewEventAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newEvent.Title)) { _createEventError = "El título es obligatorio."; return; }
+        _creatingEvent = true;
+        try
+        {
+            Ctx.NewsEvents.Add(new NewsEvent
+            {
+                Title = _newEvent.Title.Trim(),
+                Description = _newEvent.Description,
+                Priority = _newEvent.Priority,
+                ImpactScore = _newEvent.ImpactScore,
+                NewsSectionId = _newEvent.NewsSectionId,
+                EventType = "Manual",
+                StartDate = DateTime.UtcNow,
+                IsActive = true,
+                Tags = []
+            });
+            await Ctx.SaveChangesAsync();
+            _showCreateEvent = false;
+            Toast.Success($"Evento \"{_newEvent.Title.Trim()}\" creado");
+            CurrentPage = 1;
+            SearchTerm = "";
+            PriorityFilter = null;
+            SectionFilter = null;
+            await LoadEventsAsync();
+        }
+        catch (Exception ex) { _createEventError = ex.Message; }
+        finally { _creatingEvent = false; }
+    }
+
+    // Purge state
+    private int _archivedCount;
+    private int _archived30Count;
+    private int _archived90Count;
+    private bool _showPurgeConfirm;
+    private int _purgeDays = 30;
+
+    private async Task LoadPurgeStatsAsync()
+    {
+        var now = DateTime.UtcNow;
+        _archivedCount   = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived"));
+        _archived30Count = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-30));
+        _archived90Count = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-90));
+    }
+
+    private void OpenPurgeConfirm(int days) { _purgeDays = days; _showPurgeConfirm = true; }
+
+    private async Task ExecutePurge()
+    {
+        _showPurgeConfirm = false;
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-_purgeDays);
+            var toDelete = await Ctx.NewsEvents
+                .Where(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < cutoff)
+                .ToListAsync();
+            foreach (var ev in toDelete) ev.IsDeleted = true;
+            await Ctx.SaveChangesAsync();
+            Toast.Success($"Purgados {toDelete.Count} eventos con más de {_purgeDays} días");
+            await LoadEventsAsync();
+            await LoadPurgeStatsAsync();
+        }
+        catch (Exception ex) { Toast.Error($"Error al purgar: {ex.Message}"); }
+    }
+
+    class NewEventForm
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public EventPriority Priority { get; set; } = EventPriority.Medium;
+        public decimal ImpactScore { get; set; } = 50;
+        public int NewsSectionId { get; set; }
+    }
+}

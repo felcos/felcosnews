@@ -1,0 +1,29 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+publish/
+
+## Secrets / config local
+src/ANews.Web/appsettings.Production.json
+**/appsettings.*.local.json
+
+## Logs
+*.log
+logs/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## IDE
+.idea/
+*.swp
+
+## SSH keys y archivos de conexión
+*.key
+*.pem
+conexion_vm.txt
+ssh-key-*.key

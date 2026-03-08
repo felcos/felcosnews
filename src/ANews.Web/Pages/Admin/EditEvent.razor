@@ -1,0 +1,212 @@
+@page "/admin/events/{Id:int}"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout ANews.Web.Components.Layout.AdminLayout
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject ANews.Web.Services.ToastService Toast
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Editar Evento — Admin</PageTitle>
+
+<div class="admin-page-header">
+    <div>
+        <h2><i class="fa fa-edit"></i> Editar Evento</h2>
+        <p class="text-muted">ID: @Id</p>
+    </div>
+    <button class="btn btn-secondary" @onclick='() => Nav.NavigateTo("/admin/news")'>
+        <i class="fa fa-arrow-left"></i> Volver
+    </button>
+</div>
+
+@if (_loading)
+{
+    <div class="loading-spinner-wrap"><div class="loading-spinner"></div></div>
+}
+else if (_event == null)
+{
+    <div class="alert alert-danger">Evento no encontrado.</div>
+}
+else
+{
+    <div class="form-card">
+        <div class="form-grid">
+            <div class="form-group form-group-full">
+                <label>Título *</label>
+                <input class="form-control" @bind="_form.Title" />
+            </div>
+            <div class="form-group form-group-full">
+                <label>Descripción</label>
+                <textarea class="form-control" rows="4" @bind="_form.Description"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Prioridad</label>
+                <select class="form-control" @bind="_form.Priority">
+                    @foreach (var p in Enum.GetValues<EventPriority>())
+                    {
+                        <option value="@p">@p</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Impact Score (0-100)</label>
+                <input type="number" class="form-control" @bind="_form.ImpactScore" min="0" max="100" step="0.1" />
+            </div>
+            <div class="form-group">
+                <label>Sección</label>
+                <select class="form-control" @bind="_form.NewsSectionId">
+                    @foreach (var s in _sections)
+                    {
+                        <option value="@s.Id">@s.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Tendencia</label>
+                <select class="form-control" @bind="_form.Trend">
+                    @foreach (var t in Enum.GetValues<EventTrend>())
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
+            </div>
+            <div class="form-group form-group-full">
+                <label>Tags (separados por coma)</label>
+                <input class="form-control" @bind="_form.TagsText" placeholder="tag1, tag2, tag3" />
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_form.IsActive" /> Evento activo
+                </label>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-danger mt-2">@_error</div>
+        }
+
+        <div class="form-actions">
+            <button class="btn btn-secondary" @onclick='() => Nav.NavigateTo("/admin/news")'>Cancelar</button>
+            <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                @if (_saving) { <i class="fa fa-spinner fa-spin"></i> }
+                Guardar cambios
+            </button>
+        </div>
+    </div>
+
+    <!-- Artículos del evento -->
+    <div class="mt-4">
+        <h3>Artículos del evento (@_articles.Count)</h3>
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr><th>Título</th><th>Fuente</th><th>Relevancia</th><th>Tipo</th><th>Publicado</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in _articles)
+                    {
+                        <tr>
+                            <td><a href="@a.SourceUrl" target="_blank">@a.Title</a></td>
+                            <td>@a.SourceName</td>
+                            <td>@a.Relevance.ToString("F1")</td>
+                            <td>@a.ArticleType</td>
+                            <td>@a.PublishedAt.ToString("dd/MM HH:mm")</td>
+                        </tr>
+                    }
+                    @if (!_articles.Any())
+                    {
+                        <tr><td colspan="5" class="text-center text-muted">Sin artículos</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private NewsEvent? _event;
+    private List<NewsSection> _sections = [];
+    private List<NewsArticle> _articles = [];
+    private bool _loading = true;
+    private bool _saving;
+    private string _error = "";
+    private EventForm _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _sections = await Db.NewsSections.Where(s => !s.IsDeleted).OrderBy(s => s.Name).ToListAsync();
+        _event = await Db.NewsEvents.FirstOrDefaultAsync(e => e.Id == Id);
+        if (_event != null)
+        {
+            _form = new EventForm
+            {
+                Title = _event.Title,
+                Description = _event.Description ?? "",
+                Priority = _event.Priority,
+                ImpactScore = _event.ImpactScore,
+                NewsSectionId = _event.NewsSectionId,
+                Trend = _event.Trend,
+                TagsText = string.Join(", ", _event.Tags ?? []),
+                IsActive = _event.IsActive
+            };
+            _articles = await Db.NewsArticles
+                .Where(a => a.NewsEventId == Id && !a.IsDeleted)
+                .OrderByDescending(a => a.Relevance)
+                .ToListAsync();
+        }
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_event == null) return;
+        if (string.IsNullOrWhiteSpace(_form.Title)) { _error = "El título es obligatorio."; return; }
+
+        _saving = true;
+        _error = "";
+        try
+        {
+            _event.Title = _form.Title.Trim();
+            _event.Description = _form.Description;
+            _event.Priority = _form.Priority;
+            _event.ImpactScore = _form.ImpactScore;
+            _event.NewsSectionId = _form.NewsSectionId;
+            _event.Trend = _form.Trend;
+            _event.IsActive = _form.IsActive;
+            _event.Tags = _form.TagsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim())
+                .Where(t => !string.IsNullOrEmpty(t))
+                .ToArray();
+            await Db.SaveChangesAsync();
+            Toast.Success("Evento guardado correctamente");
+        }
+        catch (Exception ex)
+        {
+            _error = $"Error al guardar: {ex.Message}";
+            Toast.Error($"Error al guardar: {ex.Message}");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    class EventForm
+    {
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public EventPriority Priority { get; set; } = EventPriority.Medium;
+        public decimal ImpactScore { get; set; } = 50;
+        public int NewsSectionId { get; set; }
+        public EventTrend Trend { get; set; } = EventTrend.Stable;
+        public string TagsText { get; set; } = "";
+        public bool IsActive { get; set; } = true;
+    }
+}

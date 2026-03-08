@@ -1,0 +1,288 @@
+@page "/user/api-tokens"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Cryptography
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject UserManager<ApplicationUser> UserManager
+@inject AppDbContext Db
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>API Tokens - AgenteNews</PageTitle>
+
+<div class="user-page">
+    <div class="page-header">
+        <div>
+            <h2><i class="fa fa-key"></i> API Tokens</h2>
+            <p class="text-muted">Tokens de acceso para integraciones externas</p>
+        </div>
+        <button class="btn btn-primary" @onclick="OpenCreateModal">
+            <i class="fa fa-plus"></i> Nuevo Token
+        </button>
+    </div>
+
+    <div class="alert alert-info mb-4" style="background:rgba(74,144,226,0.08); border:1px solid rgba(74,144,226,0.2); padding:12px 16px; border-radius:8px; font-size:13px">
+        <i class="fa fa-info-circle"></i>
+        Los tokens de API permiten acceder a tus modulos de noticias desde aplicaciones externas.
+        El token completo solo se muestra una vez al crearlo.
+    </div>
+
+    @if (_tokens.Count == 0)
+    {
+        <div class="empty-state">
+            <i class="fa fa-key fa-3x"></i>
+            <h3>Sin tokens de API</h3>
+            <p>Crea un token para acceder a tus noticias desde aplicaciones externas.</p>
+        </div>
+    }
+    else
+    {
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Prefijo</th>
+                        <th>Alcance</th>
+                        <th>Usos</th>
+                        <th>Ultimo uso</th>
+                        <th>Expira</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var token in _tokens)
+                    {
+                        <tr class="@(IsExpired(token) ? "row-inactive" : "")">
+                            <td><strong>@token.Name</strong></td>
+                            <td><code class="token-prefix">@token.TokenPrefix***</code></td>
+                            <td>
+                                @foreach (var scope in token.Scopes)
+                                {
+                                    <span class="badge" style="margin-right:3px">@scope</span>
+                                }
+                            </td>
+                            <td>@token.UsageCount</td>
+                            <td class="text-muted">
+                                @(token.LastUsedAt.HasValue ? token.LastUsedAt.Value.ToString("dd/MM/yyyy HH:mm") : "Nunca")
+                            </td>
+                            <td>
+                                @if (token.ExpiresAt.HasValue)
+                                {
+                                    <span class="@(IsExpired(token) ? "text-danger" : "text-muted")">
+                                        @token.ExpiresAt.Value.ToString("dd/MM/yyyy")
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Sin expiración</span>
+                                }
+                            </td>
+                            <td>
+                                <button class="btn-icon text-danger" @onclick="() => RevokeToken(token)" title="Revocar">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Create Modal -->
+@if (_showCreate)
+{
+    <div class="modal-backdrop" @onclick="CloseModal"></div>
+    <div class="modal-panel modal-sm">
+        <div class="modal-header">
+            <h3>Nuevo API Token</h3>
+            <button class="modal-close" @onclick="CloseModal"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Nombre del token *</label>
+                <input class="form-control" @bind="_form.Name" placeholder="Ej: Mi App iOS" />
+            </div>
+            <div class="form-group">
+                <label>Alcances</label>
+                <div class="scopes-grid">
+                    @foreach (var scope in _availableScopes)
+                    {
+                        <label class="scope-option">
+                            <input type="checkbox" checked="@_form.SelectedScopes.Contains(scope)"
+                                   @onchange="e => ToggleScope(scope, (bool)e.Value!)" />
+                            @scope
+                        </label>
+                    }
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Expira en</label>
+                <select class="form-control" @bind="_form.ExpiryDays">
+                    <option value="0">Sin expiración</option>
+                    <option value="30">30 dias</option>
+                    <option value="90">90 dias</option>
+                    <option value="365">1 año</option>
+                </select>
+            </div>
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="alert alert-danger">@_formError</div>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="CloseModal">Cancelar</button>
+            <button class="btn btn-primary" @onclick="CreateToken" disabled="@_saving">
+                @if (_saving) { <i class="fa fa-spinner fa-spin"></i> }
+                Crear Token
+            </button>
+        </div>
+    </div>
+}
+
+<!-- New Token Display Modal -->
+@if (_newTokenValue != null)
+{
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel modal-sm">
+        <div class="modal-header">
+            <h3><i class="fa fa-check-circle text-success"></i> Token Creado</h3>
+        </div>
+        <div class="modal-body">
+            <div class="alert" style="background:rgba(255,204,0,0.08); border:1px solid rgba(255,204,0,0.3); padding:10px; border-radius:6px; font-size:12px; margin-bottom:12px">
+                <i class="fa fa-exclamation-triangle text-warning"></i>
+                <strong>Guarda este token ahora.</strong> No podrás verlo de nuevo.
+            </div>
+            <div class="token-display">
+                <code>@_newTokenValue</code>
+                <button class="btn-icon" @onclick="CopyToken" title="Copiar">
+                    <i class="fa fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" @onclick="() => _newTokenValue = null">Entendido, lo he guardado</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ApiToken> _tokens = new();
+    private bool _showCreate;
+    private bool _saving;
+    private string _formError = "";
+    private string? _newTokenValue;
+    private int _userId;
+
+    private readonly string[] _availableScopes = ["read:events", "read:articles", "read:modules", "write:modules"];
+
+    private TokenForm _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(auth.User);
+        if (user == null) { Nav.NavigateTo("/login"); return; }
+        _userId = user.Id;
+        await LoadTokens();
+    }
+
+    private async Task LoadTokens()
+    {
+        _tokens = await Db.ApiTokens
+            .Where(t => t.UserId == _userId && !t.IsDeleted)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+    }
+
+    private void OpenCreateModal()
+    {
+        _form = new TokenForm();
+        _form.SelectedScopes.Add("read:events");
+        _formError = "";
+        _showCreate = true;
+    }
+
+    private void CloseModal() => _showCreate = false;
+
+    private void ToggleScope(string scope, bool add)
+    {
+        if (add) _form.SelectedScopes.Add(scope);
+        else _form.SelectedScopes.Remove(scope);
+    }
+
+    private async Task CreateToken()
+    {
+        _formError = "";
+        if (string.IsNullOrWhiteSpace(_form.Name)) { _formError = "El nombre es requerido."; return; }
+        if (!_form.SelectedScopes.Any()) { _formError = "Selecciona al menos un alcance."; return; }
+
+        _saving = true;
+        try
+        {
+            // Generate random token
+            var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                .Replace("+", "-").Replace("/", "_").Replace("=", "");
+            var prefix = rawToken[..8];
+
+            // Hash for storage
+            var hash = Convert.ToBase64String(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
+
+            var token = new ApiToken
+            {
+                UserId = _userId,
+                Name = _form.Name,
+                TokenHash = hash,
+                TokenPrefix = prefix,
+                Scopes = _form.SelectedScopes.ToArray(),
+                ExpiresAt = _form.ExpiryDays > 0 ? DateTime.UtcNow.AddDays(_form.ExpiryDays) : null
+            };
+
+            await Db.ApiTokens.AddAsync(token);
+            await Db.SaveChangesAsync();
+
+            _newTokenValue = rawToken;
+            CloseModal();
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            _formError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task RevokeToken(ApiToken token)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"Revocar token '{token.Name}'?");
+        if (confirmed)
+        {
+            token.IsDeleted = true;
+            await Db.SaveChangesAsync();
+            _tokens.Remove(token);
+        }
+    }
+
+    private async Task CopyToken() =>
+        await JS.InvokeVoidAsync("copyToClipboard", _newTokenValue);
+
+    private static bool IsExpired(ApiToken t) =>
+        t.ExpiresAt.HasValue && t.ExpiresAt.Value < DateTime.UtcNow;
+
+    private class TokenForm
+    {
+        public string Name { get; set; } = "";
+        public HashSet<string> SelectedScopes { get; set; } = new();
+        public int ExpiryDays { get; set; } = 0;
+    }
+}

@@ -1,0 +1,118 @@
+@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@using ANews.Web.Components.Shared
+@inject NavigationManager Nav
+
+<div class="admin-shell">
+    @if (_sidebarOpen)
+    {
+        <div class="sidebar-backdrop" @onclick="() => _sidebarOpen = false"></div>
+    }
+    <aside class="admin-sidebar @(_sidebarOpen ? "open" : "")" id="admin-sidebar">
+        <div class="sidebar-logo">
+            <i class="fa fa-satellite"></i>
+            <span>AGENTE<strong>NEWS</strong></span>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">CONTROL</div>
+            <NavLink href="/admin" Match="NavLinkMatch.All" class="nav-item">
+                <i class="fa fa-eye"></i> God Mode
+            </NavLink>
+            <NavLink href="/admin/agents" class="nav-item">
+                <i class="fa fa-robot"></i> Agentes
+            </NavLink>
+            <NavLink href="/admin/costs" class="nav-item">
+                <i class="fa fa-dollar-sign"></i> Costes IA
+            </NavLink>
+
+            <div class="nav-section-label">CONTENIDO</div>
+            <NavLink href="/admin/news" class="nav-item">
+                <i class="fa fa-newspaper"></i> Noticias
+            </NavLink>
+            <NavLink href="/admin/sections" class="nav-item">
+                <i class="fa fa-th-large"></i> Secciones
+            </NavLink>
+            <NavLink href="/admin/sources" class="nav-item">
+                <i class="fa fa-rss"></i> Fuentes
+            </NavLink>
+
+            <div class="nav-section-label">SISTEMA</div>
+            <NavLink href="/admin/users" class="nav-item">
+                <i class="fa fa-users"></i> Usuarios
+            </NavLink>
+            <NavLink href="/admin/ai" class="nav-item">
+                <i class="fa fa-brain"></i> Proveedores IA
+            </NavLink>
+            <NavLink href="/admin/audit" class="nav-item">
+                <i class="fa fa-shield-alt"></i> Auditoría
+            </NavLink>
+        </nav>
+
+        <div class="sidebar-footer">
+            <a href="/" class="nav-item">
+                <i class="fa fa-globe"></i> Ver web
+            </a>
+            <a href="/logout" class="nav-item nav-logout">
+                <i class="fa fa-sign-out-alt"></i> Salir
+            </a>
+        </div>
+    </aside>
+
+    <div class="admin-main">
+        <div class="admin-topbar">
+            <button class="sidebar-toggle" @onclick="() => _sidebarOpen = !_sidebarOpen">
+                <i class="fa fa-bars"></i>
+            </button>
+            <div class="topbar-breadcrumb">
+                <a href="/admin" class="bc-link"><i class="fa fa-shield-alt"></i> Admin</a>
+                @if (CurrentPageName != "God Mode")
+                {
+                    <span class="bc-sep"><i class="fa fa-chevron-right"></i></span>
+                    <span class="bc-current">@CurrentPageName</span>
+                }
+            </div>
+            <div class="topbar-right">
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="topbar-user">
+                            <i class="fa fa-user-circle"></i>
+                            @context.User.Identity?.Name
+                        </span>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </div>
+
+        <div class="admin-content">
+            @Body
+        </div>
+    </div>
+</div>
+<ToastContainer />
+
+@code {
+    private bool _sidebarOpen;
+
+    private string CurrentPageName
+    {
+        get
+        {
+            var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
+            return path switch
+            {
+                "/admin"          => "God Mode",
+                "/admin/agents"   => "Agentes",
+                "/admin/costs"    => "Costes IA",
+                "/admin/news"     => "Noticias",
+                "/admin/sections" => "Secciones",
+                "/admin/sources"  => "Fuentes",
+                "/admin/users"    => "Usuarios",
+                "/admin/ai"       => "Proveedores IA",
+                "/admin/audit"    => "Auditoría",
+                _ when path.StartsWith("/admin/events/") => "Editar Evento",
+                _ => "Admin"
+            };
+        }
+    }
+}

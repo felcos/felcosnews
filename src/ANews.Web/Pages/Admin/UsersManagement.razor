@@ -1,0 +1,240 @@
+@page "/admin/users"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout AdminLayout
+@inject AppDbContext Ctx
+@inject UserManager<ApplicationUser> UserManager
+@inject IJSRuntime JS
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Usuarios — Admin</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <h1><i class="fa fa-users"></i> Gestión de Usuarios</h1>
+        <div class="header-stats">
+            <span>Total: <strong>@Users.Count</strong></span>
+            <span>Activos: <strong>@Users.Count(u => u.IsActive)</strong></span>
+            <span>Módulos: <strong>@TotalModules</strong></span>
+        </div>
+    </div>
+
+    <div class="filter-bar">
+        <input class="search-input" @bind="SearchTerm" @oninput="OnSearch" placeholder="Buscar por email o nombre..." />
+        <select class="filter-select" @onchange="OnRoleFilter">
+            <option value="">Todos los roles</option>
+            @foreach (var r in Enum.GetValues<UserRole>())
+            {
+                <option value="@r">@r</option>
+            }
+        </select>
+        <label class="checkbox-label">
+            <input type="checkbox" @bind="ShowInactive" @bind:after="ApplyFilter" />
+            Mostrar inactivos
+        </label>
+    </div>
+
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Usuario</th>
+                    <th>Email</th>
+                    <th>Rol</th>
+                    <th>Módulos</th>
+                    <th>Canales</th>
+                    <th>Registro</th>
+                    <th>Último acceso</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var u in PagedUsers)
+                {
+                    <tr class="@(!u.IsActive ? "row-inactive" : "")">
+                        <td class="td-id">#@u.Id</td>
+                        <td>
+                            <div class="user-cell">
+                                <div class="user-avatar">@u.DisplayName[0]</div>
+                                <span>@u.DisplayName</span>
+                            </div>
+                        </td>
+                        <td>@u.Email</td>
+                        <td><span class="role-badge role-@u.Role.ToLower()">@u.Role</span></td>
+                        <td>@u.ModuleCount</td>
+                        <td>@u.ChannelCount</td>
+                        <td>@u.CreatedAt.ToString("dd/MM/yyyy")</td>
+                        <td>@(u.LastLoginAt?.ToString("dd/MM HH:mm") ?? "Nunca")</td>
+                        <td>
+                            <span class="status-dot @(u.IsActive ? "dot-active" : "dot-inactive")"></span>
+                        </td>
+                        <td class="td-actions">
+                            <button class="btn-icon" @onclick="() => ShowEditUser(u)" title="Editar">
+                                <i class="fa fa-edit"></i>
+                            </button>
+                            <button class="btn-icon btn-toggle" @onclick="() => ToggleUserAsync(u.Id)"
+                                    title="@(u.IsActive ? "Desactivar" : "Activar")">
+                                <i class="fa @(u.IsActive ? "fa-lock" : "fa-unlock")"></i>
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pagination">
+        <button @onclick="PrevPage" disabled="@(CurrentPage == 1)"><i class="fa fa-chevron-left"></i></button>
+        <span>@CurrentPage / @TotalPages</span>
+        <button @onclick="NextPage" disabled="@(CurrentPage >= TotalPages)"><i class="fa fa-chevron-right"></i></button>
+    </div>
+</div>
+
+@if (ShowEditModal && EditingUser != null)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Editar usuario: @EditingUser.Email</h3>
+                <button @onclick="CloseModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Nombre visible</label>
+                    <input class="form-input" @bind="EditForm.DisplayName" />
+                </div>
+                <div class="form-group">
+                    <label>Rol</label>
+                    <select class="form-input" @bind="EditForm.Role">
+                        @foreach (var r in Enum.GetValues<UserRole>())
+                        {
+                            <option value="@r">@r</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Nueva contraseña (dejar en blanco para no cambiar)</label>
+                    <input type="password" class="form-input" @bind="EditForm.NewPassword" />
+                </div>
+                @if (!string.IsNullOrEmpty(EditError))
+                {
+                    <div class="form-error">@EditError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" @onclick="CloseModal">Cancelar</button>
+                <button class="btn-primary" @onclick="SaveUserAsync">Guardar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<UserRow> Users = [];
+    private List<UserRow> FilteredUsers = [];
+    private string SearchTerm = "";
+    private string? RoleFilter;
+    private bool ShowInactive = false;
+    private int CurrentPage = 1;
+    private const int PageSize = 25;
+    private int TotalModules;
+
+    private bool ShowEditModal = false;
+    private UserRow? EditingUser;
+    private UserEditForm EditForm = new();
+    private string? EditError;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredUsers.Count / (double)PageSize));
+    private IEnumerable<UserRow> PagedUsers => FilteredUsers.Skip((CurrentPage - 1) * PageSize).Take(PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Users = await Ctx.Users
+            .Select(u => new UserRow(
+                u.Id, u.DisplayName ?? "", u.Email ?? "",
+                u.Role.ToString(), u.IsActive,
+                u.CreatedAt, u.LastLoginAt,
+                Ctx.UserModules.Count(m => m.UserId == u.Id),
+                Ctx.NotificationChannels.Count(c => c.UserId == u.Id)))
+            .ToListAsync();
+
+        TotalModules = await Ctx.UserModules.CountAsync();
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        FilteredUsers = Users
+            .Where(u => ShowInactive || u.IsActive)
+            .Where(u => string.IsNullOrEmpty(SearchTerm) ||
+                u.Email.Contains(SearchTerm, StringComparison.OrdinalIgnoreCase) ||
+                u.DisplayName.Contains(SearchTerm, StringComparison.OrdinalIgnoreCase))
+            .Where(u => string.IsNullOrEmpty(RoleFilter) || u.Role == RoleFilter)
+            .ToList();
+        CurrentPage = 1;
+    }
+
+    private void OnSearch(ChangeEventArgs e) { SearchTerm = e.Value?.ToString() ?? ""; ApplyFilter(); }
+    private void OnRoleFilter(ChangeEventArgs e) { RoleFilter = e.Value?.ToString(); ApplyFilter(); }
+    private void PrevPage() { if (CurrentPage > 1) CurrentPage--; }
+    private void NextPage() { if (CurrentPage < TotalPages) CurrentPage++; }
+
+    private async Task ToggleUserAsync(int id)
+    {
+        var user = await UserManager.FindByIdAsync(id.ToString());
+        if (user != null)
+        {
+            user.IsActive = !user.IsActive;
+            await UserManager.UpdateAsync(user);
+            var row = Users.FirstOrDefault(u => u.Id == id);
+            if (row != null) Users[Users.IndexOf(row)] = row with { IsActive = user.IsActive };
+            ApplyFilter();
+        }
+    }
+
+    private void ShowEditUser(UserRow u)
+    {
+        EditingUser = u;
+        EditForm = new UserEditForm { DisplayName = u.DisplayName, Role = Enum.Parse<UserRole>(u.Role) };
+        EditError = null;
+        ShowEditModal = true;
+    }
+
+    private void CloseModal() => ShowEditModal = false;
+
+    private async Task SaveUserAsync()
+    {
+        if (EditingUser == null) return;
+        var user = await UserManager.FindByIdAsync(EditingUser.Id.ToString());
+        if (user == null) return;
+
+        user.DisplayName = EditForm.DisplayName;
+        user.Role = EditForm.Role;
+        await UserManager.UpdateAsync(user);
+
+        if (!string.IsNullOrWhiteSpace(EditForm.NewPassword))
+        {
+            var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+            var result = await UserManager.ResetPasswordAsync(user, token, EditForm.NewPassword);
+            if (!result.Succeeded) { EditError = string.Join(", ", result.Errors.Select(e => e.Description)); return; }
+        }
+
+        ShowEditModal = false;
+        await OnInitializedAsync();
+    }
+
+    record UserRow(int Id, string DisplayName, string Email, string Role,
+        bool IsActive, DateTime CreatedAt, DateTime? LastLoginAt, int ModuleCount, int ChannelCount);
+
+    class UserEditForm
+    {
+        public string DisplayName { get; set; } = "";
+        public UserRole Role { get; set; } = UserRole.User;
+        public string? NewPassword { get; set; }
+    }
+}

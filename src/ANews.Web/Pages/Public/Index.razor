@@ -1,0 +1,480 @@
+@page "/"
+@inject IJSRuntime JS
+@inject AppDbContext Ctx
+@inject AuthenticationStateProvider AuthStateProvider
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.EntityFrameworkCore
+@implements IAsyncDisposable
+
+<PageTitle>AgenteNews — Noticias Inteligentes</PageTitle>
+
+<div class="public-layout" id="app-root">
+
+    <!-- Header -->
+    <header class="site-header">
+        <div class="header-brand">
+            <i class="fa fa-satellite"></i>
+            <span class="brand-name">AGENTE<strong>NEWS</strong></span>
+            <span class="brand-beta">BETA</span>
+        </div>
+
+        <nav class="section-nav" id="section-nav">
+            <button class="nav-tab @(SelectedSection == "all" ? "active" : "")"
+                    @onclick="@(() => SelectSection("all"))">
+                <i class="fa fa-globe"></i> Todo
+            </button>
+            @foreach (var s in Sections)
+            {
+                <button class="nav-tab @(SelectedSection == s.Slug ? "active" : "")"
+                        @onclick="@(() => SelectSection(s.Slug))"
+                        style="--section-color:@s.Color">
+                    <i class="fa @s.IconClass"></i> @s.Name
+                </button>
+            }
+        </nav>
+
+        <div class="header-right">
+            <div class="live-status @(IsConnected ? "live" : "offline")">
+                <span class="pulse-dot"></span>
+                @(IsConnected ? "EN VIVO" : "OFFLINE")
+            </div>
+            <div class="view-switcher">
+                <button class="view-btn @(ViewMode == "universe" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("universe"))" title="Vista universo">
+                    <i class="fa fa-globe"></i>
+                </button>
+                <button class="view-btn @(ViewMode == "grid" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("grid"))" title="Vista grid">
+                    <i class="fa fa-th"></i>
+                </button>
+                <button class="view-btn @(ViewMode == "list" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("list"))" title="Vista lista">
+                    <i class="fa fa-list"></i>
+                </button>
+            </div>
+            <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
+            <AuthorizeView>
+                <Authorized>
+                    <a href="/user" class="btn-user"><i class="fa fa-user"></i></a>
+                </Authorized>
+                <NotAuthorized>
+                    <a href="/login" class="btn-login">Entrar</a>
+                    <a href="/register" class="btn-register">Registrarse</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </header>
+
+    <!-- Alertas críticas -->
+    @if (CriticalAlerts.Any())
+    {
+        <div class="critical-banner">
+            <i class="fa fa-exclamation-triangle"></i>
+            <div class="alert-ticker">
+                @foreach (var a in CriticalAlerts.Take(3))
+                {
+                    <span class="alert-item">@a.Title</span>
+                }
+            </div>
+            <button class="close-banner" @onclick="DismissBanner"><i class="fa fa-times"></i></button>
+        </div>
+    }
+
+    <!-- Stats bar + search -->
+    <div class="stats-bar">
+        <div class="stat-item">
+            <span class="stat-num">@FilteredEvents.Count</span>
+            <span class="stat-lbl">Eventos activos</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num">@Events.Sum(e => e.ArticleCount)</span>
+            <span class="stat-lbl">Artículos</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num">@Events.Count(e => e.Priority == "Critical")</span>
+            <span class="stat-lbl">Críticos</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-num">@LastUpdate.ToString("HH:mm")</span>
+            <span class="stat-lbl">Último update</span>
+        </div>
+        <div class="stat-search">
+            <i class="fa fa-search"></i>
+            <input type="text" placeholder="Buscar eventos..." @bind="_searchQuery" @bind:event="oninput"
+                   class="search-input" />
+            @if (!string.IsNullOrEmpty(_searchQuery))
+            {
+                <button class="search-clear" @onclick="@(() => _searchQuery = "")"><i class="fa fa-times"></i></button>
+            }
+        </div>
+    </div>
+
+    <!-- Main content area -->
+    <main class="content-area" id="content-area">
+
+        @if (IsLoading)
+        {
+            <div class="skeleton-grid">
+                @for (int i = 0; i < 6; i++)
+                {
+                    <div class="skeleton-card">
+                        <div class="skeleton-bar" style="width:40%"></div>
+                        <div class="skeleton-bar title"></div>
+                        <div class="skeleton-bar medium"></div>
+                        <div class="skeleton-bar short"></div>
+                        <div class="skeleton-bar" style="width:55%"></div>
+                    </div>
+                }
+            </div>
+        }
+        else if (!Events.Any())
+        {
+            <div class="empty-universe">
+                <i class="fa fa-satellite-dish"></i>
+                <h2>Escaneando fuentes...</h2>
+                <p>Los agentes están trabajando. Vuelve en unos minutos.</p>
+            </div>
+        }
+        else if (ViewMode == "universe")
+        {
+            <!-- Universe canvas - gestionado por universe.js sin conflictos Blazor -->
+            <div class="universe-container" id="universe-container">
+                <canvas id="universe-canvas"></canvas>
+                <!-- Tooltip overlay gestionado por JS -->
+                <div id="universe-tooltip" class="universe-tooltip" style="display:none"></div>
+            </div>
+        }
+        else if (ViewMode == "grid")
+        {
+            <div class="events-grid">
+                @foreach (var ev in FilteredEvents)
+                {
+                    <div class="event-card priority-@ev.Priority.ToLower()" @onclick="() => OpenEvent(ev)">
+                        <div class="event-card-header">
+                            <span class="event-priority">@ev.Priority</span>
+                            <span class="event-section">@ev.SectionName</span>
+                            <span class="event-impact">@ev.ImpactScore.ToString("F0")</span>
+                        </div>
+                        <h3 class="event-title">@ev.Title</h3>
+                        <p class="event-desc">@Truncate(ev.Description ?? "", 120)</p>
+                        <div class="event-footer">
+                            <span class="event-articles">@ev.ArticleCount art.</span>
+                            <span class="event-trend trend-@ev.Trend.ToLower()">@TrendIcon(ev.Trend) @ev.Trend</span>
+                            <span class="event-date">@ev.StartDate.ToString("dd/MM HH:mm")</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="events-list">
+                @foreach (var ev in FilteredEvents)
+                {
+                    <div class="event-list-item priority-border-@ev.Priority.ToLower()" @onclick="() => OpenEvent(ev)">
+                        <div class="eli-priority">
+                            <span class="priority-dot priority-@ev.Priority.ToLower()"></span>
+                        </div>
+                        <div class="eli-content">
+                            <h3>@ev.Title</h3>
+                            <p>@Truncate(ev.Description ?? "", 150)</p>
+                            <div class="eli-meta">
+                                <span>@ev.SectionName</span>
+                                <span>@ev.ArticleCount artículos</span>
+                                <span>@TrendIcon(ev.Trend) @ev.Trend</span>
+                            </div>
+                        </div>
+                        <div class="eli-impact">@ev.ImpactScore.ToString("F0")</div>
+                    </div>
+                }
+            </div>
+        }
+    </main>
+</div>
+
+<!-- Event Detail Modal -->
+@if (SelectedEvent != null)
+{
+    <div class="event-modal-overlay" @onclick="CloseEvent">
+        <div class="event-modal" @onclick:stopPropagation>
+            <div class="em-header priority-bg-@SelectedEvent.Priority.ToLower()">
+                <div class="em-badges">
+                    <span class="em-priority">@SelectedEvent.Priority</span>
+                    <span class="em-section">@SelectedEvent.SectionName</span>
+                </div>
+                <button class="em-close" @onclick="CloseEvent"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="em-body">
+                <h2>@SelectedEvent.Title</h2>
+                <p class="em-desc">@SelectedEvent.Description</p>
+                @if (SelectedEvent.Tags.Any())
+                {
+                    <div class="em-tags">
+                        @foreach (var tag in SelectedEvent.Tags)
+                        {
+                            <span class="em-tag">#@tag</span>
+                        }
+                    </div>
+                }
+                <h4>Artículos (@SelectedEvent.ArticleCount)</h4>
+                <div class="em-articles">
+                    @foreach (var art in SelectedEventArticles)
+                    {
+                        var isExpanded = _expandedArticles.Contains(art.Id);
+                        <div class="em-article @(isExpanded ? "em-article-expanded" : "")">
+                            <div class="em-art-type">@art.ArticleType</div>
+                            <div class="em-art-content">
+                                <a href="/article/@art.Id" class="em-art-title">@art.Title</a>
+                                <span class="em-art-source">@art.SourceName</span>
+                                @if (isExpanded && !string.IsNullOrEmpty(art.Summary))
+                                {
+                                    <p class="em-art-preview">@art.Summary</p>
+                                }
+                            </div>
+                            <div class="em-art-relevance">@art.Relevance.ToString("F0")</div>
+                            @if (!string.IsNullOrEmpty(art.Summary))
+                            {
+                                <button class="em-art-preview-btn" @onclick="@(() => ToggleArticlePreview(art.Id))"
+                                        title="@(isExpanded ? "Ocultar resumen" : "Ver resumen")">
+                                    <i class="fa @(isExpanded ? "fa-chevron-up" : "fa-chevron-down")"></i>
+                                </button>
+                            }
+                            <a href="@art.SourceUrl" target="_blank" rel="noopener" title="Ver fuente original" class="em-art-ext">
+                                <i class="fa fa-external-link-alt"></i>
+                            </a>
+                        </div>
+                    }
+                </div>
+                <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right">
+                    <a href="/situation/@SelectedEvent.Id" class="btn btn-primary btn-sm">
+                        <i class="fa fa-stream"></i> Ver cronología completa
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "eventId")]
+    private int? AutoOpenEventId { get; set; }
+
+    private HubConnection? _hub;
+    private bool IsConnected => _hub?.State == HubConnectionState.Connected;
+    private bool IsLoading = true;
+    private string SelectedSection = "all";
+    private string ViewMode = "grid";
+    private DateTime LastUpdate = DateTime.Now;
+
+    private string _searchQuery = "";
+    private List<SectionItem> Sections = [];
+    private List<EventItem> Events = [];
+    private List<EventItem> FilteredEvents
+    {
+        get
+        {
+            var q = SelectedSection == "all" ? Events : Events.Where(e => e.SectionSlug == SelectedSection);
+            if (!string.IsNullOrWhiteSpace(_searchQuery))
+            {
+                var s = _searchQuery.Trim().ToLowerInvariant();
+                q = q.Where(e =>
+                    (e.Title?.ToLowerInvariant().Contains(s) ?? false) ||
+                    (e.Description?.ToLowerInvariant().Contains(s) ?? false) ||
+                    e.Tags.Any(t => t.ToLowerInvariant().Contains(s)));
+            }
+            return q.ToList();
+        }
+    }
+
+    private List<AlertItem> CriticalAlerts = [];
+    private EventItem? SelectedEvent;
+    private List<ArticleItem> SelectedEventArticles = [];
+    private HashSet<int> _expandedArticles = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Sections = await Ctx.NewsSections
+            .Where(s => s.IsPublic && !s.IsDeleted)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
+            .ToListAsync();
+
+        await LoadEventsAsync();
+        IsLoading = false;
+    }
+
+    private async Task LoadEventsAsync()
+    {
+        Events = await Ctx.NewsEvents
+            .Include(e => e.Section)
+            .Where(e => e.IsActive && e.EventType != "Unclassified")
+            .OrderByDescending(e => e.Priority)
+            .ThenByDescending(e => e.ImpactScore)
+            .Take(50)
+            .Select(e => new EventItem(
+                e.Id, e.Title, e.Description, e.Priority.ToString(),
+                e.ImpactScore, e.Trend.ToString(), e.Tags,
+                e.Section.Name, e.Section.Slug, e.StartDate,
+                e.Articles.Count(a => !a.IsDeleted)))
+            .ToListAsync();
+
+        CriticalAlerts = await Ctx.AlertTriggers
+            .Where(a => !a.IsAcknowledged)
+            .OrderByDescending(a => a.Severity)
+            .Take(5)
+            .Select(a => new AlertItem(a.Id, a.Title))
+            .ToListAsync();
+
+        LastUpdate = DateTime.Now;
+    }
+
+    private async Task SetupSignalRAsync()
+    {
+        try
+        {
+            _hub = new HubConnectionBuilder()
+                .WithUrl(NavManager.ToAbsoluteUri("/newshub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hub.On<object>("NewEvent", async _ =>
+            {
+                await LoadEventsAsync();
+                await InvokeAsync(StateHasChanged);
+                if (ViewMode == "universe")
+                    try { await JS.InvokeVoidAsync("universe.updateData", Events); } catch { }
+            });
+
+            _hub.On<object>("CriticalAlert", async _ =>
+            {
+                await LoadEventsAsync();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            await _hub.StartAsync();
+            await _hub.SendAsync("JoinSection", SelectedSection);
+        }
+        catch
+        {
+            // Hub no disponible — modo sin actualización en tiempo real
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await SetupSignalRAsync();
+        if (ViewMode == "universe")
+            await InitUniverseAsync();
+
+        // Auto-open a specific event when navigating from Dashboard or a direct link
+        if (AutoOpenEventId.HasValue)
+        {
+            var ev = Events.FirstOrDefault(e => e.Id == AutoOpenEventId.Value);
+            if (ev != null)
+            {
+                await OpenEvent(ev);
+                StateHasChanged();
+            }
+        }
+
+        // Load module keywords for logged-in users and pass to universe
+        await LoadUserKeywordsAsync();
+    }
+
+    private async Task LoadUserKeywordsAsync()
+    {
+        try
+        {
+            var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
+
+            var userName = auth.User.Identity?.Name;
+            if (string.IsNullOrEmpty(userName)) return;
+
+            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            if (user == null) return;
+
+            var keywords = await Ctx.Set<ANews.Domain.Entities.ModuleKeyword>()
+                .Where(k => k.Module.UserId == user.Id && !k.Module.IsDeleted && k.Module.IsActive)
+                .Select(k => k.Keyword)
+                .Distinct()
+                .ToListAsync();
+
+            if (keywords.Count > 0)
+                try { await JS.InvokeVoidAsync("universe.setUserKeywords", keywords); } catch { }
+        }
+        catch { /* No bloquear si falla */ }
+    }
+
+    private async Task InitUniverseAsync()
+    {
+        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", Events); }
+        catch { /* universe.js no disponible */ }
+    }
+
+    private async Task SetViewMode(string mode)
+    {
+        ViewMode = mode;
+        if (mode == "universe")
+        {
+            await Task.Delay(50);
+            await InitUniverseAsync();
+        }
+    }
+
+    private async Task SelectSection(string slug)
+    {
+        if (_hub?.State == HubConnectionState.Connected)
+        {
+            await _hub.SendAsync("LeaveSection", SelectedSection);
+            await _hub.SendAsync("JoinSection", slug);
+        }
+        SelectedSection = slug;
+        if (ViewMode == "universe")
+            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents); } catch { }
+    }
+
+    private async Task OpenEvent(EventItem ev)
+    {
+        SelectedEvent = ev;
+        _expandedArticles.Clear();
+        SelectedEventArticles = await Ctx.NewsArticles
+            .Where(a => a.NewsEventId == ev.Id && !a.IsDeleted)
+            .OrderByDescending(a => a.Relevance)
+            .Select(a => new ArticleItem(a.Id, a.Title, a.SourceName, a.SourceUrl,
+                a.Relevance, a.ArticleType.ToString(), a.Summary))
+            .ToListAsync();
+    }
+
+    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); }
+
+    private void ToggleArticlePreview(int id)
+    {
+        if (!_expandedArticles.Remove(id))
+            _expandedArticles.Add(id);
+    }
+    private void DismissBanner() => CriticalAlerts.Clear();
+
+    [Inject] NavigationManager NavManager { get; set; } = null!;
+
+    private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "…" : s;
+    private static string TrendIcon(string trend) => trend switch
+    {
+        "Increasing" => "↑", "Surging" => "↑↑", "Decreasing" => "↓", "Declining" => "↓↓", _ => "→"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hub != null) await _hub.DisposeAsync();
+    }
+
+    record SectionItem(int Id, string Name, string Slug, string Color, string IconClass);
+    record EventItem(int Id, string Title, string? Description, string Priority,
+        decimal ImpactScore, string Trend, string[] Tags, string SectionName, string SectionSlug,
+        DateTime StartDate, int ArticleCount);
+    record AlertItem(int Id, string Title);
+    record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary);
+}

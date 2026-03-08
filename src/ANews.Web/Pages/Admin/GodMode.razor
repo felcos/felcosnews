@@ -1,0 +1,554 @@
+@page "/admin"
+@page "/admin/godmode"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout AdminLayout
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject IHubContext<AdminHub> AdminHubCtx
+@inject AppDbContext Ctx
+@inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
+@inject ANews.Infrastructure.Agents.EventDetectorAgent EventDetectorAgent
+@inject ANews.Infrastructure.Agents.AlertGeneratorAgent AlertGeneratorAgent
+@inject ANews.Infrastructure.Agents.NotificationDispatcherAgent NotificationDispatcherAgent
+@inject ANews.Infrastructure.Agents.ArticleSummarizerAgent ArticleSummarizerAgent
+@inject ANews.Infrastructure.Agents.DigestSenderAgent DigestSenderAgent
+@using ANews.Infrastructure.Data
+@using ANews.Web.Hubs
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.SignalR
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@implements IAsyncDisposable
+
+<PageTitle>God Mode — AgenteNews Admin</PageTitle>
+
+<div class="god-mode">
+
+    <!-- Top Header -->
+    <div class="gm-header">
+        <div class="gm-title">
+            <i class="fa fa-eye"></i>
+            <span>GOD MODE</span>
+            <div class="gm-live @(IsConnected ? "live" : "offline")">
+                <span class="pulse-dot"></span>
+                @(IsConnected ? "EN VIVO" : "DESCONECTADO")
+            </div>
+        </div>
+        <div class="gm-header-actions">
+            <span class="gm-time">@DateTime.Now.ToString("HH:mm:ss")</span>
+            <button class="btn-action" @onclick="RefreshAll" title="Actualizar todo">
+                <i class="fa fa-sync @(IsLoading ? "fa-spin" : "")"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="gm-kpis">
+        <div class="kpi-card @(Stats.AgentsRunningCount > 0 ? "kpi-active" : "")">
+            <i class="fa fa-robot kpi-icon"></i>
+            <div class="kpi-value">@Stats.AgentsRunningCount</div>
+            <div class="kpi-label">Agentes activos</div>
+            @if (Stats.AgentsRunningCount > 0)
+            {
+                <div class="kpi-detail">@string.Join(", ", Stats.RunningAgentNames)</div>
+            }
+        </div>
+        <div class="kpi-card">
+            <i class="fa fa-newspaper kpi-icon"></i>
+            <div class="kpi-value">@Stats.ArticlesToday</div>
+            <div class="kpi-label">Artículos hoy</div>
+        </div>
+        <div class="kpi-card">
+            <i class="fa fa-bolt kpi-icon"></i>
+            <div class="kpi-value">@Stats.EventsToday</div>
+            <div class="kpi-label">Eventos hoy</div>
+        </div>
+        <div class="kpi-card @(Stats.CostToday > 5 ? "kpi-warn" : "")">
+            <i class="fa fa-dollar-sign kpi-icon"></i>
+            <div class="kpi-value">$@Stats.CostToday.ToString("F4")</div>
+            <div class="kpi-label">Coste hoy</div>
+            <div class="kpi-detail">Mes: $@Stats.CostMonth.ToString("F2")</div>
+        </div>
+        <div class="kpi-card @(Stats.PendingAlerts > 0 ? "kpi-alert" : "")">
+            <i class="fa fa-bell kpi-icon"></i>
+            <div class="kpi-value">@Stats.PendingAlerts</div>
+            <div class="kpi-label">Alertas pendientes</div>
+        </div>
+        <div class="kpi-card">
+            <i class="fa fa-users kpi-icon"></i>
+            <div class="kpi-value">@Stats.ActiveUsers</div>
+            <div class="kpi-label">Usuarios activos</div>
+            <div class="kpi-detail">Total: @Stats.TotalUsers</div>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="gm-grid">
+
+        <!-- Agentes en tiempo real -->
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header">
+                <i class="fa fa-terminal"></i>
+                <span>Monitor de Agentes — Logs en Tiempo Real</span>
+                <div class="panel-actions">
+                    <button class="btn-sm @(AgentFilter == "all" ? "active" : "")" @onclick="@(() => AgentFilter = "all")">Todos</button>
+                    <button class="btn-sm @(AgentFilter == "error" ? "active" : "")" @onclick="@(() => AgentFilter = "error")">Errores</button>
+                    <button class="btn-sm" @onclick="ClearLogs">Limpiar</button>
+                </div>
+            </div>
+            <div class="agent-log-feed" id="agent-log-feed">
+                @foreach (var log in FilteredLogs.TakeLast(200))
+                {
+                    <div class="log-entry log-@log.Level.ToLower()">
+                        <span class="log-time">@log.Time.ToString("HH:mm:ss")</span>
+                        <span class="log-badge badge-@log.Level.ToLower()">@log.Level</span>
+                        <span class="log-agent">[@log.AgentName]</span>
+                        <span class="log-msg">@log.Message</span>
+                    </div>
+                }
+                @if (!LiveLogs.Any())
+                {
+                    <div class="log-empty">
+                        <i class="fa fa-satellite-dish"></i>
+                        Esperando actividad de agentes...
+                    </div>
+                }
+            </div>
+
+            <!-- Acciones rápidas de agentes -->
+            <div class="agent-actions">
+                @foreach (var agent in AgentTriggers)
+                {
+                    <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
+                            @onclick="() => TriggerAgentAsync(agent.Name)"
+                            disabled="@agent.IsRunning">
+                        <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
+                        @agent.DisplayName
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- Costes por proveedor -->
+        <div class="gm-panel">
+            <div class="panel-header">
+                <i class="fa fa-chart-pie"></i>
+                <span>Costes de IA</span>
+                <select class="select-sm" @onchange="ChangeCostPeriod">
+                    <option value="today">Hoy</option>
+                    <option value="week">7 días</option>
+                    <option value="month">Mes</option>
+                </select>
+            </div>
+            <div class="cost-total">
+                <span class="cost-amount">$@TotalCostSelected.ToString("F4")</span>
+                <span class="cost-period">@CostPeriodLabel</span>
+            </div>
+            <canvas id="costChart" height="180"></canvas>
+            <div class="provider-list">
+                @foreach (var p in ProviderCosts)
+                {
+                    <div class="provider-row">
+                        <span class="provider-name">@p.Name</span>
+                        <div class="provider-bar">
+                            <div class="bar-fill" style="width:@(p.Percent)%; background:@p.Color"></div>
+                        </div>
+                        <span class="provider-cost">$@p.Cost.ToString("F4")</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Health del sistema -->
+        <div class="gm-panel">
+            <div class="panel-header">
+                <i class="fa fa-heartbeat"></i>
+                <span>Sistema Health</span>
+            </div>
+            <div class="health-list">
+                @foreach (var check in SystemHealth)
+                {
+                    <div class="health-row">
+                        <div class="health-indicator @(check.IsOk ? "ok" : "fail")"></div>
+                        <span class="health-name">@check.Name</span>
+                        <span class="health-value">@check.Value</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Alertas críticas pendientes -->
+        <div class="gm-panel">
+            <div class="panel-header">
+                <i class="fa fa-exclamation-triangle"></i>
+                <span>Alertas Pendientes (@PendingAlerts.Count)</span>
+            </div>
+            <div class="alert-list">
+                @foreach (var alert in PendingAlerts.Take(10))
+                {
+                    <div class="alert-row severity-@alert.Severity.ToLower()">
+                        <div class="alert-info">
+                            <span class="alert-title">@alert.Title</span>
+                            <span class="alert-time">@alert.CreatedAt.ToString("dd/MM HH:mm")</span>
+                        </div>
+                        <button class="btn-ack" @onclick="() => AcknowledgeAlertAsync(alert.Id)">
+                            <i class="fa fa-check"></i>
+                        </button>
+                    </div>
+                }
+                @if (!PendingAlerts.Any())
+                {
+                    <div class="no-alerts"><i class="fa fa-shield-check"></i> Sin alertas pendientes</div>
+                }
+            </div>
+        </div>
+
+        <!-- Últimas ejecuciones -->
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header">
+                <i class="fa fa-history"></i>
+                <span>Últimas Ejecuciones de Agentes</span>
+                <a href="/admin/agents" class="panel-link">Ver todo</a>
+            </div>
+            <table class="gm-table">
+                <thead>
+                    <tr>
+                        <th>Agente</th>
+                        <th>Inicio</th>
+                        <th>Duración</th>
+                        <th>Items</th>
+                        <th>Coste IA</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var exec in RecentExecutions)
+                    {
+                        <tr @onclick="() => ShowExecutionLogs(exec.Id)" class="clickable-row">
+                            <td>@exec.AgentName</td>
+                            <td>@exec.StartedAt.ToString("dd/MM HH:mm:ss")</td>
+                            <td>@FormatDuration(exec.DurationMs)</td>
+                            <td>@exec.ItemsProcessed / @exec.ItemsCreated</td>
+                            <td>$@exec.AiCost.ToString("F4")</td>
+                            <td><span class="status-badge status-@exec.Status.ToLower()">@exec.Status</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+</div>
+
+<!-- Modal logs de ejecución -->
+@if (ShowLogsModal)
+{
+    <div class="modal-overlay" @onclick="CloseLogsModal">
+        <div class="modal-box modal-large" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Logs de Ejecución #@SelectedExecutionId</h3>
+                <button @onclick="CloseLogsModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body log-modal-body">
+                @foreach (var log in ExecutionLogs)
+                {
+                    <div class="log-entry log-@log.Level.ToLower()">
+                        <span class="log-time">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
+                        <span class="log-badge badge-@log.Level.ToLower()">@log.Level</span>
+                        <span class="log-msg">@log.Message</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private HubConnection? _adminHub;
+    private HubConnection? _agentHub;
+    private bool IsConnected => _adminHub?.State == HubConnectionState.Connected;
+    private bool IsLoading = false;
+    private string AgentFilter = "all";
+    private string CostPeriod = "today";
+    private string CostPeriodLabel => CostPeriod switch { "week" => "7 días", "month" => "Mes", _ => "Hoy" };
+    private bool ShowLogsModal = false;
+    private int SelectedExecutionId;
+
+    private DashboardStats Stats = new();
+    private List<LiveLogEntry> LiveLogs = [];
+    private List<AlertItem> PendingAlerts = [];
+    private List<ExecutionItem> RecentExecutions = [];
+    private List<ProviderCostItem> ProviderCosts = [];
+    private List<HealthItem> SystemHealth = [];
+    private List<AgentTriggerItem> AgentTriggers = [];
+    private List<ExecutionLogItem> ExecutionLogs = [];
+    private decimal TotalCostSelected;
+
+    private IEnumerable<LiveLogEntry> FilteredLogs => AgentFilter == "error"
+        ? LiveLogs.Where(l => l.Level is "Error" or "Warning")
+        : LiveLogs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        InitAgentTriggers();
+        await LoadInitialDataAsync();
+        await LoadSystemHealthAsync();
+    }
+
+    private void InitAgentTriggers()
+    {
+        AgentTriggers =
+        [
+            new("NewsScannerAgent", "Scanner RSS"),
+            new("EventDetectorAgent", "Detector Eventos"),
+            new("AlertGeneratorAgent", "Generador Alertas"),
+            new("NotificationDispatcherAgent", "Dispatcher Notif."),
+            new("ArticleSummarizerAgent", "Resumidor Artículos"),
+            new("DigestSenderAgent", "Digest Email")
+        ];
+    }
+
+    private async Task LoadInitialDataAsync()
+    {
+        var today = DateTime.UtcNow.Date;
+
+        RecentExecutions = await Ctx.AgentExecutions
+            .OrderByDescending(e => e.StartedAt)
+            .Take(10)
+            .Select(e => new ExecutionItem(
+                e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
+                e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
+                e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error))
+            .ToListAsync();
+
+        PendingAlerts = await Ctx.AlertTriggers
+            .Include(a => a.NewsEvent)
+            .Where(a => !a.IsAcknowledged)
+            .OrderByDescending(a => a.Severity)
+            .ThenByDescending(a => a.CreatedAt)
+            .Take(20)
+            .Select(a => new AlertItem(a.Id, a.Title, a.Severity.ToString(), a.CreatedAt))
+            .ToListAsync();
+
+        await LoadCostDataAsync();
+    }
+
+    private async Task LoadCostDataAsync()
+    {
+        var cutoff = CostPeriod switch
+        {
+            "week" => DateTime.UtcNow.AddDays(-7),
+            "month" => new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1),
+            _ => DateTime.UtcNow.Date
+        };
+
+        var byProvider = await Ctx.CostEntries
+            .Where(c => c.Date >= cutoff)
+            .GroupBy(c => c.Provider.Name)
+            .Select(g => new { Name = g.Key, Cost = g.Sum(c => c.Cost) })
+            .ToListAsync();
+
+        TotalCostSelected = byProvider.Sum(p => p.Cost);
+        var colors = new[] { "#4a90e2", "#00ff88", "#ff6600", "#ff0080", "#ffcc00" };
+
+        ProviderCosts = byProvider.Select((p, i) => new ProviderCostItem(
+            p.Name, p.Cost,
+            TotalCostSelected > 0 ? (double)(p.Cost / TotalCostSelected * 100) : 0,
+            colors[i % colors.Length]
+        )).ToList();
+    }
+
+    private async Task LoadSystemHealthAsync()
+    {
+        SystemHealth = [];
+
+        // DB connectivity
+        try
+        {
+            await Ctx.Database.ExecuteSqlRawAsync("SELECT 1");
+            SystemHealth.Add(new("PostgreSQL", true, "Conectado"));
+        }
+        catch { SystemHealth.Add(new("PostgreSQL", false, "Error")); }
+
+        // Recent agent activity
+        var lastAgent = await Ctx.AgentExecutions
+            .OrderByDescending(e => e.StartedAt)
+            .FirstOrDefaultAsync();
+
+        if (lastAgent != null)
+        {
+            var ago = DateTime.UtcNow - lastAgent.StartedAt;
+            SystemHealth.Add(new("Ultimo agente", ago.TotalHours < 2, $"hace {(int)ago.TotalMinutes}min"));
+        }
+
+        var failedToday = await Ctx.NewsSources
+            .CountAsync(s => s.IsActive && s.FailedScans > s.SuccessfulScans);
+        SystemHealth.Add(new("Fuentes con errores", failedToday == 0, failedToday == 0 ? "OK" : $"{failedToday} degradadas"));
+
+        var activeProviders = await Ctx.AiProviderConfigs.CountAsync(p => p.IsActive);
+        SystemHealth.Add(new("Proveedores IA", activeProviders > 0, $"{activeProviders} activos"));
+    }
+
+    private async Task SetupHubsAsync()
+    {
+        _adminHub = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/adminhub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _adminHub.On<object>("DashboardStats", stats =>
+        {
+            InvokeAsync(StateHasChanged);
+        });
+
+        _agentHub = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/agenthub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _agentHub.On<object>("AgentLog", async (logObj) =>
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(logObj);
+            var log = System.Text.Json.JsonSerializer.Deserialize<AgentLogMessage>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (log != null)
+            {
+                LiveLogs.Add(new(log.AgentName ?? "Agent", log.Level ?? "Info", log.Message ?? "", DateTime.Now));
+                if (LiveLogs.Count > 500) LiveLogs.RemoveAt(0);
+                await InvokeAsync(StateHasChanged);
+                try { await JS.InvokeVoidAsync("adminScrollToBottom", "agent-log-feed"); } catch { }
+            }
+        });
+
+        try { await _adminHub.StartAsync(); } catch { }
+        try { await _agentHub.StartAsync(); } catch { }
+    }
+
+    private async Task RefreshAll()
+    {
+        IsLoading = true;
+        await LoadInitialDataAsync();
+        await LoadSystemHealthAsync();
+        IsLoading = false;
+    }
+
+    private async Task TriggerAgentAsync(string agentName)
+    {
+        var trigger = AgentTriggers.FirstOrDefault(a => a.Name == agentName);
+        if (trigger != null) trigger.IsRunning = true;
+        StateHasChanged();
+
+        try
+        {
+            var triggered = agentName.ToLower() switch
+            {
+                "newsscanner" or "newsscanneragent"                         => TriggerDirect(NewsScannerAgent),
+                "eventdetector" or "eventdetectoragent"                     => TriggerDirect(EventDetectorAgent),
+                "alertgenerator" or "alertgeneratoragent"                   => TriggerDirect(AlertGeneratorAgent),
+                "notificationdispatcher" or "notificationdispatcheragent"   => TriggerDirect(NotificationDispatcherAgent),
+                "articlesummarizer" or "articlesummarizeragent"             => TriggerDirect(ArticleSummarizerAgent),
+                "digestsender" or "digestsenderagent"                       => TriggerDirect(DigestSenderAgent),
+                _ => false
+            };
+            var msg = triggered ? $"Agente {agentName} activado" : $"Tipo de agente desconocido: {agentName}";
+            LiveLogs.Add(new(agentName, triggered ? "Info" : "Error", msg, DateTime.Now));
+            await Task.Delay(500); // Pequeña espera para que el agente empiece
+        }
+        catch (Exception ex)
+        {
+            LiveLogs.Add(new(agentName, "Error", $"Error: {ex.Message}", DateTime.Now));
+        }
+        finally
+        {
+            if (trigger != null) trigger.IsRunning = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static bool TriggerDirect(ANews.Infrastructure.Agents.BaseAgent agent)
+    {
+        agent.TriggerNow();
+        return true;
+    }
+
+    private async Task AcknowledgeAlertAsync(int alertId)
+    {
+        var alert = await Ctx.AlertTriggers.FindAsync(alertId);
+        if (alert != null)
+        {
+            alert.IsAcknowledged = true;
+            alert.AcknowledgedAt = DateTime.UtcNow;
+            await Ctx.SaveChangesAsync();
+            PendingAlerts.RemoveAll(a => a.Id == alertId);
+            Stats = Stats with { PendingAlerts = Stats.PendingAlerts - 1 };
+        }
+    }
+
+    private async Task ShowExecutionLogs(int executionId)
+    {
+        SelectedExecutionId = executionId;
+        ExecutionLogs = await Ctx.AgentLogs
+            .Where(l => l.AgentExecutionId == executionId)
+            .OrderBy(l => l.Timestamp)
+            .Select(l => new ExecutionLogItem(l.Level.ToString(), l.Message, l.Timestamp))
+            .ToListAsync();
+        ShowLogsModal = true;
+    }
+
+    private void CloseLogsModal() => ShowLogsModal = false;
+    private void ClearLogs() => LiveLogs.Clear();
+
+    private async Task ChangeCostPeriod(ChangeEventArgs e)
+    {
+        CostPeriod = e.Value?.ToString() ?? "today";
+        await LoadCostDataAsync();
+        try { await JS.InvokeVoidAsync("adminRenderCostChart", ProviderCosts); } catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await SetupHubsAsync();
+        try { await JS.InvokeVoidAsync("adminRenderCostChart", ProviderCosts); } catch { }
+    }
+
+    private static string FormatDuration(int ms)
+    {
+        if (ms < 0) return "—";
+        if (ms < 1000) return $"{ms}ms";
+        if (ms < 60000) return $"{ms / 1000}s";
+        return $"{ms / 60000}m {(ms % 60000) / 1000}s";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_adminHub != null) await _adminHub.DisposeAsync();
+        if (_agentHub != null) await _agentHub.DisposeAsync();
+    }
+
+    // Data models
+    record DashboardStats
+    {
+        public int AgentsRunningCount { get; init; }
+        public List<string> RunningAgentNames { get; init; } = [];
+        public int ArticlesToday { get; init; }
+        public int EventsToday { get; init; }
+        public int ActiveUsers { get; init; }
+        public int TotalUsers { get; init; }
+        public decimal CostToday { get; init; }
+        public decimal CostMonth { get; init; }
+        public int PendingAlerts { get; init; }
+    }
+
+    record LiveLogEntry(string AgentName, string Level, string Message, DateTime Time);
+    record AlertItem(int Id, string Title, string Severity, DateTime CreatedAt);
+    record ExecutionItem(int Id, string AgentName, string Status, DateTime StartedAt,
+        int DurationMs, int ItemsProcessed, int ItemsCreated, decimal AiCost, string? Error);
+    record ProviderCostItem(string Name, decimal Cost, double Percent, string Color);
+    record HealthItem(string Name, bool IsOk, string Value);
+    record ExecutionLogItem(string Level, string Message, DateTime Timestamp);
+    class AgentTriggerItem(string name, string displayName) { public string Name = name; public string DisplayName = displayName; public bool IsRunning; }
+    record AgentLogMessage { public string? AgentName { get; init; } public string? Level { get; init; } public string? Message { get; init; } }
+}

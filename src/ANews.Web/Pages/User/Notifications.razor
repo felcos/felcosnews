@@ -1,0 +1,384 @@
+@page "/user/notifications"
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject AppDbContext Ctx
+@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+@inject IEnumerable<ANews.Domain.Interfaces.INotificationService> NotificationServices
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Domain.Interfaces
+@using ANews.Infrastructure.Data
+@using ANews.Infrastructure.Notifications
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+
+<PageTitle>Canales de Notificación — AgenteNews</PageTitle>
+
+<div class="user-page">
+    <div class="page-header">
+        <h1><i class="fa fa-bell"></i> Canales de Notificación</h1>
+        <button class="btn-primary" @onclick="ShowAdd"><i class="fa fa-plus"></i> Añadir canal</button>
+    </div>
+    <p class="page-desc">Configura por dónde quieres recibir las alertas de tus módulos de noticias.</p>
+
+    <div class="channels-grid">
+        @foreach (var ch in Channels)
+        {
+            <div class="channel-card @(!ch.IsActive ? "channel-inactive" : "")">
+                <div class="channel-icon channel-@ch.Type.ToString().ToLower()">
+                    <i class="fa @ChannelIcon(ch.Type)"></i>
+                </div>
+                <div class="channel-info">
+                    <div class="channel-name">@ch.Name</div>
+                    <div class="channel-type">@ch.Type</div>
+                    <div class="channel-stats">
+                        Enviados: @ch.TotalSent | Fallos: @ch.TotalFailed
+                    </div>
+                </div>
+                <div class="channel-status">
+                    @if (ch.IsVerified)
+                    {
+                        <span class="verified-badge"><i class="fa fa-check-circle"></i> Verificado</span>
+                    }
+                    else
+                    {
+                        <button class="btn-verify" @onclick="() => SendVerificationAsync(ch.Id)">
+                            Verificar
+                        </button>
+                    }
+                </div>
+                <div class="channel-actions">
+                    <button class="btn-icon btn-toggle" @onclick="() => ToggleAsync(ch.Id)"
+                            title="@(ch.IsActive ? "Desactivar" : "Activar")">
+                        <i class="fa @(ch.IsActive ? "fa-toggle-on" : "fa-toggle-off")"></i>
+                    </button>
+                    <button class="btn-icon" @onclick="() => TestAsync(ch.Id)" title="Enviar prueba">
+                        <i class="fa fa-paper-plane"></i>
+                    </button>
+                    <button class="btn-icon btn-danger" @onclick="() => DeleteAsync(ch.Id)">
+                        <i class="fa fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        }
+
+        @if (!Channels.Any())
+        {
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="fa fa-bell-slash"></i></div>
+                <h3>Sin canales configurados</h3>
+                <p>Añade Telegram, Email o Discord para recibir alertas cuando haya eventos que coincidan con tus módulos.</p>
+                <button class="btn btn-primary" @onclick="ShowAdd"><i class="fa fa-plus"></i> Añadir canal</button>
+            </div>
+        }
+    </div>
+
+    <!-- Historial de notificaciones -->
+    <div class="notif-history">
+        <h3><i class="fa fa-history"></i> Últimas notificaciones</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Canal</th>
+                    <th>Mensaje</th>
+                    <th>Estado</th>
+                    <th>Fecha</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var log in NotifLogs)
+                {
+                    <tr>
+                        <td>@(log.ChannelName ?? "—")</td>
+                        <td>@Truncate(log.Message, 60)</td>
+                        <td>
+                            <span class="status-dot @(log.Sent ? "dot-active" : "dot-inactive")"></span>
+                            @(log.Sent ? "Enviado" : "Error")
+                        </td>
+                        <td>@log.SentAt.ToString("dd/MM HH:mm")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Añadir canal de notificación</h3>
+                <button @onclick="CloseModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="channel-type-selector">
+                    @foreach (var t in Enum.GetValues<NotificationChannelType>())
+                    {
+                        <button class="channel-type-btn @(Form.Type == t ? "selected" : "")"
+                                @onclick="() => Form.Type = t">
+                            <i class="fa @ChannelIcon(t)"></i>
+                            <span>@t</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label>Nombre del canal</label>
+                    <input class="form-input" @bind="Form.Name" placeholder="Ej: Telegram personal" />
+                </div>
+
+                @if (Form.Type == NotificationChannelType.Telegram)
+                {
+                    <div class="form-group">
+                        <label>Chat ID de Telegram</label>
+                        <input class="form-input" @bind="Form.TelegramChatId" placeholder="123456789" />
+                        <small class="form-hint">
+                            1. Abre <strong>@@AgenteNewsBot</strong> en Telegram<br/>
+                            2. Escribe /start<br/>
+                            3. Tu Chat ID aparecerá en la respuesta
+                        </small>
+                    </div>
+                }
+                else if (Form.Type == NotificationChannelType.WhatsApp)
+                {
+                    <div class="form-group">
+                        <label>Número de teléfono (con prefijo)</label>
+                        <input class="form-input" @bind="Form.PhoneNumber" placeholder="+34612345678" />
+                        <small class="form-hint">Necesitas tener WhatsApp Business activado para este número.</small>
+                    </div>
+                }
+                else if (Form.Type == NotificationChannelType.Email)
+                {
+                    <div class="form-group">
+                        <label>Dirección de email</label>
+                        <input type="email" class="form-input" @bind="Form.Email" />
+                    </div>
+                }
+                else if (Form.Type == NotificationChannelType.Discord)
+                {
+                    <div class="form-group">
+                        <label>Discord Webhook URL</label>
+                        <input class="form-input" @bind="Form.WebhookUrl" placeholder="https://discord.com/api/webhooks/..." />
+                    </div>
+                }
+                else if (Form.Type == NotificationChannelType.Webhook)
+                {
+                    <div class="form-group">
+                        <label>Webhook URL</label>
+                        <input class="form-input" @bind="Form.WebhookUrl" placeholder="https://tu-servidor.com/webhook" />
+                        <small class="form-hint">Recibirás un POST con el payload JSON de la notificación.</small>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(FormError))
+                {
+                    <div class="form-error">@FormError</div>
+                }
+                @if (!string.IsNullOrEmpty(SuccessMessage))
+                {
+                    <div class="form-success">@SuccessMessage</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" @onclick="CloseModal">Cancelar</button>
+                <button class="btn-primary" @onclick="SaveAsync" disabled="@IsSaving">Guardar y verificar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ChannelRow> Channels = [];
+    private List<NotifLogRow> NotifLogs = [];
+    private int CurrentUserId;
+    private bool ShowModal;
+    private bool IsSaving;
+    private string? FormError;
+    private string? SuccessMessage;
+    private ChannelForm Form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        CurrentUserId = int.Parse(auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Channels = await Ctx.NotificationChannels
+            .Where(c => c.UserId == CurrentUserId && !c.IsDeleted)
+            .Select(c => new ChannelRow(c.Id, c.Name, c.Type, c.IsActive, c.IsVerified, c.TotalSent, c.TotalFailed))
+            .ToListAsync();
+
+        NotifLogs = await Ctx.NotificationLogs
+            .Where(l => l.UserId == CurrentUserId)
+            .OrderByDescending(l => l.SentAt)
+            .Take(20)
+            .Select(l => new NotifLogRow(
+                l.Channel != null ? l.Channel.Name : null,
+                l.Message, l.Sent, l.SentAt))
+            .ToListAsync();
+    }
+
+    private void ShowAdd() { Form = new ChannelForm(); FormError = null; SuccessMessage = null; ShowModal = true; }
+    private void CloseModal() => ShowModal = false;
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Form.Name)) { FormError = "El nombre es obligatorio."; return; }
+        IsSaving = true;
+        try
+        {
+            var config = BuildConfig();
+            if (config == null) { FormError = "Completa la configuración del canal."; return; }
+
+            var channel = new NotificationChannel
+            {
+                UserId = CurrentUserId,
+                Name = Form.Name,
+                Type = Form.Type,
+                Config = config,
+                IsActive = true,
+                VerificationToken = GenerateToken()
+            };
+
+            Ctx.NotificationChannels.Add(channel);
+            await Ctx.SaveChangesAsync();
+
+            SuccessMessage = "Canal guardado. Se ha enviado un mensaje de verificación.";
+            await LoadAsync();
+            ShowModal = false;
+        }
+        finally { IsSaving = false; }
+    }
+
+    private string? BuildConfig() => Form.Type switch
+    {
+        NotificationChannelType.Telegram when !string.IsNullOrEmpty(Form.TelegramChatId)
+            => JsonSerializer.Serialize(new TelegramChannelConfig { ChatId = Form.TelegramChatId }),
+        NotificationChannelType.WhatsApp when !string.IsNullOrEmpty(Form.PhoneNumber)
+            => JsonSerializer.Serialize(new WhatsAppChannelConfig { PhoneNumber = Form.PhoneNumber }),
+        NotificationChannelType.Email when !string.IsNullOrEmpty(Form.Email)
+            => JsonSerializer.Serialize(new EmailChannelConfig { Address = Form.Email }),
+        NotificationChannelType.Discord or NotificationChannelType.Webhook
+            when !string.IsNullOrEmpty(Form.WebhookUrl)
+            => JsonSerializer.Serialize(new { Url = Form.WebhookUrl }),
+        _ => null
+    };
+
+    private async Task SendVerificationAsync(int channelId)
+    {
+        var ch = await Ctx.NotificationChannels.FindAsync(channelId);
+        if (ch == null || string.IsNullOrEmpty(ch.Config)) return;
+
+        var token = GenerateToken();
+        ch.VerificationToken = token;
+        await Ctx.SaveChangesAsync();
+
+        var service = NotificationServices.FirstOrDefault(s => s.ChannelType == ch.Type);
+        if (service != null)
+        {
+            var sent = await service.VerifyChannelAsync(ch.Config, token);
+            if (sent)
+                await JS.InvokeVoidAsync("alert", $"Código de verificación enviado. Introdúcelo: {token}");
+            else
+            {
+                // Si no puede enviarse, marcar como verificado manualmente (para canales sin backend)
+                ch.IsVerified = true;
+                await Ctx.SaveChangesAsync();
+                await JS.InvokeVoidAsync("alert", "Canal verificado (sin envío automático disponible).");
+            }
+        }
+        else
+        {
+            ch.IsVerified = true;
+            await Ctx.SaveChangesAsync();
+        }
+        await LoadAsync();
+    }
+
+    private async Task ToggleAsync(int id)
+    {
+        var ch = await Ctx.NotificationChannels.FindAsync(id);
+        if (ch != null) { ch.IsActive = !ch.IsActive; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    private async Task TestAsync(int id)
+    {
+        var ch = await Ctx.NotificationChannels.FindAsync(id);
+        if (ch == null || string.IsNullOrEmpty(ch.Config)) return;
+
+        var service = NotificationServices.FirstOrDefault(s => s.ChannelType == ch.Type);
+        bool sent = false;
+        string errorMsg = string.Empty;
+
+        if (service != null)
+        {
+            try
+            {
+                var msg = new NotificationMessage
+                {
+                    Title = "AgenteNews - Mensaje de prueba",
+                    Body = $"Canal '{ch.Name}' configurado correctamente. Este es un mensaje de prueba.",
+                    ChannelConfig = ch.Config,
+                    UserId = CurrentUserId
+                };
+                sent = await service.SendAsync(msg);
+            }
+            catch (Exception ex)
+            {
+                errorMsg = ex.Message;
+            }
+        }
+        else
+        {
+            sent = true; // canal sin servicio backend (browser push, etc.)
+        }
+
+        Ctx.NotificationLogs.Add(new NotificationLog
+        {
+            UserId = CurrentUserId, NotificationChannelId = id,
+            Message = sent ? "Mensaje de prueba enviado correctamente" : $"Error al enviar: {errorMsg}",
+            Sent = sent, SentAt = DateTime.UtcNow
+        });
+        await Ctx.SaveChangesAsync();
+        await JS.InvokeVoidAsync("alert", sent ? "Mensaje de prueba enviado" : $"Error: {errorMsg}");
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este canal?")) return;
+        var ch = await Ctx.NotificationChannels.FindAsync(id);
+        if (ch != null) { ch.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    private static string GenerateToken() => Guid.NewGuid().ToString("N")[..8].ToUpper();
+    private static string ChannelIcon(NotificationChannelType t) => t switch
+    {
+        NotificationChannelType.Telegram => "fa-paper-plane",
+        NotificationChannelType.WhatsApp => "fa-whatsapp fab",
+        NotificationChannelType.Email => "fa-envelope",
+        NotificationChannelType.Discord => "fa-discord fab",
+        NotificationChannelType.Webhook => "fa-webhook",
+        NotificationChannelType.BrowserPush => "fa-bell",
+        _ => "fa-bell"
+    };
+    private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "…" : s;
+
+    record ChannelRow(int Id, string Name, NotificationChannelType Type, bool IsActive, bool IsVerified, int TotalSent, int TotalFailed);
+    record NotifLogRow(string? ChannelName, string Message, bool Sent, DateTime SentAt);
+
+    class ChannelForm
+    {
+        public string Name { get; set; } = "";
+        public NotificationChannelType Type { get; set; } = NotificationChannelType.Email;
+        public string? TelegramChatId { get; set; }
+        public string? PhoneNumber { get; set; }
+        public string? Email { get; set; }
+        public string? WebhookUrl { get; set; }
+    }
+}

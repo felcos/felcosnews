@@ -1,0 +1,239 @@
+@page "/situation/{Id:int}"
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_event?.Title ?? "Situación") — AgenteNews</PageTitle>
+
+@if (_loading)
+{
+    <div class="skeleton-grid" style="max-width:960px;margin:24px auto">
+        <div class="skeleton-card" style="grid-column:1/-1">
+            <div class="skeleton-bar title" style="width:60%"></div>
+            <div class="skeleton-bar medium"></div>
+            <div class="skeleton-bar short"></div>
+        </div>
+    </div>
+}
+else if (_event == null)
+{
+    <div class="situation-layout">
+        <a href="/" class="situation-back"><i class="fa fa-arrow-left"></i> Volver</a>
+        <div class="empty-state">
+            <div class="empty-state-icon"><i class="fa fa-search"></i></div>
+            <h3>Evento no encontrado</h3>
+            <p>Este evento no existe o ha sido eliminado.</p>
+            <a href="/" class="btn btn-primary">Ir a la portada</a>
+        </div>
+    </div>
+}
+else
+{
+    <div class="situation-layout">
+        <a href="/" class="situation-back"><i class="fa fa-arrow-left"></i> Portada</a>
+
+        <div class="situation-header">
+            <div class="situation-badges">
+                <span class="status-badge status-@_event.Priority.ToString().ToLower()">@_event.Priority</span>
+                <span class="badge-section">@_event.Section?.Name</span>
+                @if (!_event.IsActive)
+                {
+                    <span class="badge-archived">Archivado</span>
+                }
+            </div>
+            <h1 class="situation-title">@_event.Title</h1>
+            @if (!string.IsNullOrEmpty(_event.Description))
+            {
+                <p class="situation-desc">@_event.Description</p>
+            }
+            <div class="situation-meta">
+                <span class="sit-meta-item"><i class="fa fa-calendar"></i> Inicio: @_event.StartDate.ToString("dd/MM/yyyy")</span>
+                @if (_event.EndDate.HasValue)
+                {
+                    <span class="sit-meta-item"><i class="fa fa-flag-checkered"></i> Cierre: @_event.EndDate.Value.ToString("dd/MM/yyyy")</span>
+                }
+                <span class="sit-meta-item"><i class="fa fa-file-alt"></i> @_articles.Count artículos</span>
+                <span class="sit-meta-item"><i class="fa fa-chart-line"></i> Impacto: @_event.ImpactScore.ToString("F0")/100</span>
+            </div>
+        </div>
+
+        <div class="situation-body">
+
+            <!-- Timeline de artículos -->
+            <div class="sit-timeline">
+                <h3 style="margin:0 0 16px;font-size:16px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">
+                    <i class="fa fa-stream"></i> Cronología
+                </h3>
+                @foreach (var group in _articlesByDay)
+                {
+                    <div class="sit-timeline-day">
+                        <div class="sit-day-label">@group.Key.ToString("dddd, dd MMM yyyy", new System.Globalization.CultureInfo("es-ES"))</div>
+                        @foreach (var art in group.Value)
+                        {
+                            <div class="sit-article">
+                                <div class="sit-art-rel" title="Relevancia">@art.Relevance.ToString("F0")</div>
+                                <div class="sit-art-body">
+                                    <a href="/article/@art.Id">@art.Title</a>
+                                    <div class="sit-art-source">
+                                        @art.SourceName
+                                        <a href="@art.SourceUrl" target="_blank" rel="noopener" style="margin-left:6px;color:var(--text-muted)">
+                                            <i class="fa fa-external-link-alt"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (!_articles.Any())
+                {
+                    <div class="empty-state" style="padding:30px 0">
+                        <div class="empty-state-icon"><i class="fa fa-newspaper"></i></div>
+                        <p>No hay artículos asociados a este evento.</p>
+                    </div>
+                }
+            </div>
+
+            <!-- Sidebar -->
+            <div class="sit-sidebar">
+
+                <!-- Stats -->
+                <div class="sit-card">
+                    <h4><i class="fa fa-chart-bar"></i> Estadísticas</h4>
+                    <div class="sit-stat">
+                        <span>Prioridad</span>
+                        <span class="sit-stat-val">@_event.Priority</span>
+                    </div>
+                    <div class="sit-stat">
+                        <span>Impacto</span>
+                        <div style="flex:1;margin:0 10px">
+                            <div class="sit-impact-bar">
+                                <div class="sit-impact-fill" style="width:@(_event.ImpactScore)%"></div>
+                            </div>
+                        </div>
+                        <span class="sit-stat-val">@_event.ImpactScore.ToString("F0")</span>
+                    </div>
+                    <div class="sit-stat">
+                        <span>Tendencia</span>
+                        <span class="sit-stat-val">@_event.Trend</span>
+                    </div>
+                    <div class="sit-stat">
+                        <span>Artículos</span>
+                        <span class="sit-stat-val">@_articles.Count</span>
+                    </div>
+                    <div class="sit-stat">
+                        <span>Fuentes</span>
+                        <span class="sit-stat-val">@_articles.Select(a => a.SourceName).Distinct().Count()</span>
+                    </div>
+                    @if (_articles.Any())
+                    {
+                        <div class="sit-stat">
+                            <span>Primer artículo</span>
+                            <span class="sit-stat-val">@_articles.Min(a => a.PublishedAt).ToString("dd/MM/yyyy")</span>
+                        </div>
+                        <div class="sit-stat">
+                            <span>Último artículo</span>
+                            <span class="sit-stat-val">@_articles.Max(a => a.PublishedAt).ToString("dd/MM/yyyy")</span>
+                        </div>
+                    }
+                </div>
+
+                <!-- Tags -->
+                @if (_event.Tags.Any())
+                {
+                    <div class="sit-card">
+                        <h4><i class="fa fa-tags"></i> Etiquetas</h4>
+                        @foreach (var tag in _event.Tags)
+                        {
+                            <span class="sit-tag">#@tag</span>
+                        }
+                    </div>
+                }
+
+                <!-- Actividad diaria -->
+                @if (_articlesByDay.Count > 1)
+                {
+                    <div class="sit-card">
+                        <h4><i class="fa fa-calendar-alt"></i> Actividad diaria</h4>
+                        @foreach (var day in _articlesByDay.OrderByDescending(d => d.Key).Take(7))
+                        {
+                            var maxCount = _articlesByDay.Max(d => d.Value.Count);
+                            var pct = maxCount > 0 ? (day.Value.Count * 100 / maxCount) : 0;
+                            <div style="margin-bottom:6px;font-size:12px">
+                                <div style="display:flex;justify-content:space-between;color:var(--text-muted);margin-bottom:2px">
+                                    <span>@day.Key.ToString("dd/MM")</span>
+                                    <span>@day.Value.Count art.</span>
+                                </div>
+                                <div class="sit-impact-bar">
+                                    <div class="sit-impact-fill" style="width:@pct%"></div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Eventos relacionados -->
+                @if (_related.Any())
+                {
+                    <div class="sit-card">
+                        <h4><i class="fa fa-link"></i> Eventos relacionados</h4>
+                        @foreach (var rel in _related)
+                        {
+                            <a href="/situation/@rel.Id" class="sit-related-link">
+                                <span class="status-badge status-@rel.Priority.ToString().ToLower()" style="font-size:10px;padding:1px 5px;margin-right:6px">@rel.Priority</span>
+                                @rel.Title
+                            </a>
+                        }
+                    </div>
+                }
+
+                <a href="/" class="btn btn-secondary" style="text-align:center">
+                    <i class="fa fa-arrow-left"></i> Volver a la portada
+                </a>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool _loading = true;
+    private NewsEvent? _event;
+    private List<NewsArticle> _articles = [];
+    private Dictionary<DateTime, List<NewsArticle>> _articlesByDay = [];
+    private List<NewsEvent> _related = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _event = await Ctx.NewsEvents
+            .Include(e => e.Section)
+            .FirstOrDefaultAsync(e => e.Id == Id && !e.IsDeleted);
+
+        if (_event != null)
+        {
+            _articles = await Ctx.NewsArticles
+                .Where(a => a.NewsEventId == Id && !a.IsDeleted)
+                .OrderByDescending(a => a.PublishedAt)
+                .ToListAsync();
+
+            _articlesByDay = _articles
+                .GroupBy(a => a.PublishedAt.Date)
+                .OrderByDescending(g => g.Key)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(a => a.Relevance).ToList());
+
+            _related = await Ctx.NewsEvents
+                .Where(e => e.NewsSectionId == _event.NewsSectionId
+                         && e.Id != Id && !e.IsDeleted && e.IsActive
+                         && e.EventType == "Detected")
+                .OrderByDescending(e => e.ImpactScore)
+                .Take(5)
+                .ToListAsync();
+        }
+
+        _loading = false;
+    }
+}

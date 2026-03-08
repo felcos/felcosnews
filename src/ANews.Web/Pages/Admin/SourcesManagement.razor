@@ -1,0 +1,417 @@
+@page "/admin/sources"
+@using Microsoft.AspNetCore.Authorization
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout ANews.Web.Components.Layout.AdminLayout
+@inject AppDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>Fuentes de Noticias - Admin</PageTitle>
+
+<div class="admin-page-header">
+    <div>
+        <h2>Fuentes de Noticias</h2>
+        <p class="text-muted">Gestion de fuentes RSS, APIs y scrapers</p>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenAddModal">
+        <i class="fa fa-plus"></i> Nueva Fuente
+    </button>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <input class="form-control search-input" placeholder="Buscar por nombre o URL..."
+           @bind="_search" @bind:event="oninput" />
+    <select class="form-control" @bind="_filterType">
+        <option value="">Todos los tipos</option>
+        @foreach (var t in Enum.GetValues<NewsSourceType>())
+        {
+            <option value="@t">@t</option>
+        }
+    </select>
+    <select class="form-control" @bind="_filterActive">
+        <option value="">Todos</option>
+        <option value="true">Activos</option>
+        <option value="false">Inactivos</option>
+    </select>
+</div>
+
+<!-- Stats bar -->
+<div class="source-stats">
+    <div class="source-stat">
+        <span class="stat-number">@_sources.Count(s => s.IsActive)</span>
+        <span class="stat-label">Activas</span>
+    </div>
+    <div class="source-stat">
+        <span class="stat-number text-danger">@_sources.Count(s => !s.IsActive)</span>
+        <span class="stat-label">Inactivas</span>
+    </div>
+    <div class="source-stat">
+        <span class="stat-number text-warning">@_sources.Count(s => s.LastError != null)</span>
+        <span class="stat-label">Con errores</span>
+    </div>
+    <div class="source-stat">
+        <span class="stat-number text-info">@_sources.Sum(s => s.SuccessfulScans)</span>
+        <span class="stat-label">Scans exitosos</span>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="data-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>URL</th>
+                <th>Tipo</th>
+                <th>Credibilidad</th>
+                <th>Ultimo scan</th>
+                <th>Exito / Error</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var src in FilteredSources)
+            {
+                <tr class="@(src.LastError != null ? "row-warning" : "")">
+                    <td>
+                        <strong>@src.Name</strong>
+                        @if (src.Section?.Name != null)
+                        {
+                            <br /><small class="text-muted">@src.Section.Name</small>
+                        }
+                    </td>
+                    <td>
+                        <span class="url-cell" title="@src.Url">@TruncateUrl(src.Url)</span>
+                        <button class="btn-icon" @onclick="() => CopyUrl(src.Url)" title="Copiar URL">
+                            <i class="fa fa-copy"></i>
+                        </button>
+                    </td>
+                    <td><span class="badge badge-type-@src.Type.ToString().ToLower()">@src.Type</span></td>
+                    <td>
+                        <div class="credibility-bar">
+                            <div class="credibility-fill" style="width: @src.CredibilityScore%"></div>
+                            <span>@src.CredibilityScore%</span>
+                        </div>
+                    </td>
+                    <td>
+                        @if (src.LastScannedAt.HasValue)
+                        {
+                            <span title="@src.LastScannedAt.Value.ToString("dd/MM/yyyy HH:mm")">
+                                @GetTimeAgo(src.LastScannedAt.Value)
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Nunca</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="text-success">@src.SuccessfulScans</span>
+                        <span class="text-muted"> / </span>
+                        <span class="@(src.FailedScans > 0 ? "text-danger" : "text-muted")">@src.FailedScans</span>
+                        @if (src.LastError != null)
+                        {
+                            <button class="btn-icon text-warning" @onclick="() => ShowError(src)" title="Ver ultimo error">
+                                <i class="fa fa-exclamation-triangle"></i>
+                            </button>
+                        }
+                    </td>
+                    <td>
+                        <button class="toggle-btn @(src.IsActive ? "active" : "")" @onclick="() => ToggleActive(src)">
+                            @(src.IsActive ? "Activa" : "Inactiva")
+                        </button>
+                    </td>
+                    <td class="actions-cell">
+                        <button class="btn-icon" @onclick="() => OpenEditModal(src)" title="Editar">
+                            <i class="fa fa-edit"></i>
+                        </button>
+                        <button class="btn-icon text-danger" @onclick="() => ConfirmDelete(src)" title="Eliminar">
+                            <i class="fa fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+            @if (!FilteredSources.Any())
+            {
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">No se encontraron fuentes</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Modal -->
+@if (_showModal)
+{
+    <div class="modal-backdrop" @onclick="CloseModal"></div>
+    <div class="modal-panel">
+        <div class="modal-header">
+            <h3>@(_editingSource?.Id > 0 ? "Editar Fuente" : "Nueva Fuente")</h3>
+            <button class="modal-close" @onclick="CloseModal"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Nombre *</label>
+                    <input class="form-control" @bind="_form.Name" placeholder="Ej: El Pais RSS" />
+                </div>
+                <div class="form-group">
+                    <label>Tipo *</label>
+                    <select class="form-control" @bind="_form.Type">
+                        @foreach (var t in Enum.GetValues<NewsSourceType>())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group form-group-full">
+                    <label>URL *</label>
+                    <input class="form-control" @bind="_form.Url" placeholder="https://..." />
+                </div>
+                <div class="form-group">
+                    <label>Seccion</label>
+                    <select class="form-control" @bind="_form.NewsSectionId">
+                        <option value="">Sin seccion</option>
+                        @foreach (var sec in _sections)
+                        {
+                            <option value="@sec.Id">@sec.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Credibilidad (0-100)</label>
+                    <input type="number" class="form-control" @bind="_form.CredibilityScore" min="0" max="100" />
+                </div>
+                <div class="form-group">
+                    <label>Idioma</label>
+                    <input class="form-control" @bind="_form.Language" placeholder="es" maxlength="10" />
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" @bind="_form.IsActive" />
+                        Activa
+                    </label>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_formError))
+            {
+                <div class="alert alert-danger">@_formError</div>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="CloseModal">Cancelar</button>
+            <button class="btn btn-primary" @onclick="SaveSource" disabled="@_saving">
+                @if (_saving) { <i class="fa fa-spinner fa-spin"></i> }
+                Guardar
+            </button>
+        </div>
+    </div>
+}
+
+<!-- Error detail modal -->
+@if (_errorSource != null)
+{
+    <div class="modal-backdrop" @onclick="() => _errorSource = null"></div>
+    <div class="modal-panel modal-sm">
+        <div class="modal-header">
+            <h3>Ultimo Error - @_errorSource.Name</h3>
+            <button class="modal-close" @onclick="() => _errorSource = null"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <pre class="error-detail">@_errorSource.LastError</pre>
+            @if (_errorSource.LastScannedAt.HasValue)
+            {
+                <p class="text-muted mt-2">Ocurrio: @_errorSource.LastScannedAt.Value.ToString("dd/MM/yyyy HH:mm:ss")</p>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="() => { _errorSource = null; }">Cerrar</button>
+            <button class="btn btn-warning" @onclick="() => ClearError(_errorSource)">Limpiar Error</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<NewsSource> _sources = new();
+    private List<NewsSection> _sections = new();
+    private string _search = "";
+    private string _filterType = "";
+    private string _filterActive = "";
+    private bool _showModal;
+    private bool _saving;
+    private string _formError = "";
+    private NewsSource? _editingSource;
+    private NewsSource? _errorSource;
+
+    private SourceForm _form = new();
+
+    private IEnumerable<NewsSource> FilteredSources => _sources
+        .Where(s =>
+            (string.IsNullOrEmpty(_search) ||
+             s.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+             s.Url.Contains(_search, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(_filterType) || s.Type.ToString() == _filterType) &&
+            (string.IsNullOrEmpty(_filterActive) || s.IsActive.ToString().ToLower() == _filterActive));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _sources = await Db.NewsSources
+            .Include(s => s.Section)
+            .OrderByDescending(s => s.CreatedAt)
+            .ToListAsync();
+
+        _sections = await Db.NewsSections
+            .OrderBy(s => s.Name)
+            .ToListAsync();
+    }
+
+    private void OpenAddModal()
+    {
+        _editingSource = null;
+        _form = new SourceForm { IsActive = true, CredibilityScore = 70, Language = "es", Type = NewsSourceType.Rss };
+        _formError = "";
+        _showModal = true;
+    }
+
+    private void OpenEditModal(NewsSource src)
+    {
+        _editingSource = src;
+        _form = new SourceForm
+        {
+            Name = src.Name,
+            Url = src.Url,
+            Type = src.Type,
+            NewsSectionId = src.NewsSectionId,
+            CredibilityScore = src.CredibilityScore,
+            Language = src.Language ?? "es",
+            IsActive = src.IsActive
+        };
+        _formError = "";
+        _showModal = true;
+    }
+
+    private void CloseModal()
+    {
+        _showModal = false;
+        _editingSource = null;
+    }
+
+    private async Task SaveSource()
+    {
+        _formError = "";
+        if (string.IsNullOrWhiteSpace(_form.Name)) { _formError = "El nombre es requerido."; return; }
+        if (string.IsNullOrWhiteSpace(_form.Url)) { _formError = "La URL es requerida."; return; }
+
+        _saving = true;
+        try
+        {
+            if (_editingSource?.Id > 0)
+            {
+                _editingSource.Name = _form.Name;
+                _editingSource.Url = _form.Url;
+                _editingSource.Type = _form.Type;
+                _editingSource.NewsSectionId = _form.NewsSectionId;
+                _editingSource.CredibilityScore = _form.CredibilityScore;
+                _editingSource.Language = _form.Language;
+                _editingSource.IsActive = _form.IsActive;
+                Db.NewsSources.Update(_editingSource);
+            }
+            else
+            {
+                var newSource = new NewsSource
+                {
+                    Name = _form.Name,
+                    Url = _form.Url,
+                    Type = _form.Type,
+                    NewsSectionId = _form.NewsSectionId,
+                    CredibilityScore = _form.CredibilityScore,
+                    Language = _form.Language,
+                    IsActive = _form.IsActive
+                };
+                await Db.NewsSources.AddAsync(newSource);
+            }
+
+            await Db.SaveChangesAsync();
+            CloseModal();
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _formError = $"Error al guardar: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ToggleActive(NewsSource src)
+    {
+        src.IsActive = !src.IsActive;
+        Db.NewsSources.Update(src);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task ConfirmDelete(NewsSource src)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"Eliminar fuente '{src.Name}'?");
+        if (confirmed)
+        {
+            src.IsDeleted = true;
+            Db.NewsSources.Update(src);
+            await Db.SaveChangesAsync();
+            _sources.Remove(src);
+        }
+    }
+
+    private async Task ClearError(NewsSource src)
+    {
+        src.LastError = null;
+        Db.NewsSources.Update(src);
+        await Db.SaveChangesAsync();
+        _errorSource = null;
+        await LoadData();
+    }
+
+    private void ShowError(NewsSource src) => _errorSource = src;
+
+    private async Task CopyUrl(string url) =>
+        await JS.InvokeVoidAsync("copyToClipboard", url);
+
+    private static string TruncateUrl(string url)
+    {
+        if (url.Length <= 50) return url;
+        return url[..47] + "...";
+    }
+
+    private static string GetTimeAgo(DateTime dt)
+    {
+        var diff = DateTime.UtcNow - dt;
+        if (diff.TotalMinutes < 60) return $"hace {(int)diff.TotalMinutes}m";
+        if (diff.TotalHours < 24) return $"hace {(int)diff.TotalHours}h";
+        return $"hace {(int)diff.TotalDays}d";
+    }
+
+    private class SourceForm
+    {
+        public string Name { get; set; } = "";
+        public string Url { get; set; } = "";
+        public NewsSourceType Type { get; set; } = NewsSourceType.Rss;
+        public int NewsSectionId { get; set; }
+        public int CredibilityScore { get; set; } = 70;
+        public string Language { get; set; } = "es";
+        public bool IsActive { get; set; } = true;
+    }
+}

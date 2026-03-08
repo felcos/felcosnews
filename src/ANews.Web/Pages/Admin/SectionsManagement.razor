@@ -1,0 +1,242 @@
+@page "/admin/sections"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout AdminLayout
+@inject AppDbContext Ctx
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Secciones — Admin</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <h1><i class="fa fa-th-large"></i> Secciones</h1>
+        <button class="btn-primary" @onclick="ShowAdd"><i class="fa fa-plus"></i> Nueva sección</button>
+    </div>
+
+    <div class="sections-grid">
+        @foreach (var s in Sections)
+        {
+            <div class="section-card" style="border-color:@s.Color">
+                <div class="section-card-header" style="background:@s.Color20">
+                    <i class="fa @s.IconClass section-icon" style="color:@s.Color"></i>
+                    <div class="section-info">
+                        <span class="section-name">@s.Name</span>
+                        <span class="section-slug">/\@s.Slug</span>
+                    </div>
+                    <div class="section-badges">
+                        @if (s.IsDefault) { <span class="badge">DEFAULT</span> }
+                        @if (s.IsSystemSection) { <span class="badge badge-sys">SISTEMA</span> }
+                        @if (!s.IsPublic) { <span class="badge badge-priv">PRIVADO</span> }
+                    </div>
+                </div>
+                <div class="section-card-body">
+                    <p class="section-desc">@(s.Description ?? "Sin descripción")</p>
+                    <div class="section-keywords">
+                        @foreach (var kw in s.Keywords.Take(5))
+                        {
+                            <span class="kw-chip">@kw</span>
+                        }
+                        @if (s.Keywords.Count > 5)
+                        {
+                            <span class="kw-more">+@(s.Keywords.Count - 5)</span>
+                        }
+                    </div>
+                    <div class="section-stats">
+                        <span>@s.EventCount eventos</span>
+                        <span>@s.SourceCount fuentes</span>
+                    </div>
+                </div>
+                <div class="section-card-footer">
+                    <button class="btn-icon" @onclick="() => ShowEdit(s.Id)"><i class="fa fa-edit"></i></button>
+                    @if (!s.IsSystemSection)
+                    {
+                        <button class="btn-icon btn-danger" @onclick="() => DeleteAsync(s.Id)"><i class="fa fa-trash"></i></button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(EditingId == 0 ? "Nueva sección" : "Editar sección")</h3>
+                <button @onclick="CloseModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre</label>
+                        <input class="form-input" @bind="Form.Name" @oninput="AutoSlug" />
+                    </div>
+                    <div class="form-group">
+                        <label>Slug</label>
+                        <input class="form-input" @bind="Form.Slug" />
+                    </div>
+                    <div class="form-group form-full">
+                        <label>Descripción</label>
+                        <textarea class="form-input" @bind="Form.Description" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Color (hex)</label>
+                        <div class="color-input-group">
+                            <input type="color" @bind="Form.Color" class="color-picker" />
+                            <input class="form-input" @bind="Form.Color" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Icono (Font Awesome)</label>
+                        <input class="form-input" @bind="Form.IconClass" placeholder="fa-newspaper" />
+                    </div>
+                    <div class="form-group form-full">
+                        <label>Keywords (una por línea)</label>
+                        <textarea class="form-input" @bind="Form.KeywordsText" rows="4"
+                                  placeholder="nuclear&#10;biologico&#10;quimico"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="Form.IsPublic" /> Pública
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="Form.IsDefault" /> Por defecto
+                        </label>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(FormError))
+                {
+                    <div class="form-error">@FormError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" @onclick="CloseModal">Cancelar</button>
+                <button class="btn-primary" @onclick="SaveAsync" disabled="@IsSaving">
+                    @(IsSaving ? "Guardando..." : "Guardar")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SectionRow> Sections = [];
+    private bool ShowModal = false;
+    private int EditingId = 0;
+    private bool IsSaving = false;
+    private string? FormError;
+    private SectionForm Form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        Sections = await Ctx.NewsSections
+            .Select(s => new SectionRow(
+                s.Id, s.Name, s.Slug, s.Description, s.Color ?? "#4a90e2",
+                s.IconClass ?? "fa-newspaper", s.Keywords, s.IsPublic,
+                s.IsDefault, s.IsSystemSection,
+                s.Events.Count(e => e.IsActive), s.Sources.Count(src => src.IsActive)))
+            .ToListAsync();
+    }
+
+    private void ShowAdd()
+    {
+        Form = new SectionForm { Color = "#4a90e2", IconClass = "fa-newspaper", IsPublic = true };
+        EditingId = 0; FormError = null; ShowModal = true;
+    }
+
+    private async Task ShowEdit(int id)
+    {
+        var s = await Ctx.NewsSections.FindAsync(id);
+        if (s == null) return;
+        Form = new SectionForm
+        {
+            Name = s.Name, Slug = s.Slug, Description = s.Description,
+            Color = s.Color ?? "#4a90e2", IconClass = s.IconClass ?? "fa-newspaper",
+            KeywordsText = string.Join("\n", s.Keywords),
+            IsPublic = s.IsPublic, IsDefault = s.IsDefault
+        };
+        EditingId = id; FormError = null; ShowModal = true;
+    }
+
+    private void CloseModal() => ShowModal = false;
+
+    private void AutoSlug(ChangeEventArgs e)
+    {
+        if (EditingId == 0)
+            Form.Slug = (e.Value?.ToString() ?? "").ToLower()
+                .Replace(" ", "-").Replace("á", "a").Replace("é", "e")
+                .Replace("í", "i").Replace("ó", "o").Replace("ú", "u");
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Form.Name) || string.IsNullOrWhiteSpace(Form.Slug))
+        {
+            FormError = "Nombre y slug son obligatorios."; return;
+        }
+        IsSaving = true;
+        try
+        {
+            var keywords = (Form.KeywordsText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(k => k.Trim().ToLower()).Where(k => !string.IsNullOrEmpty(k)).ToList();
+
+            if (EditingId == 0)
+            {
+                Ctx.NewsSections.Add(new NewsSection
+                {
+                    Name = Form.Name, Slug = Form.Slug, Description = Form.Description,
+                    Color = Form.Color, IconClass = Form.IconClass, Keywords = keywords,
+                    IsPublic = Form.IsPublic, IsDefault = Form.IsDefault
+                });
+            }
+            else
+            {
+                var s = await Ctx.NewsSections.FindAsync(EditingId);
+                if (s != null)
+                {
+                    s.Name = Form.Name; s.Slug = Form.Slug; s.Description = Form.Description;
+                    s.Color = Form.Color; s.IconClass = Form.IconClass; s.Keywords = keywords;
+                    s.IsPublic = Form.IsPublic; s.IsDefault = Form.IsDefault;
+                }
+            }
+            await Ctx.SaveChangesAsync();
+            await LoadAsync();
+            ShowModal = false;
+        }
+        finally { IsSaving = false; }
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar esta sección? Los eventos quedarán sin sección.")) return;
+        var s = await Ctx.NewsSections.FindAsync(id);
+        if (s != null) { s.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    record SectionRow(int Id, string Name, string Slug, string? Description, string Color,
+        string IconClass, List<string> Keywords, bool IsPublic, bool IsDefault,
+        bool IsSystemSection, int EventCount, int SourceCount)
+    {
+        public string Color20 => Color + "33";
+    }
+
+    class SectionForm
+    {
+        public string Name { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public string? Description { get; set; }
+        public string Color { get; set; } = "#4a90e2";
+        public string IconClass { get; set; } = "fa-newspaper";
+        public string? KeywordsText { get; set; }
+        public bool IsPublic { get; set; } = true;
+        public bool IsDefault { get; set; }
+    }
+}

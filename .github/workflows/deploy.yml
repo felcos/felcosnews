@@ -1,0 +1,56 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore src/ANews.Web/ANews.Web.csproj
+
+      - name: Build
+        run: dotnet build src/ANews.Web/ANews.Web.csproj -c Release --no-restore
+
+      - name: Publish
+        run: dotnet publish src/ANews.Web/ANews.Web.csproj -c Release -o ./publish --no-build
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Stop service
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            "sudo systemctl stop anews"
+
+      - name: Upload files
+        run: |
+          scp -i ~/.ssh/deploy_key -r ./publish/* \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:/opt/anews/
+
+      - name: Start service
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            "sudo systemctl start anews && sleep 5 && sudo systemctl is-active anews"
+
+      - name: Verify health
+        run: |
+          sleep 10
+          ssh -i ~/.ssh/deploy_key ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} \
+            "curl -sf http://localhost:5000/health || (echo 'Health check failed' && exit 1)"

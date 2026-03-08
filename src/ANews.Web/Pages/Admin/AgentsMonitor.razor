@@ -1,0 +1,403 @@
+@page "/admin/agents"
+@using Microsoft.AspNetCore.Authorization
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IAsyncDisposable
+@attribute [Authorize(Policy = "RequireAdmin")]
+@layout ANews.Web.Components.Layout.AdminLayout
+@inject AppDbContext Db
+@inject IJSRuntime JS
+@inject NavigationManager NavManager
+@inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
+@inject ANews.Infrastructure.Agents.EventDetectorAgent EventDetectorAgent
+@inject ANews.Infrastructure.Agents.AlertGeneratorAgent AlertGeneratorAgent
+@inject ANews.Infrastructure.Agents.NotificationDispatcherAgent NotificationDispatcherAgent
+@inject ANews.Infrastructure.Agents.ArticleSummarizerAgent ArticleSummarizerAgent
+@inject ANews.Infrastructure.Agents.DigestSenderAgent DigestSenderAgent
+
+<PageTitle>Agentes - Admin</PageTitle>
+
+<div class="admin-page-header">
+    <div>
+        <h2>Monitor de Agentes</h2>
+        <p class="text-muted">Historial de ejecuciones y logs del sistema</p>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <select class="form-control" @bind="_filterAgent" @bind:after="LoadData">
+        <option value="">Todos los agentes</option>
+        @foreach (var t in Enum.GetValues<AgentType>())
+        {
+            <option value="@t">@t</option>
+        }
+    </select>
+    <select class="form-control" @bind="_filterStatus" @bind:after="LoadData">
+        <option value="">Todos los estados</option>
+        @foreach (var s in Enum.GetValues<AgentStatus>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+    <input type="date" class="form-control" @bind="_filterDate" @bind:after="LoadData" />
+</div>
+
+<!-- Summary cards -->
+<div class="agent-summary-row">
+    <div class="agent-sum-card">
+        <div class="sum-icon text-success"><i class="fa fa-check-circle"></i></div>
+        <div class="sum-body">
+            <div class="sum-val">@_executions.Count(e => e.Status == AgentStatus.Completed)</div>
+            <div class="sum-lbl">Completados</div>
+        </div>
+    </div>
+    <div class="agent-sum-card">
+        <div class="sum-icon text-danger"><i class="fa fa-times-circle"></i></div>
+        <div class="sum-body">
+            <div class="sum-val">@_executions.Count(e => e.Status == AgentStatus.Failed)</div>
+            <div class="sum-lbl">Fallidos</div>
+        </div>
+    </div>
+    <div class="agent-sum-card">
+        <div class="sum-icon text-warning"><i class="fa fa-spinner"></i></div>
+        <div class="sum-body">
+            <div class="sum-val">@_executions.Count(e => e.Status == AgentStatus.Running)</div>
+            <div class="sum-lbl">En ejecucion</div>
+        </div>
+    </div>
+    <div class="agent-sum-card">
+        <div class="sum-icon text-info"><i class="fa fa-dollar-sign"></i></div>
+        <div class="sum-body">
+            <div class="sum-val">$@_executions.Sum(e => e.AiCost).ToString("F4")</div>
+            <div class="sum-lbl">Coste total</div>
+        </div>
+    </div>
+</div>
+
+<!-- Trigger manual de agentes -->
+<div class="agent-trigger-row">
+    @foreach (var agent in _agentTypes)
+    {
+        <div class="agent-trigger-card">
+            <span class="agent-trigger-name"><i class="fa fa-robot"></i> @agent.Display</span>
+            <button class="btn btn-sm btn-primary @(_triggering == agent.Type ? "btn-loading" : "")"
+                    @onclick="() => TriggerAgentAsync(agent.Type)"
+                    disabled="@(_triggering == agent.Type)">
+                @if (_triggering == agent.Type)
+                {
+                    <i class="fa fa-spinner fa-spin"></i> <span>Ejecutando...</span>
+                }
+                else
+                {
+                    <i class="fa fa-play"></i> <span>Ejecutar ahora</span>
+                }
+            </button>
+        </div>
+    }
+</div>
+
+<!-- Executions table -->
+<div class="data-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Agente</th>
+                <th>Estado</th>
+                <th>Inicio</th>
+                <th>Duracion</th>
+                <th>Coste IA</th>
+                <th>Razon</th>
+                <th>Logs</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var ex in _executions)
+            {
+                <tr>
+                    <td>
+                        <span class="agent-type-badge agent-@ex.AgentType.ToString().ToLower()">
+                            <i class="fa fa-robot"></i> @ex.AgentType
+                        </span>
+                    </td>
+                    <td>
+                        <span class="status-badge status-@ex.Status.ToString().ToLower()">
+                            @GetStatusIcon(ex.Status) @ex.Status
+                        </span>
+                    </td>
+                    <td>@ex.StartedAt.ToString("dd/MM HH:mm:ss")</td>
+                    <td>
+                        @if (ex.Duration.HasValue)
+                        {
+                            @FormatDuration(ex.Duration.Value)
+                        }
+                        else if (ex.Status == AgentStatus.Running)
+                        {
+                            <span class="text-warning">en curso...</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">-</span>
+                        }
+                    </td>
+                    <td class="@(ex.AiCost > 0 ? "" : "text-muted")">
+                        @(ex.AiCost > 0 ? $"${ex.AiCost:F4}" : "-")
+                    </td>
+                    <td class="text-muted" style="font-size:12px">@ex.TriggerReason</td>
+                    <td>
+                        <button class="btn-icon" @onclick="() => ShowLogs(ex)" title="Ver logs">
+                            <i class="fa fa-list-alt"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+            @if (!_executions.Any())
+            {
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">Sin ejecuciones registradas</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<div class="pagination-bar">
+    <button class="btn btn-sm btn-secondary" @onclick="PrevPage" disabled="@(_page == 0)">
+        <i class="fa fa-chevron-left"></i>
+    </button>
+    <span class="text-muted">Pagina @(_page + 1) de @_totalPages</span>
+    <button class="btn btn-sm btn-secondary" @onclick="NextPage" disabled="@(_page >= _totalPages - 1)">
+        <i class="fa fa-chevron-right"></i>
+    </button>
+</div>
+
+<!-- Feed de logs en vivo -->
+<div class="live-log-section">
+    <div class="live-log-header">
+        <h3><i class="fa fa-terminal"></i> Logs en vivo</h3>
+        <button class="btn btn-sm btn-secondary" @onclick="ClearLiveLogs">Limpiar</button>
+    </div>
+    <div class="live-log-feed" id="live-log-feed">
+        @if (!_liveLogs.Any())
+        {
+            <div class="log-empty"><i class="fa fa-satellite-dish"></i> Esperando actividad de agentes...</div>
+        }
+        @foreach (var log in _liveLogs)
+        {
+            <div class="log-entry log-@log.Level.ToLower()">
+                <span class="log-time">@log.Time.ToString("HH:mm:ss")</span>
+                <span class="log-badge badge-@log.Level.ToLower()">@log.Level</span>
+                <span class="log-msg">@log.Message</span>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Log Modal -->
+@if (_logExecution != null)
+{
+    <div class="modal-backdrop" @onclick="CloseLogModal"></div>
+    <div class="modal-panel modal-wide">
+        <div class="modal-header">
+            <h3>
+                <i class="fa fa-list-alt"></i>
+                Logs — @_logExecution.AgentType
+                <small class="text-muted">@_logExecution.StartedAt.ToString("dd/MM/yyyy HH:mm:ss")</small>
+            </h3>
+            <button class="modal-close" @onclick="CloseLogModal"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="log-feed" id="logModal">
+                @if (!_logs.Any())
+                {
+                    <div class="log-empty"><i class="fa fa-inbox"></i> Sin logs para esta ejecucion</div>
+                }
+                @foreach (var log in _logs)
+                {
+                    <div class="log-entry">
+                        <span class="log-time">@log.Timestamp.ToString("HH:mm:ss")</span>
+                        <span class="log-badge badge-@log.Level.ToString().ToLower()">@log.Level</span>
+                        <span class="log-msg">@log.Message</span>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" @onclick="CloseLogModal">Cerrar</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AgentExecution> _executions = new();
+    private List<AgentLog> _logs = new();
+    private AgentExecution? _logExecution;
+    private string _filterAgent = "";
+    private string _filterStatus = "";
+    private DateTime? _filterDate;
+    private int _page;
+    private int _pageSize = 20;
+    private int _totalPages = 1;
+
+    private string _triggering = "";
+    private HubConnection? _hub;
+    private readonly List<LiveLogEntry> _liveLogs = new();
+
+    private readonly (string Type, string Display)[] _agentTypes =
+    [
+        ("newsscanner", "News Scanner"),
+        ("eventdetector", "Event Detector"),
+        ("alertgenerator", "Alert Generator"),
+        ("notificationdispatcher", "Notification Dispatcher"),
+        ("articlesummarizer", "Article Summarizer"),
+        ("digestsender", "Digest Sender"),
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await SetupSignalRAsync();
+    }
+
+    private async Task LoadData()
+    {
+        var query = Db.AgentExecutions.AsQueryable();
+
+        if (!string.IsNullOrEmpty(_filterAgent) && Enum.TryParse<AgentType>(_filterAgent, out var at))
+            query = query.Where(e => e.AgentType == at);
+
+        if (!string.IsNullOrEmpty(_filterStatus) && Enum.TryParse<AgentStatus>(_filterStatus, out var st))
+            query = query.Where(e => e.Status == st);
+
+        if (_filterDate.HasValue)
+            query = query.Where(e => e.StartedAt.Date == _filterDate.Value.Date);
+
+        var total = await query.CountAsync();
+        _totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)_pageSize));
+        if (_page >= _totalPages) _page = 0;
+
+        _executions = await query
+            .OrderByDescending(e => e.StartedAt)
+            .Skip(_page * _pageSize)
+            .Take(_pageSize)
+            .ToListAsync();
+    }
+
+    private async Task ShowLogs(AgentExecution ex)
+    {
+        _logExecution = ex;
+        _logs = await Db.AgentLogs
+            .Where(l => l.AgentExecutionId == ex.Id)
+            .OrderBy(l => l.Timestamp)
+            .ToListAsync();
+    }
+
+    private void CloseLogModal()
+    {
+        _logExecution = null;
+        _logs.Clear();
+    }
+
+    private async Task PrevPage() { _page--; await LoadData(); }
+    private async Task NextPage() { _page++; await LoadData(); }
+
+    private static bool Trigger(ANews.Infrastructure.Agents.BaseAgent agent) { agent.TriggerNow(); return true; }
+
+    private static string GetStatusIcon(AgentStatus s) => s switch
+    {
+        AgentStatus.Completed => "✓",
+        AgentStatus.Failed    => "✗",
+        AgentStatus.Running   => "⟳",
+        _                     => "·"
+    };
+
+    private static string FormatDuration(TimeSpan ts)
+    {
+        if (ts.TotalSeconds < 60) return $"{ts.TotalSeconds:F1}s";
+        if (ts.TotalMinutes < 60) return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+    }
+
+    private async Task SetupSignalRAsync()
+    {
+        try
+        {
+            _hub = new HubConnectionBuilder()
+                .WithUrl(NavManager.ToAbsoluteUri("/agenthub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hub.On<object>("AgentLog", async logObj =>
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(logObj);
+                var log = System.Text.Json.JsonSerializer.Deserialize<AgentLogDto>(json,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (log != null)
+                {
+                    _liveLogs.Add(new LiveLogEntry(log.Level ?? "Info", log.Message ?? "", DateTime.Now));
+                    if (_liveLogs.Count > 200) _liveLogs.RemoveAt(0);
+                    await InvokeAsync(StateHasChanged);
+                    try { await JS.InvokeVoidAsync("scrollToBottom", "live-log-feed"); } catch { }
+                }
+            });
+
+            await _hub.StartAsync();
+        }
+        catch
+        {
+            // Hub no disponible — sin logs en tiempo real
+        }
+    }
+
+    private async Task TriggerAgentAsync(string type)
+    {
+        _triggering = type;
+        StateHasChanged();
+        try
+        {
+            var triggered = type.ToLower() switch
+            {
+                "newsscanner"             => Trigger(NewsScannerAgent),
+                "eventdetector"           => Trigger(EventDetectorAgent),
+                "alertgenerator"          => Trigger(AlertGeneratorAgent),
+                "notificationdispatcher"  => Trigger(NotificationDispatcherAgent),
+                "articlesummarizer"       => Trigger(ArticleSummarizerAgent),
+                "digestsender"            => Trigger(DigestSenderAgent),
+                _ => false
+            };
+            _liveLogs.Add(new LiveLogEntry(triggered ? "Info" : "Error",
+                triggered ? $"Agente {type} activado" : $"Tipo desconocido: {type}",
+                DateTime.Now));
+            await Task.Delay(500);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            _liveLogs.Add(new LiveLogEntry("Error", $"Error: {ex.Message}", DateTime.Now));
+        }
+        finally
+        {
+            _triggering = "";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ClearLiveLogs() => _liveLogs.Clear();
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hub != null) await _hub.DisposeAsync();
+    }
+
+    record LiveLogEntry(string Level, string Message, DateTime Time);
+    record AgentLogDto { public string? Level { get; init; } public string? Message { get; init; } }
+}

@@ -1,0 +1,276 @@
+@page "/user/modules"
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject AppDbContext Ctx
+@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Mis Módulos — AgenteNews</PageTitle>
+
+<div class="user-page">
+    <div class="page-header">
+        <h1><i class="fa fa-layer-group"></i> Mis Módulos de Noticias</h1>
+        <button class="btn-primary" @onclick="ShowAdd"><i class="fa fa-plus"></i> Nuevo módulo</button>
+    </div>
+    <p class="page-desc">Cada módulo monitoriza palabras clave y te notifica cuando hay noticias relevantes.</p>
+
+    <div class="modules-grid">
+        @foreach (var m in Modules)
+        {
+            <div class="module-card @(!m.IsActive ? "module-inactive" : "")" style="border-color:@m.Color">
+                <div class="module-header" style="background:@m.Color20">
+                    <i class="fa @m.IconClass" style="color:@m.Color"></i>
+                    <span class="module-name">@m.Name</span>
+                    <div class="module-toggles">
+                        <button class="btn-toggle-active @(m.IsActive ? "on" : "off")"
+                                @onclick="() => ToggleActiveAsync(m.Id)">
+                            @(m.IsActive ? "ON" : "OFF")
+                        </button>
+                    </div>
+                </div>
+                <div class="module-body">
+                    <div class="module-keywords">
+                        @foreach (var kw in m.Keywords)
+                        {
+                            <span class="kw-chip">@kw.Keyword <span class="kw-weight">x@kw.Weight</span></span>
+                        }
+                    </div>
+                    <div class="module-stats">
+                        <div class="mstat"><span class="mstat-val">@m.TotalMatchedEvents</span><span class="mstat-lbl">Matches</span></div>
+                        <div class="mstat"><span class="mstat-val">@m.FrequencyLabel</span><span class="mstat-lbl">Frecuencia</span></div>
+                        <div class="mstat"><span class="mstat-val">@(m.NotificationsEnabled ? "Si" : "No")</span><span class="mstat-lbl">Notif.</span></div>
+                    </div>
+                    @if (m.RssFeedToken != null)
+                    {
+                        <div class="module-rss">
+                            <i class="fa fa-rss"></i>
+                            <span>RSS:</span>
+                            <code>/api/rss/@m.RssFeedToken</code>
+                        </div>
+                    }
+                </div>
+                <div class="module-footer">
+                    <button class="btn-sm" @onclick="() => ShowEdit(m.Id)"><i class="fa fa-edit"></i> Editar</button>
+                    <button class="btn-sm btn-danger" @onclick="() => DeleteAsync(m.Id)"><i class="fa fa-trash"></i></button>
+                </div>
+            </div>
+        }
+
+        @if (!Modules.Any())
+        {
+            <div class="empty-state">
+                <div class="empty-state-icon"><i class="fa fa-filter"></i></div>
+                <h3>Sin módulos activos</h3>
+                <p>Crea un módulo para filtrar noticias por tus temas de interés y recibir alertas personalizadas.</p>
+                <button class="btn btn-primary" @onclick="ShowAdd"><i class="fa fa-plus"></i> Crear primer módulo</button>
+            </div>
+        }
+    </div>
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-box modal-large" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(EditingId == 0 ? "Nuevo módulo" : "Editar módulo")</h3>
+                <button @onclick="CloseModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre del módulo</label>
+                        <input class="form-input" @bind="Form.Name" placeholder="Ej: Tecnología IA" />
+                    </div>
+                    <div class="form-group">
+                        <label>Color</label>
+                        <div class="color-input-group">
+                            <input type="color" @bind="Form.Color" class="color-picker" />
+                            <input class="form-input" @bind="Form.Color" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Icono</label>
+                        <input class="form-input" @bind="Form.IconClass" placeholder="fa-microchip" />
+                    </div>
+                    <div class="form-group">
+                        <label>Frecuencia de notificación</label>
+                        <select class="form-input" @bind="Form.Frequency">
+                            @foreach (var f in Enum.GetValues<NotificationFrequency>())
+                            {
+                                <option value="@f">@f</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group form-full">
+                        <label>Palabras clave (una por línea, puedes añadir peso ej: "bitcoin:2.0")</label>
+                        <textarea class="form-input" @bind="Form.KeywordsText" rows="6"
+                                  placeholder="inteligencia artificial&#10;chatgpt:1.5&#10;llm&#10;openai:2.0"></textarea>
+                        <small class="form-hint">El peso (por defecto 1.0) indica la importancia relativa de la keyword.</small>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="Form.NotificationsEnabled" /> Notificaciones activas
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="Form.GenerateRss" /> Generar feed RSS
+                        </label>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(FormError))
+                {
+                    <div class="form-error">@FormError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" @onclick="CloseModal">Cancelar</button>
+                <button class="btn-primary" @onclick="SaveAsync" disabled="@IsSaving">
+                    @(IsSaving ? "Guardando..." : "Guardar")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ModuleRow> Modules = [];
+    private int CurrentUserId;
+    private bool ShowModal;
+    private int EditingId;
+    private bool IsSaving;
+    private string? FormError;
+    private ModuleForm Form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        CurrentUserId = int.Parse(auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Modules = await Ctx.UserModules
+            .Include(m => m.Keywords)
+            .Where(m => m.UserId == CurrentUserId && !m.IsDeleted)
+            .Select(m => new ModuleRow(
+                m.Id, m.Name, m.Color ?? "#4a90e2", m.IconClass ?? "fa-newspaper",
+                m.IsActive, m.NotificationsEnabled, m.NotificationFrequency.ToString(),
+                m.TotalMatchedEvents, m.RssFeedToken,
+                m.Keywords.Select(k => new KwItem(k.Keyword, k.Weight)).ToList()))
+            .ToListAsync();
+    }
+
+    private void ShowAdd()
+    {
+        Form = new ModuleForm { Color = "#4a90e2", IconClass = "fa-newspaper", NotificationsEnabled = true };
+        EditingId = 0; FormError = null; ShowModal = true;
+    }
+
+    private async Task ShowEdit(int id)
+    {
+        var m = await Ctx.UserModules.Include(m => m.Keywords).FirstOrDefaultAsync(m => m.Id == id);
+        if (m == null) return;
+        Form = new ModuleForm
+        {
+            Name = m.Name, Color = m.Color ?? "#4a90e2", IconClass = m.IconClass ?? "fa-newspaper",
+            Frequency = m.NotificationFrequency, NotificationsEnabled = m.NotificationsEnabled,
+            GenerateRss = m.RssFeedToken != null,
+            KeywordsText = string.Join("\n", m.Keywords.Select(k => k.Weight != 1 ? $"{k.Keyword}:{k.Weight}" : k.Keyword))
+        };
+        EditingId = id; FormError = null; ShowModal = true;
+    }
+
+    private void CloseModal() => ShowModal = false;
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Form.Name)) { FormError = "El nombre es obligatorio."; return; }
+        IsSaving = true;
+        try
+        {
+            var keywords = ParseKeywords(Form.KeywordsText ?? "");
+            if (EditingId == 0)
+            {
+                var module = new UserModule
+                {
+                    Name = Form.Name, UserId = CurrentUserId, Color = Form.Color,
+                    IconClass = Form.IconClass, NotificationFrequency = Form.Frequency,
+                    NotificationsEnabled = Form.NotificationsEnabled, IsActive = true,
+                    RssFeedToken = Form.GenerateRss ? Guid.NewGuid().ToString("N") : null,
+                    Keywords = keywords
+                };
+                Ctx.UserModules.Add(module);
+            }
+            else
+            {
+                var m = await Ctx.UserModules.Include(m => m.Keywords).FirstOrDefaultAsync(m => m.Id == EditingId);
+                if (m == null) return;
+                m.Name = Form.Name; m.Color = Form.Color; m.IconClass = Form.IconClass;
+                m.NotificationFrequency = Form.Frequency; m.NotificationsEnabled = Form.NotificationsEnabled;
+                if (Form.GenerateRss && m.RssFeedToken == null) m.RssFeedToken = Guid.NewGuid().ToString("N");
+                else if (!Form.GenerateRss) m.RssFeedToken = null;
+                Ctx.ModuleKeywords.RemoveRange(m.Keywords);
+                m.Keywords = keywords;
+            }
+            await Ctx.SaveChangesAsync();
+            await LoadAsync();
+            ShowModal = false;
+        }
+        finally { IsSaving = false; }
+    }
+
+    private static List<ModuleKeyword> ParseKeywords(string text)
+    {
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line =>
+            {
+                var parts = line.Trim().Split(':');
+                var weight = parts.Length > 1 && decimal.TryParse(parts[1], out var w) ? w : 1.0m;
+                return new ModuleKeyword { Keyword = parts[0].Trim().ToLower(), Weight = weight };
+            })
+            .Where(k => !string.IsNullOrEmpty(k.Keyword))
+            .ToList();
+    }
+
+    private async Task ToggleActiveAsync(int id)
+    {
+        var m = await Ctx.UserModules.FindAsync(id);
+        if (m != null) { m.IsActive = !m.IsActive; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este módulo?")) return;
+        var m = await Ctx.UserModules.FindAsync(id);
+        if (m != null) { m.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    record ModuleRow(int Id, string Name, string Color, string IconClass, bool IsActive,
+        bool NotificationsEnabled, string FrequencyLabel, int TotalMatchedEvents,
+        string? RssFeedToken, List<KwItem> Keywords)
+    {
+        public string Color20 => Color + "33";
+    }
+
+    record KwItem(string Keyword, decimal Weight);
+
+    class ModuleForm
+    {
+        public string Name { get; set; } = "";
+        public string Color { get; set; } = "#4a90e2";
+        public string IconClass { get; set; } = "fa-newspaper";
+        public NotificationFrequency Frequency { get; set; } = NotificationFrequency.Instant;
+        public bool NotificationsEnabled { get; set; } = true;
+        public bool GenerateRss { get; set; }
+        public string? KeywordsText { get; set; }
+    }
+}

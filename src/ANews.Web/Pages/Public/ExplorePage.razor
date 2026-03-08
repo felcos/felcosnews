@@ -1,0 +1,475 @@
+@page "/explore"
+@inject AppDbContext Ctx
+@inject NavigationManager Nav
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Explorar — AgenteNews</PageTitle>
+
+<div class="public-layout explore-layout" id="explore-root">
+
+    <!-- Header -->
+    <header class="site-header">
+        <div class="header-brand">
+            <a href="/" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:8px;">
+                <i class="fa fa-satellite"></i>
+                <span class="brand-name">AGENTE<strong>NEWS</strong></span>
+                <span class="brand-beta">BETA</span>
+            </a>
+        </div>
+
+        <nav class="section-nav" id="explore-section-nav">
+            <button class="nav-tab @(SelectedSection == "all" ? "active" : "")"
+                    @onclick="@(() => ApplyFilters("all"))">
+                <i class="fa fa-globe"></i> Todo
+            </button>
+            @foreach (var s in Sections)
+            {
+                <button class="nav-tab @(SelectedSection == s.Slug ? "active" : "")"
+                        @onclick="@(() => ApplyFilters(s.Slug))"
+                        style="--section-color:@s.Color">
+                    <i class="fa @s.IconClass"></i> @s.Name
+                </button>
+            }
+        </nav>
+
+        <div class="header-right">
+            <a href="/" class="btn-login"><i class="fa fa-arrow-left"></i> Portada</a>
+        </div>
+    </header>
+
+    <!-- Explore toolbar -->
+    <div class="explore-toolbar">
+        <div class="explore-toolbar-left">
+            <i class="fa fa-calendar-alt explore-toolbar-icon"></i>
+            <h1 class="explore-title">Explorar Noticias</h1>
+            <span class="explore-subtitle">Navega por eventos históricos y archivados</span>
+        </div>
+
+        <div class="explore-filters">
+            <!-- Date range pickers -->
+            <div class="date-range-group">
+                <label class="date-label">Desde</label>
+                <input type="date" class="date-input"
+                       value="@FromDate.ToString("yyyy-MM-dd")"
+                       @onchange="OnFromDateChanged"
+                       max="@ToDate.ToString("yyyy-MM-dd")" />
+            </div>
+            <span class="date-sep">—</span>
+            <div class="date-range-group">
+                <label class="date-label">Hasta</label>
+                <input type="date" class="date-input"
+                       value="@ToDate.ToString("yyyy-MM-dd")"
+                       @onchange="OnToDateChanged"
+                       min="@FromDate.ToString("yyyy-MM-dd")"
+                       max="@Today.ToString("yyyy-MM-dd")" />
+            </div>
+
+            <!-- Quick range presets -->
+            <div class="preset-buttons">
+                <button class="preset-btn @(ActivePreset == 7 ? "active" : "")"  @onclick="@(() => SetPreset(7))">7d</button>
+                <button class="preset-btn @(ActivePreset == 14 ? "active" : "")" @onclick="@(() => SetPreset(14))">14d</button>
+                <button class="preset-btn @(ActivePreset == 30 ? "active" : "")" @onclick="@(() => SetPreset(30))">30d</button>
+                <button class="preset-btn @(ActivePreset == 90 ? "active" : "")" @onclick="@(() => SetPreset(90))">90d</button>
+            </div>
+
+            <!-- Show archived toggle -->
+            <label class="toggle-label">
+                <input type="checkbox" @bind="ShowArchived" @bind:after="LoadEventsAsync" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-text">Ver archivados</span>
+            </label>
+
+            <!-- Compare button -->
+            <button class="btn-compare @(CompareMode ? "active" : "")" @onclick="ToggleCompare"
+                    title="Comparar con el estado actual de los mismos eventos">
+                <i class="fa fa-columns"></i>
+                @(CompareMode ? "Comparando" : "Comparar con actualidad")
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="explore-stats-bar">
+        <div class="explore-stat">
+            <span class="stat-num">@Events.Count</span>
+            <span class="stat-lbl">Eventos en el periodo</span>
+        </div>
+        <div class="explore-stat">
+            <span class="stat-num">@Events.Sum(e => e.ArticlesInRange)</span>
+            <span class="stat-lbl">Artículos publicados</span>
+        </div>
+        <div class="explore-stat">
+            <span class="stat-num">@Events.Count(e => e.EventType == "Archived")</span>
+            <span class="stat-lbl">Archivados</span>
+        </div>
+        <div class="explore-stat">
+            <span class="stat-num">@Events.Count(e => e.IsActive)</span>
+            <span class="stat-lbl">Aún activos</span>
+        </div>
+        <div class="explore-stat-range">
+            <i class="fa fa-calendar"></i>
+            @FromDate.ToString("dd/MM/yyyy") — @ToDate.ToString("dd/MM/yyyy")
+            <span class="range-days">(@((ToDate - FromDate).Days + 1) días)</span>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <main class="explore-content">
+
+        @if (IsLoading)
+        {
+            <div class="loading-screen">
+                <div class="loading-spinner"></div>
+                <p>Buscando eventos en el periodo seleccionado...</p>
+            </div>
+        }
+        else if (!FilteredEvents.Any())
+        {
+            <div class="empty-universe">
+                <i class="fa fa-calendar-times"></i>
+                <h2>Sin eventos en este periodo</h2>
+                <p>No se encontraron eventos entre @FromDate.ToString("dd/MM/yyyy") y @ToDate.ToString("dd/MM/yyyy").</p>
+                <button class="btn-login" @onclick="@(() => SetPreset(30))">Ver últimos 30 días</button>
+            </div>
+        }
+        else
+        {
+            @if (CompareMode)
+            {
+                <!-- Dual column: historical | current -->
+                <div class="compare-header">
+                    <div class="compare-col-label historical">
+                        <i class="fa fa-history"></i>
+                        En el periodo (@FromDate.ToString("dd/MM") — @ToDate.ToString("dd/MM"))
+                    </div>
+                    <div class="compare-col-label current">
+                        <i class="fa fa-circle pulse-live"></i>
+                        Estado actual
+                    </div>
+                </div>
+                <div class="compare-grid">
+                    @foreach (var ev in FilteredEvents)
+                    {
+                        <div class="compare-row">
+                            <!-- Historical card -->
+                            <div class="explore-card priority-@ev.Priority.ToLower() historical-card">
+                                <div class="ec-header">
+                                    <span class="ec-priority">@ev.Priority</span>
+                                    <span class="ec-section">@ev.SectionName</span>
+                                    <span class="ec-impact">@ev.ImpactScore.ToString("F0")</span>
+                                    @if (ev.EventType == "Archived")
+                                    {
+                                        <span class="ec-archived"><i class="fa fa-archive"></i> Archivado</span>
+                                    }
+                                </div>
+                                <h3 class="ec-title">@ev.Title</h3>
+                                <p class="ec-desc">@Truncate(ev.Description ?? "", 110)</p>
+                                <div class="ec-evolution">
+                                    <div class="evo-item">
+                                        <i class="fa fa-flag-o"></i>
+                                        <span>Inicio: @ev.StartDate.ToLocalTime().ToString("dd/MM/yyyy")</span>
+                                    </div>
+                                    <div class="evo-item accent">
+                                        <i class="fa fa-newspaper-o"></i>
+                                        <span>@ev.ArticlesInRange artículos en el periodo</span>
+                                    </div>
+                                </div>
+                                @if (ev.Tags.Any())
+                                {
+                                    <div class="ec-tags">
+                                        @foreach (var tag in ev.Tags.Take(4))
+                                        {
+                                            <span class="ec-tag">#@tag</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+
+                            <!-- Current state card -->
+                            @{
+                                var current = CurrentEvents.FirstOrDefault(c => c.Id == ev.Id);
+                            }
+                            @if (current != null)
+                            {
+                                <div class="explore-card priority-@current.Priority.ToLower() current-card">
+                                    <div class="ec-header">
+                                        <span class="ec-priority">@current.Priority</span>
+                                        @if (current.IsActive)
+                                        {
+                                            <span class="ec-live"><i class="fa fa-circle"></i> Activo</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="ec-archived"><i class="fa fa-archive"></i> Cerrado</span>
+                                        }
+                                        <span class="ec-impact">@current.ImpactScore.ToString("F0")</span>
+                                    </div>
+                                    <div class="ec-compare-stat">
+                                        <div class="compare-stat-row">
+                                            <span class="csr-label">Artículos totales</span>
+                                            <span class="csr-val @(current.TotalArticles > ev.ArticlesInRange ? "up" : "same")">
+                                                @current.TotalArticles
+                                                @if (current.TotalArticles > ev.ArticlesInRange)
+                                                {
+                                                    <i class="fa fa-arrow-up"></i>
+                                                }
+                                            </span>
+                                        </div>
+                                        <div class="compare-stat-row">
+                                            <span class="csr-label">Impact score</span>
+                                            <span class="csr-val @(current.ImpactScore > ev.ImpactScore ? "up" : current.ImpactScore < ev.ImpactScore ? "down" : "same")">
+                                                @current.ImpactScore.ToString("F0")
+                                                @if (current.ImpactScore > ev.ImpactScore) { <i class="fa fa-arrow-up"></i> }
+                                                else if (current.ImpactScore < ev.ImpactScore) { <i class="fa fa-arrow-down"></i> }
+                                            </span>
+                                        </div>
+                                        <div class="compare-stat-row">
+                                            <span class="csr-label">Último update</span>
+                                            <span class="csr-val">@current.UpdatedAt.ToLocalTime().ToString("dd/MM HH:mm")</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="explore-card current-card not-found-card">
+                                    <div class="ec-not-found">
+                                        <i class="fa fa-question-circle"></i>
+                                        <p>Evento eliminado o no disponible actualmente</p>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <!-- Standard grid view -->
+                <div class="explore-grid">
+                    @foreach (var ev in FilteredEvents)
+                    {
+                        <div class="explore-card priority-@ev.Priority.ToLower()">
+                            <div class="ec-header">
+                                <span class="ec-priority">@ev.Priority</span>
+                                <span class="ec-section">@ev.SectionName</span>
+                                <span class="ec-impact">@ev.ImpactScore.ToString("F0")</span>
+                                @if (ev.EventType == "Archived")
+                                {
+                                    <span class="ec-archived"><i class="fa fa-archive"></i> Archivado</span>
+                                }
+                                else if (ev.IsActive)
+                                {
+                                    <span class="ec-live"><i class="fa fa-circle"></i> Activo</span>
+                                }
+                            </div>
+                            <h3 class="ec-title">@ev.Title</h3>
+                            <p class="ec-desc">@Truncate(ev.Description ?? "", 130)</p>
+
+                            <!-- Evolution timeline mini-bar -->
+                            <div class="ec-evolution">
+                                <div class="evo-item">
+                                    <i class="fa fa-flag-o"></i>
+                                    <span>Inicio: @ev.StartDate.ToLocalTime().ToString("dd/MM/yyyy")</span>
+                                </div>
+                                <div class="evo-item accent">
+                                    <i class="fa fa-newspaper-o"></i>
+                                    <span>@ev.ArticlesInRange artículos en el periodo</span>
+                                </div>
+                                @if (ev.EndDate.HasValue)
+                                {
+                                    <div class="evo-item muted">
+                                        <i class="fa fa-flag-checkered"></i>
+                                        <span>Fin: @ev.EndDate.Value.ToLocalTime().ToString("dd/MM/yyyy")</span>
+                                    </div>
+                                }
+                            </div>
+
+                            @if (ev.Tags.Any())
+                            {
+                                <div class="ec-tags">
+                                    @foreach (var tag in ev.Tags.Take(5))
+                                    {
+                                        <span class="ec-tag">#@tag</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </main>
+</div>
+
+@code {
+    private bool IsLoading = true;
+    private bool ShowArchived = true;
+    private bool CompareMode = false;
+    private string SelectedSection = "all";
+    private int ActivePreset = 7;
+
+    private DateTime Today = DateTime.UtcNow.Date;
+    private DateTime FromDate;
+    private DateTime ToDate;
+
+    private List<SectionItem> Sections = [];
+    private List<ExploreEventItem> Events = [];
+    private List<CurrentEventItem> CurrentEvents = [];
+
+    private List<ExploreEventItem> FilteredEvents =>
+        SelectedSection == "all"
+            ? Events
+            : Events.Where(e => e.SectionSlug == SelectedSection).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        ToDate = Today;
+        FromDate = Today.AddDays(-6); // last 7 days inclusive
+
+        Sections = await Ctx.NewsSections
+            .Where(s => s.IsPublic && !s.IsDeleted)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
+            .ToListAsync();
+
+        await LoadEventsAsync();
+        IsLoading = false;
+    }
+
+    private async Task LoadEventsAsync()
+    {
+        IsLoading = true;
+        StateHasChanged();
+
+        var fromUtc = DateTime.SpecifyKind(FromDate, DateTimeKind.Utc);
+        var toUtc = DateTime.SpecifyKind(ToDate.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+
+        var eventTypeFilter = ShowArchived
+            ? new[] { "Detected", "Archived" }
+            : new[] { "Detected" };
+
+        Events = await Ctx.NewsEvents
+            .Include(e => e.Section)
+            .Where(e => !e.IsDeleted
+                     && eventTypeFilter.Contains(e.EventType)
+                     && e.StartDate <= toUtc
+                     && (e.UpdatedAt >= fromUtc || e.IsActive))
+            .OrderByDescending(e => e.Priority)
+            .ThenByDescending(e => e.ImpactScore)
+            .Take(50)
+            .Select(e => new ExploreEventItem(
+                e.Id,
+                e.Title,
+                e.Description,
+                e.Priority.ToString(),
+                e.ImpactScore,
+                e.StartDate,
+                e.EndDate,
+                e.IsActive,
+                e.EventType ?? "Detected",
+                e.Section.Name,
+                e.Section.Slug,
+                e.Articles.Count(a => !a.IsDeleted && a.PublishedAt >= fromUtc && a.PublishedAt <= toUtc),
+                e.Tags))
+            .ToListAsync();
+
+        if (CompareMode)
+            await LoadCurrentEventsAsync();
+
+        IsLoading = false;
+    }
+
+    private async Task LoadCurrentEventsAsync()
+    {
+        if (!Events.Any())
+        {
+            CurrentEvents = [];
+            return;
+        }
+
+        var ids = Events.Select(e => e.Id).ToList();
+
+        CurrentEvents = await Ctx.NewsEvents
+            .Where(e => ids.Contains(e.Id) && !e.IsDeleted)
+            .Select(e => new CurrentEventItem(
+                e.Id,
+                e.Priority.ToString(),
+                e.ImpactScore,
+                e.IsActive,
+                e.UpdatedAt,
+                e.Articles.Count(a => !a.IsDeleted)))
+            .ToListAsync();
+    }
+
+    private async Task ToggleCompare()
+    {
+        CompareMode = !CompareMode;
+        if (CompareMode)
+            await LoadCurrentEventsAsync();
+    }
+
+    private async Task SetPreset(int days)
+    {
+        ActivePreset = days;
+        ToDate = Today;
+        FromDate = Today.AddDays(-(days - 1));
+        await LoadEventsAsync();
+    }
+
+    private async Task OnFromDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var d))
+        {
+            FromDate = d.Date;
+            ActivePreset = 0;
+            await LoadEventsAsync();
+        }
+    }
+
+    private async Task OnToDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var d))
+        {
+            ToDate = d.Date;
+            ActivePreset = 0;
+            await LoadEventsAsync();
+        }
+    }
+
+    private async Task ApplyFilters(string sectionSlug)
+    {
+        SelectedSection = sectionSlug;
+        // Section filtering is client-side on already loaded events
+        await Task.CompletedTask;
+    }
+
+    private static string Truncate(string s, int max) =>
+        s.Length > max ? s[..max] + "…" : s;
+
+    record SectionItem(int Id, string Name, string Slug, string Color, string IconClass);
+
+    record ExploreEventItem(
+        int Id,
+        string Title,
+        string? Description,
+        string Priority,
+        decimal ImpactScore,
+        DateTime StartDate,
+        DateTime? EndDate,
+        bool IsActive,
+        string EventType,
+        string SectionName,
+        string SectionSlug,
+        int ArticlesInRange,
+        string[] Tags);
+
+    record CurrentEventItem(
+        int Id,
+        string Priority,
+        decimal ImpactScore,
+        bool IsActive,
+        DateTime UpdatedAt,
+        int TotalArticles);
+}
