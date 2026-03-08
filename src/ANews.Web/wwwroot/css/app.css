@@ -96,6 +96,30 @@ a:hover { color: var(--accent-green); }
   background: rgba(74,144,226,0.1);
 }
 
+/* Module nav bar */
+.module-nav-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 16px;
+  background: rgba(0,255,136,0.04);
+  border-bottom: 1px solid rgba(0,255,136,0.12);
+  overflow-x: auto; scrollbar-width: none;
+}
+.module-nav-row::-webkit-scrollbar { display: none; }
+.module-nav-label {
+  font-size: 11px; color: rgba(0,255,136,0.55); white-space: nowrap;
+  font-weight: 600; letter-spacing: 0.03em; margin-right: 4px;
+}
+.module-tab.active {
+  background: rgba(0,255,136,0.1);
+  border-color: rgba(0,255,136,0.4);
+  color: #00ff88;
+}
+/* Zoom controls (added by universe.js JS) */
+#univ-zoom-ctrl button:hover {
+  background: rgba(74,144,226,0.2) !important;
+  border-color: rgba(74,144,226,0.6) !important;
+}
+
 .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 
 .live-status {

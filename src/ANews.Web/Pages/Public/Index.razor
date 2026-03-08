@@ -67,6 +67,27 @@
         </div>
     </header>
 
+    @if (UserModules.Any())
+    {
+        <div class="module-nav-row">
+            <span class="module-nav-label"><i class="fa fa-filter"></i> Mis módulos:</span>
+            @foreach (var m in UserModules)
+            {
+                <button class="nav-tab module-tab @(SelectedSection == $"module:{m.Id}" ? "active" : "")"
+                        style="--section-color:@m.Color"
+                        @onclick="@(() => SelectSection($"module:{m.Id}"))">
+                    <i class="fa fa-circle" style="color:@m.Color;font-size:8px"></i> @m.Name
+                </button>
+            }
+            @if (SelectedSection.StartsWith("module:"))
+            {
+                <button class="nav-tab" @onclick="@(() => SelectSection("all"))" title="Quitar filtro de módulo">
+                    <i class="fa fa-times"></i>
+                </button>
+            }
+        </div>
+    }
+
     <!-- Alertas críticas -->
     @if (CriticalAlerts.Any())
     {
@@ -271,11 +292,32 @@
     private string _searchQuery = "";
     private List<SectionItem> Sections = [];
     private List<EventItem> Events = [];
+    private List<ModuleFilterItem> UserModules = [];
+
+    record ModuleFilterItem(int Id, string Name, string Color, List<string> Keywords);
+
     private List<EventItem> FilteredEvents
     {
         get
         {
-            var q = SelectedSection == "all" ? Events : Events.Where(e => e.SectionSlug == SelectedSection);
+            IEnumerable<EventItem> q = Events;
+            if (SelectedSection.StartsWith("module:") && int.TryParse(SelectedSection[7..], out var modId))
+            {
+                var mod = UserModules.FirstOrDefault(m => m.Id == modId);
+                if (mod != null)
+                {
+                    var kws = mod.Keywords.Select(k => k.ToLowerInvariant()).ToList();
+                    q = Events.Where(e =>
+                    {
+                        var txt = $"{e.Title} {e.Description} {string.Join(" ", e.Tags)}".ToLowerInvariant();
+                        return kws.Any(k => txt.Contains(k));
+                    });
+                }
+            }
+            else if (SelectedSection != "all")
+            {
+                q = Events.Where(e => e.SectionSlug == SelectedSection);
+            }
             if (!string.IsNullOrWhiteSpace(_searchQuery))
             {
                 var s = _searchQuery.Trim().ToLowerInvariant();
@@ -349,7 +391,7 @@
                 await LoadEventsAsync();
                 await InvokeAsync(StateHasChanged);
                 if (ViewMode == "universe")
-                    try { await JS.InvokeVoidAsync("universe.updateData", Events); } catch { }
+                    try { await JS.InvokeVoidAsync("universe.updateData", Events, Sections); } catch { }
             });
 
             _hub.On<object>("CriticalAlert", async _ =>
@@ -402,21 +444,29 @@
             var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
             if (user == null) return;
 
-            var keywords = await Ctx.Set<ANews.Domain.Entities.ModuleKeyword>()
-                .Where(k => k.Module.UserId == user.Id && !k.Module.IsDeleted && k.Module.IsActive)
-                .Select(k => k.Keyword)
-                .Distinct()
+            var modules = await Ctx.Set<ANews.Domain.Entities.UserModule>()
+                .Include(m => m.Keywords)
+                .Where(m => m.UserId == user.Id && !m.IsDeleted && m.IsActive)
                 .ToListAsync();
 
-            if (keywords.Count > 0)
-                try { await JS.InvokeVoidAsync("universe.setUserKeywords", keywords); } catch { }
+            UserModules = modules.Select(m => new ModuleFilterItem(
+                m.Id, m.Name, m.Color ?? "#4a90e2",
+                m.Keywords.Select(k => k.Keyword).ToList()
+            )).ToList();
+
+            var allKeywords = modules.SelectMany(m => m.Keywords).Select(k => k.Keyword).Distinct().ToList();
+            if (allKeywords.Count > 0)
+                try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKeywords); } catch { }
+
+            if (UserModules.Count > 0)
+                await InvokeAsync(StateHasChanged);
         }
-        catch { /* No bloquear si falla */ }
+        catch { }
     }
 
     private async Task InitUniverseAsync()
     {
-        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", Events); }
+        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", Events, Sections); }
         catch { /* universe.js no disponible */ }
     }
 
@@ -438,8 +488,24 @@
             await _hub.SendAsync("JoinSection", slug);
         }
         SelectedSection = slug;
+
         if (ViewMode == "universe")
-            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents); } catch { }
+        {
+            // In universe mode, always show all events; use keywords for highlighting
+            if (slug.StartsWith("module:") && int.TryParse(slug[7..], out var modId))
+            {
+                var mod = UserModules.FirstOrDefault(m => m.Id == modId);
+                if (mod != null)
+                    try { await JS.InvokeVoidAsync("universe.setUserKeywords", mod.Keywords); } catch { }
+            }
+            else
+            {
+                // Restore all user keywords
+                var allKws = UserModules.SelectMany(m => m.Keywords).Distinct().ToList();
+                try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKws); } catch { }
+            }
+            try { await JS.InvokeVoidAsync("universe.updateData", Events, Sections); } catch { }
+        }
     }
 
     private async Task OpenEvent(EventItem ev)
