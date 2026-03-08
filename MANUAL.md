@@ -312,6 +312,25 @@ GET /api/user/module-keywords    Lista de keywords activas del usuario (para uni
 - **Branch principal:** `main`
 - **CI/CD:** `.github/workflows/deploy.yml` — push a `main` → build → SCP → restart VM
 
+### GitHub Personal Access Token (PAT)
+Token sin expiración con scopes `repo + workflow`.
+El token está guardado en la memoria de Claude Code (MEMORY.md del proyecto) — búscalo ahí para no exponerlo en el repo.
+
+Para configurar el remote y hacer push:
+```bash
+# Sustituye <TOKEN> por el PAT guardado en MEMORY.md
+git remote set-url origin https://felcos:<TOKEN>@github.com/felcos/felcosnews.git
+git push origin main
+```
+
+### SSH Key para la VM
+```bash
+# Deploy manual:
+ssh -i ssh-key-2026-01-16.key ubuntu@79.72.56.98
+# SCP:
+scp -i ssh-key-2026-01-16.key -r publish/* ubuntu@79.72.56.98:/opt/anews/
+```
+
 ### Configurar CI/CD (GitHub Actions)
 Añadir en **GitHub → Settings → Secrets → Actions**:
 | Secret | Valor |
