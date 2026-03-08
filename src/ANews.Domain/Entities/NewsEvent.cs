@@ -14,6 +14,8 @@ public class NewsEvent : BaseEntity
     public DateTime? EndDate { get; set; }
     public bool IsActive { get; set; } = true;
     public string? Location { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
     public string[] Tags { get; set; } = [];
     public EventTrend Trend { get; set; } = EventTrend.Stable;
     public int NewsSectionId { get; set; }

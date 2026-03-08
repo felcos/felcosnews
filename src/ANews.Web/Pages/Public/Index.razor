@@ -53,6 +53,10 @@
                         @onclick="@(() => SetViewMode("list"))" title="Vista lista">
                     <i class="fa fa-list"></i>
                 </button>
+                <button class="view-btn @(ViewMode == "map" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("map"))" title="Vista mapa mundial">
+                    <i class="fa fa-map-marked-alt"></i>
+                </button>
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
             <AuthorizeView>
@@ -167,6 +171,12 @@
                 <div id="universe-tooltip" class="universe-tooltip" style="display:none"></div>
             </div>
         }
+        else if (ViewMode == "map")
+        {
+            <div class="map-container">
+                <div id="map-view"></div>
+            </div>
+        }
         else if (ViewMode == "grid")
         {
             <div class="events-grid">
@@ -215,69 +225,155 @@
     </main>
 </div>
 
-<!-- Event Detail Modal -->
+<!-- Event Detail Modal (unified chronology) -->
 @if (SelectedEvent != null)
 {
     <div class="event-modal-overlay" @onclick="CloseEvent">
-        <div class="event-modal" @onclick:stopPropagation>
+        <div class="event-modal event-modal-full" @onclick:stopPropagation>
             <div class="em-header priority-bg-@SelectedEvent.Priority.ToLower()">
                 <div class="em-badges">
                     <span class="em-priority">@SelectedEvent.Priority</span>
                     <span class="em-section">@SelectedEvent.SectionName</span>
+                    @if (!_selectedEventIsActive)
+                    {
+                        <span class="em-badge-archived">Archivado</span>
+                    }
+                    <span class="em-trend-badge">@TrendIcon(SelectedEvent.Trend) @SelectedEvent.Trend</span>
                 </div>
                 <button class="em-close" @onclick="CloseEvent"><i class="fa fa-times"></i></button>
             </div>
-            <div class="em-body">
-                <h2>@SelectedEvent.Title</h2>
-                <p class="em-desc">@SelectedEvent.Description</p>
-                @if (SelectedEvent.Tags.Any())
-                {
-                    <div class="em-tags">
-                        @foreach (var tag in SelectedEvent.Tags)
+
+            <div class="em-body-grid">
+                <!-- Main: timeline -->
+                <div class="em-main">
+                    <h2 class="em-title">@SelectedEvent.Title</h2>
+                    @if (!string.IsNullOrEmpty(SelectedEvent.Description))
+                    {
+                        <p class="em-desc">@SelectedEvent.Description</p>
+                    }
+                    <div class="em-meta-bar">
+                        <span><i class="fa fa-calendar"></i> @SelectedEvent.StartDate.ToString("dd/MM/yyyy")</span>
+                        @if (_selectedEventEnd.HasValue)
                         {
-                            <span class="em-tag">#@tag</span>
+                            <span><i class="fa fa-flag-checkered"></i> @_selectedEventEnd.Value.ToString("dd/MM/yyyy")</span>
+                        }
+                        <span><i class="fa fa-file-alt"></i> @SelectedEventArticles.Count artículos</span>
+                        <span><i class="fa fa-rss"></i> @SelectedEventArticles.Select(a => a.SourceName).Distinct().Count() fuentes</span>
+                    </div>
+                    @if (SelectedEvent.Tags.Any())
+                    {
+                        <div class="em-tags">
+                            @foreach (var tag in SelectedEvent.Tags) { <span class="em-tag">#@tag</span> }
+                        </div>
+                    }
+
+                    <div class="em-timeline-header"><i class="fa fa-stream"></i> CRONOLOGÍA</div>
+                    <div class="em-timeline">
+                        @if (!_articlesByDay.Any())
+                        {
+                            <p style="color:var(--text-muted);font-size:13px;padding:16px 0">Sin artículos asociados.</p>
+                        }
+                        @foreach (var day in _articlesByDay)
+                        {
+                            <div class="em-tl-day">
+                                <div class="em-tl-day-label">@day.Key.ToString("dddd, dd MMM yyyy", new System.Globalization.CultureInfo("es-ES"))</div>
+                                @foreach (var art in day.Value)
+                                {
+                                    var isExpanded = _expandedArticles.Contains(art.Id);
+                                    <div class="em-tl-item @(isExpanded ? "em-tl-expanded" : "")"
+                                         @onclick="@(() => ToggleArticlePreview(art.Id))">
+                                        <div class="em-tl-dot priority-dot-@SelectedEvent.Priority.ToLower()"></div>
+                                        <div class="em-tl-content">
+                                            <div class="em-art-row">
+                                                <span class="em-art-type">@art.ArticleType</span>
+                                                <span class="em-tl-time">@art.PublishedAt.ToString("HH:mm")</span>
+                                                <span class="em-art-title">@art.Title</span>
+                                                <i class="fa @(isExpanded ? "fa-chevron-up" : "fa-chevron-down") em-art-chevron"></i>
+                                            </div>
+                                            @if (isExpanded)
+                                            {
+                                                <div class="em-art-detail" @onclick:stopPropagation>
+                                                    <div class="em-art-meta">
+                                                        <span>@art.SourceName</span>
+                                                        <span>@art.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                                                    </div>
+                                                    @if (!string.IsNullOrEmpty(art.Summary))
+                                                    {
+                                                        <p class="em-art-summary">@art.Summary</p>
+                                                    }
+                                                    else
+                                                    {
+                                                        <p class="em-art-no-summary">Sin resumen disponible aún.</p>
+                                                    }
+                                                    <a href="@art.SourceUrl" target="_blank" rel="noopener" class="em-art-source-link">
+                                                        <i class="fa fa-external-link-alt"></i> Ver en @art.SourceName
+                                                    </a>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
                         }
                     </div>
-                }
-                <h4>Artículos (@SelectedEvent.ArticleCount)</h4>
-                <div class="em-articles">
-                    @foreach (var art in SelectedEventArticles)
+                </div>
+
+                <!-- Sidebar -->
+                <div class="em-sidebar">
+                    <div class="em-side-card">
+                        <div class="em-side-label">Impacto</div>
+                        <div class="em-impact-display">
+                            <span class="em-impact-num">@SelectedEvent.ImpactScore.ToString("F0")</span>
+                            <span class="em-impact-max">/100</span>
+                        </div>
+                        <div class="em-impact-bar-wrap">
+                            <div class="em-impact-bar priority-bar-@SelectedEvent.Priority.ToLower()" style="width:@(SelectedEvent.ImpactScore)%"></div>
+                        </div>
+                    </div>
+                    <div class="em-side-card">
+                        <div class="em-side-label">Estadísticas</div>
+                        <div class="em-stat-row"><span>Prioridad</span><strong>@SelectedEvent.Priority</strong></div>
+                        <div class="em-stat-row"><span>Tendencia</span><strong>@SelectedEvent.Trend</strong></div>
+                        <div class="em-stat-row"><span>Artículos</span><strong>@SelectedEventArticles.Count</strong></div>
+                        <div class="em-stat-row"><span>Fuentes</span><strong>@SelectedEventArticles.Select(a => a.SourceName).Distinct().Count()</strong></div>
+                        @if (SelectedEventArticles.Any())
+                        {
+                            <div class="em-stat-row"><span>Primer art.</span><strong>@SelectedEventArticles.Min(a => a.PublishedAt).ToString("dd/MM")</strong></div>
+                            <div class="em-stat-row"><span>Último art.</span><strong>@SelectedEventArticles.Max(a => a.PublishedAt).ToString("dd/MM")</strong></div>
+                        }
+                    </div>
+                    @if (_articlesByDay.Count > 1)
                     {
-                        var isExpanded = _expandedArticles.Contains(art.Id);
-                        <div class="em-article @(isExpanded ? "em-article-expanded" : "")"
-                             @onclick="@(() => ToggleArticlePreview(art.Id))">
-                            <div class="em-art-row">
-                                <span class="em-art-type">@art.ArticleType</span>
-                                <span class="em-art-title">@art.Title</span>
-                                <i class="fa @(isExpanded ? "fa-chevron-up" : "fa-chevron-down") em-art-chevron"></i>
-                            </div>
-                            @if (isExpanded)
+                        <div class="em-side-card">
+                            <div class="em-side-label">Actividad diaria</div>
+                            @{ var maxDayCount = _articlesByDay.Max(d => d.Value.Count); }
+                            @foreach (var day in _articlesByDay.OrderByDescending(d => d.Key).Take(7))
                             {
-                                <div class="em-art-detail" @onclick:stopPropagation>
-                                    <div class="em-art-meta">
-                                        <span>@art.SourceName</span>
-                                        <span>@art.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                                var pct = maxDayCount > 0 ? day.Value.Count * 100 / maxDayCount : 0;
+                                <div class="em-day-bar-row">
+                                    <span class="em-day-label-sm">@day.Key.ToString("dd/MM")</span>
+                                    <div class="em-impact-bar-wrap" style="flex:1;margin:0 6px">
+                                        <div class="em-impact-bar" style="width:@pct%"></div>
                                     </div>
-                                    @if (!string.IsNullOrEmpty(art.Summary))
-                                    {
-                                        <p class="em-art-summary">@art.Summary</p>
-                                    }
-                                    else
-                                    {
-                                        <p class="em-art-no-summary">Sin resumen disponible aún.</p>
-                                    }
-                                    <a href="@art.SourceUrl" target="_blank" rel="noopener" class="em-art-source-link">
-                                        <i class="fa fa-external-link-alt"></i> Ver artículo original en @art.SourceName
-                                    </a>
+                                    <span class="em-day-count">@day.Value.Count</span>
                                 </div>
                             }
                         </div>
                     }
-                </div>
-                <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);text-align:right">
-                    <a href="/situation/@SelectedEvent.Id" class="btn btn-primary btn-sm">
-                        <i class="fa fa-stream"></i> Ver cronología completa
-                    </a>
+                    @if (_relatedEvents.Any())
+                    {
+                        <div class="em-side-card">
+                            <div class="em-side-label">Eventos relacionados</div>
+                            @foreach (var rel in _relatedEvents)
+                            {
+                                var relEv = Events.FirstOrDefault(e => e.Id == rel.Id);
+                                <div class="em-related-item" @onclick="@(async () => { if (relEv != null) { await OpenEvent(relEv); } })">
+                                    <span class="em-priority em-priority-sm priority-bg-@rel.Priority.ToLower()">@rel.Priority[0]</span>
+                                    <span class="em-related-title">@rel.Title</span>
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             </div>
         </div>
@@ -340,6 +436,11 @@
     private EventItem? SelectedEvent;
     private List<ArticleItem> SelectedEventArticles = [];
     private HashSet<int> _expandedArticles = [];
+    private DotNetObjectReference<Index>? _dotnetRef;
+    private Dictionary<DateTime, List<ArticleItem>> _articlesByDay = [];
+    private List<RelatedEventItem> _relatedEvents = [];
+    private DateTime? _selectedEventEnd;
+    private bool _selectedEventIsActive = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -370,7 +471,8 @@
                     .OrderByDescending(a => a.Relevance)
                     .Take(6)
                     .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
-                    .ToArray()))
+                    .ToArray(),
+                e.Latitude, e.Longitude))
             .ToListAsync();
 
         CriticalAlerts = await Ctx.AlertTriggers
@@ -416,6 +518,7 @@
     }
 
     private bool _pendingUniverseInit = false;
+    private bool _pendingMapInit = false;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -442,6 +545,11 @@
             _pendingUniverseInit = false;
             await InitUniverseAsync();
             await LoadUserKeywordsAsync();
+        }
+        if (_pendingMapInit)
+        {
+            _pendingMapInit = false;
+            await InitMapAsync();
         }
     }
 
@@ -484,16 +592,40 @@
         catch { /* universe.js no disponible */ }
     }
 
+    private async Task InitMapAsync()
+    {
+        _dotnetRef ??= DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("newsMap.init", "map-view", Events, _dotnetRef); }
+        catch { }
+    }
+
+    [JSInvokable]
+    public async Task OpenEventById(int id)
+    {
+        var ev = Events.FirstOrDefault(e => e.Id == id);
+        if (ev != null)
+        {
+            await OpenEvent(ev);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task SetViewMode(string mode)
     {
         if (mode != "universe")
             try { await JS.InvokeVoidAsync("universe.destroy"); } catch { }
+        if (mode != "map")
+            try { await JS.InvokeVoidAsync("newsMap.destroy"); } catch { }
 
         ViewMode = mode;
         if (mode == "universe")
         {
-            // Set flag — OnAfterRenderAsync will init once canvas is in DOM
             _pendingUniverseInit = true;
+            StateHasChanged();
+        }
+        else if (mode == "map")
+        {
+            _pendingMapInit = true;
             StateHasChanged();
         }
     }
@@ -563,8 +695,10 @@
     record SectionItem(int Id, string Name, string Slug, string Color, string IconClass);
     record EventItem(int Id, string Title, string? Description, string Priority,
         decimal ImpactScore, string Trend, string[] Tags, string SectionName, string SectionSlug,
-        DateTime StartDate, int ArticleCount, MoonArticle[] Articles);
+        DateTime StartDate, int ArticleCount, MoonArticle[] Articles,
+        double? Latitude, double? Longitude);
     record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
     record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt);
+    record RelatedEventItem(int Id, string Title, string Priority);
 }

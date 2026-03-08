@@ -11,7 +11,12 @@
     <title>AgenteNews</title>
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="manifest" href="manifest.json" />
+    <style>
+        .news-map-tooltip .leaflet-tooltip { background: transparent; border: none; box-shadow: none; padding: 0; }
+        .news-map-tooltip { background: transparent; border: none; }
+    </style>
     <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
 </head>
 <body>
@@ -24,7 +29,9 @@
     </div>
     <script src="_framework/blazor.server.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="js/universe.js"></script>
+    <script src="js/map.js"></script>
     <script src="js/admin.js"></script>
 </body>
 </html>

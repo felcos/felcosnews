@@ -10,11 +10,12 @@
     //  ENGINE CLASS
     // ─────────────────────────────────────────────────────────────
     class UniverseEngine {
-        constructor(canvas, events, sections) {
+        constructor(canvas, events, sections, dotnetRef) {
             this.canvas = canvas;
             this.ctx = this.canvas.getContext('2d');
             this.events = events || [];
             this.sections = sections || [];
+            this._dotnet = dotnetRef || null;
 
             // Camera state
             this.cam = { x: 0, y: 0, scale: 1, tx: 0, ty: 0, ts: 1 };
@@ -636,14 +637,11 @@
             for (const node of this.nodes) {
                 const dist = Math.hypot(wpt.x - node.x, wpt.y - node.y);
                 if (dist < node.radius + 4) {
-                    this._openCallout(node, sx, sy);
+                    if (this._dotnet) {
+                        try { this._dotnet.invokeMethodAsync('OpenEventById', node.event.id); } catch(e) { console.warn('[universe] OpenEventById failed:', e); }
+                    }
                     return;
                 }
-            }
-
-            // Click on empty: close callout
-            if (this._callout) {
-                this._closeCallout();
             }
         }
 
@@ -861,6 +859,44 @@
             }
         }
 
+        _drawGalaxy(ctx, sys, ts) {
+            const rgb = this._hexToRgb(sys.color);
+            const wobble = Math.sin(ts * 0.07 + sys.pulsePhase) * 12;
+            const wobble2 = Math.cos(ts * 0.05 + sys.pulsePhase * 1.3) * 8;
+
+            // Large outer nebula
+            const rOuter = 370;
+            const gradOuter = ctx.createRadialGradient(
+                sys.x + wobble, sys.y + wobble2, 0,
+                sys.x, sys.y, rOuter
+            );
+            gradOuter.addColorStop(0,   `rgba(${rgb},0.09)`);
+            gradOuter.addColorStop(0.35, `rgba(${rgb},0.05)`);
+            gradOuter.addColorStop(0.7,  `rgba(${rgb},0.02)`);
+            gradOuter.addColorStop(1,    `rgba(${rgb},0)`);
+            ctx.save();
+            ctx.beginPath();
+            ctx.ellipse(sys.x, sys.y, rOuter * 1.15, rOuter * 0.82,
+                ts * 0.015 + sys.pulsePhase, 0, Math.PI * 2);
+            ctx.fillStyle = gradOuter;
+            ctx.fill();
+
+            // Inner bright core glow
+            const rInner = 120;
+            const gradInner = ctx.createRadialGradient(
+                sys.x, sys.y, 0,
+                sys.x, sys.y, rInner
+            );
+            gradInner.addColorStop(0,   `rgba(${rgb},0.13)`);
+            gradInner.addColorStop(0.5, `rgba(${rgb},0.05)`);
+            gradInner.addColorStop(1,   `rgba(${rgb},0)`);
+            ctx.beginPath();
+            ctx.arc(sys.x, sys.y, rInner, 0, Math.PI * 2);
+            ctx.fillStyle = gradInner;
+            ctx.fill();
+            ctx.restore();
+        }
+
         _drawSystemOrbits(ctx) {
             const rings = [100, 175, 255];
             ctx.save();
@@ -998,27 +1034,31 @@
                 ctx.stroke();
             }
 
-            // Label — inside the planet circle
-            if (dr * this.cam.scale >= 10) {
-                const fontSize = Math.max(7, Math.min(13, dr * 0.38));
-                const charsPerPx = fontSize * 0.54;
-                const maxChars = Math.max(3, Math.floor((dr * 1.3) / charsPerPx));
+            // Label — below the planet, more words visible
+            if (dr * this.cam.scale >= 12) {
+                const fontSize = Math.max(9, Math.min(13, 11 / this.cam.scale));
+                const maxChars = 30;
                 const label = ev.title
                     ? (ev.title.length > maxChars ? ev.title.substring(0, maxChars - 1) + '…' : ev.title)
                     : '';
-                ctx.save();
-                ctx.font = `600 ${fontSize}px system-ui`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                // Shadow pass for contrast
-                ctx.shadowColor = 'rgba(0,0,0,0.95)';
-                ctx.shadowBlur = 4 / this.cam.scale;
-                ctx.fillStyle = 'rgba(0,0,0,0.5)';
-                ctx.fillText(label, x + 0.5, y + 0.5);
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = '#ffffff';
-                ctx.fillText(label, x, y);
-                ctx.restore();
+                if (label) {
+                    ctx.save();
+                    ctx.font = `500 ${fontSize}px system-ui`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    const labelY = y + dr * pulse + 6;
+                    const tw = ctx.measureText(label).width;
+                    const pad = 5;
+                    // Dark pill background
+                    ctx.fillStyle = 'rgba(0,5,17,0.78)';
+                    ctx.beginPath();
+                    ctx.roundRect(x - tw / 2 - pad, labelY - 1, tw + pad * 2, fontSize + 4, 3);
+                    ctx.fill();
+                    // Text
+                    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+                    ctx.fillText(label, x, labelY + 1);
+                    ctx.restore();
+                }
             }
         }
 
@@ -1086,7 +1126,12 @@
             // 5. Camera transform
             this._applyTransform(ctx);
 
-            // 6. System orbit rings (world)
+            // 6. Galaxy nebula backgrounds (world)
+            for (const sys of this.systems) {
+                this._drawGalaxy(ctx, sys, ts);
+            }
+
+            // 6b. System orbit rings (world)
             this._drawSystemOrbits(ctx);
 
             // 7. Connections (world)
@@ -1102,9 +1147,7 @@
                 this._drawNode(ctx, node, ts);
             }
 
-            // 10. Callout line (screen space, resets transform internally)
-            this._drawCalloutLine(ctx);
-            this._updateCalloutPosition();
+            // 10. (callout removed — modal handled by Blazor)
 
             // 11. Reset + HUD
             ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1177,7 +1220,7 @@
     window.universe = {
         _engine: null,
 
-        init(canvasId, events, sections) {
+        init(canvasId, events, sections, dotnetRef) {
             if (_engine) {
                 _engine.destroy();
                 _engine = null;
@@ -1189,7 +1232,7 @@
             }
             console.log(`[universe.js] init: ${(events||[]).length} events, ${(sections||[]).length} sections`);
             try {
-                _engine = new UniverseEngine(canvas, events, sections);
+                _engine = new UniverseEngine(canvas, events, sections, dotnetRef);
                 window.universe._engine = _engine;
             } catch (e) {
                 console.error('[universe.js] init error:', e);
