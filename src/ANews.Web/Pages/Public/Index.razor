@@ -244,27 +244,33 @@
                     @foreach (var art in SelectedEventArticles)
                     {
                         var isExpanded = _expandedArticles.Contains(art.Id);
-                        <div class="em-article @(isExpanded ? "em-article-expanded" : "")">
-                            <div class="em-art-type">@art.ArticleType</div>
-                            <div class="em-art-content">
-                                <a href="/article/@art.Id" class="em-art-title">@art.Title</a>
-                                <span class="em-art-source">@art.SourceName</span>
-                                @if (isExpanded && !string.IsNullOrEmpty(art.Summary))
-                                {
-                                    <p class="em-art-preview">@art.Summary</p>
-                                }
+                        <div class="em-article @(isExpanded ? "em-article-expanded" : "")"
+                             @onclick="@(() => ToggleArticlePreview(art.Id))">
+                            <div class="em-art-row">
+                                <span class="em-art-type">@art.ArticleType</span>
+                                <span class="em-art-title">@art.Title</span>
+                                <i class="fa @(isExpanded ? "fa-chevron-up" : "fa-chevron-down") em-art-chevron"></i>
                             </div>
-                            <div class="em-art-relevance">@art.Relevance.ToString("F0")</div>
-                            @if (!string.IsNullOrEmpty(art.Summary))
+                            @if (isExpanded)
                             {
-                                <button class="em-art-preview-btn" @onclick="@(() => ToggleArticlePreview(art.Id))"
-                                        title="@(isExpanded ? "Ocultar resumen" : "Ver resumen")">
-                                    <i class="fa @(isExpanded ? "fa-chevron-up" : "fa-chevron-down")"></i>
-                                </button>
+                                <div class="em-art-detail" @onclick:stopPropagation>
+                                    <div class="em-art-meta">
+                                        <span>@art.SourceName</span>
+                                        <span>@art.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(art.Summary))
+                                    {
+                                        <p class="em-art-summary">@art.Summary</p>
+                                    }
+                                    else
+                                    {
+                                        <p class="em-art-no-summary">Sin resumen disponible aún.</p>
+                                    }
+                                    <a href="@art.SourceUrl" target="_blank" rel="noopener" class="em-art-source-link">
+                                        <i class="fa fa-external-link-alt"></i> Ver artículo original en @art.SourceName
+                                    </a>
+                                </div>
                             }
-                            <a href="@art.SourceUrl" target="_blank" rel="noopener" title="Ver fuente original" class="em-art-ext">
-                                <i class="fa fa-external-link-alt"></i>
-                            </a>
                         </div>
                     }
                 </div>
@@ -528,7 +534,7 @@
             .Where(a => a.NewsEventId == ev.Id && !a.IsDeleted)
             .OrderByDescending(a => a.Relevance)
             .Select(a => new ArticleItem(a.Id, a.Title, a.SourceName, a.SourceUrl,
-                a.Relevance, a.ArticleType.ToString(), a.Summary))
+                a.Relevance, a.ArticleType.ToString(), a.Summary, a.PublishedAt))
             .ToListAsync();
     }
 
@@ -560,5 +566,5 @@
         DateTime StartDate, int ArticleCount, MoonArticle[] Articles);
     record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
-    record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary);
+    record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt);
 }

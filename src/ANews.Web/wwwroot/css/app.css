@@ -328,27 +328,24 @@ a:hover { color: var(--accent-green); }
 .em-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
 .em-tag { background: rgba(74,144,226,0.15); color: var(--accent); padding: 2px 8px; border-radius: 20px; font-size: 12px; }
 .em-body h4 { font-size: 14px; color: var(--text-secondary); margin-bottom: 10px; text-transform: uppercase; }
-.em-articles { display: flex; flex-direction: column; gap: 8px; }
+.em-articles { display: flex; flex-direction: column; gap: 4px; }
 .em-article {
-  display: flex; align-items: center; gap: 10px;
-  background: rgba(255,255,255,0.03); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 12px;
-  transition: all 0.2s;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
-.em-article:hover { background: rgba(74,144,226,0.1); }
-.em-art-type { font-size: 10px; padding: 2px 6px; background: var(--border); border-radius: 3px; color: var(--text-muted); white-space: nowrap; }
-.em-art-content { flex: 1; }
-.em-art-title { display: block; font-size: 13px; font-weight: 500; color: var(--text); text-decoration: none; }
-.em-art-title:hover { color: var(--accent); text-decoration: underline; }
-.em-art-source { display: block; font-size: 11px; color: var(--text-muted); }
-.em-art-relevance { font-weight: 700; color: var(--accent); min-width: 30px; text-align: center; }
-.em-art-ext { color: var(--text-muted); padding: 4px; }
-.em-art-ext:hover { color: var(--accent); }
-.em-article i { color: var(--text-muted); }
-.em-article-expanded { background: rgba(74,144,226,0.06) !important; border-color: rgba(74,144,226,0.3) !important; }
-.em-art-preview { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px; }
-.em-art-preview-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 6px; border-radius: 3px; transition: all 0.15s; }
-.em-art-preview-btn:hover { color: var(--accent); background: rgba(74,144,226,0.1); }
+.em-article:hover { background: rgba(74,144,226,0.07); border-color: rgba(74,144,226,0.25); }
+.em-article-expanded { background: rgba(74,144,226,0.06) !important; border-color: rgba(74,144,226,0.35) !important; }
+.em-art-row { display: flex; align-items: center; gap: 8px; }
+.em-art-type { font-size: 10px; padding: 2px 6px; background: var(--border); border-radius: 3px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.em-art-title { flex: 1; font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.4; }
+.em-art-chevron { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+.em-art-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07); }
+.em-art-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.em-art-summary { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 10px; }
+.em-art-no-summary { font-size: 12px; color: var(--text-muted); font-style: italic; margin: 0 0 10px; }
+.em-art-source-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.em-art-source-link:hover { text-decoration: underline; }
 
 /* ============================================
    AUTH PAGES
