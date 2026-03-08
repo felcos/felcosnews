@@ -143,7 +143,7 @@
                         <div class="related-list">
                             @foreach (var rel in _relatedArticles)
                             {
-                                <a href="/article/@rel.Id" class="related-item">
+                                <a href="/article/@rel.Id" class="related-item" target="_blank" rel="noopener">
                                     <div class="related-source">@rel.SourceName</div>
                                     <div class="related-title">@rel.Title</div>
                                     <div class="related-date">@rel.PublishedAt.ToString("dd/MM HH:mm")</div>

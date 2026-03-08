@@ -10,9 +10,8 @@
     //  ENGINE CLASS
     // ─────────────────────────────────────────────────────────────
     class UniverseEngine {
-        constructor(canvasId, events, sections) {
-            this.canvasId = canvasId;
-            this.canvas = document.getElementById(canvasId);
+        constructor(canvas, events, sections) {
+            this.canvas = canvas;
             this.ctx = this.canvas.getContext('2d');
             this.events = events || [];
             this.sections = sections || [];
@@ -1058,12 +1057,14 @@
         //  MAIN LOOP
         // ─────────────────────────────────────────────────────────
         _loop(timestamp) {
+            this._raf = requestAnimationFrame(ts => this._loop(ts));
             const dt = Math.min(0.05, (timestamp - this._lastTs) / 1000);
             this._lastTs = timestamp;
             const ts = timestamp / 1000;
 
             const ctx = this.ctx;
             const W = this.W, H = this.H;
+            try {
 
             // 1. Clear
             ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1119,8 +1120,7 @@
                 this._spawnShootingStar(W, H);
                 this._pendingShootCount--;
             }
-
-            this._raf = requestAnimationFrame(ts => this._loop(ts));
+            } catch (e) { console.error('[universe] frame error:', e); }
         }
 
         // ─────────────────────────────────────────────────────────
@@ -1179,8 +1179,13 @@
                 _engine.destroy();
                 _engine = null;
             }
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) {
+                console.warn('[universe.js] canvas not found:', canvasId);
+                return;
+            }
             try {
-                _engine = new UniverseEngine(canvasId, events, sections);
+                _engine = new UniverseEngine(canvas, events, sections);
                 window.universe._engine = _engine;
             } catch (e) {
                 console.error('[universe.js] init error:', e);

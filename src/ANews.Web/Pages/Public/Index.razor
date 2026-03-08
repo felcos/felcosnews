@@ -409,26 +409,34 @@
         }
     }
 
+    private bool _pendingUniverseInit = false;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        await SetupSignalRAsync();
-        if (ViewMode == "universe")
-            await InitUniverseAsync();
-
-        // Auto-open a specific event when navigating from Dashboard or a direct link
-        if (AutoOpenEventId.HasValue)
+        if (firstRender)
         {
-            var ev = Events.FirstOrDefault(e => e.Id == AutoOpenEventId.Value);
-            if (ev != null)
+            await SetupSignalRAsync();
+
+            if (AutoOpenEventId.HasValue)
             {
-                await OpenEvent(ev);
-                StateHasChanged();
+                var ev = Events.FirstOrDefault(e => e.Id == AutoOpenEventId.Value);
+                if (ev != null) { await OpenEvent(ev); StateHasChanged(); }
             }
+
+            await LoadUserKeywordsAsync();
+
+            if (ViewMode == "universe")
+                await InitUniverseAsync();
+            return;
         }
 
-        // Load module keywords for logged-in users and pass to universe
-        await LoadUserKeywordsAsync();
+        // Canvas is guaranteed in DOM here — safe to init universe
+        if (_pendingUniverseInit)
+        {
+            _pendingUniverseInit = false;
+            await InitUniverseAsync();
+            await LoadUserKeywordsAsync();
+        }
     }
 
     private async Task LoadUserKeywordsAsync()
@@ -472,11 +480,15 @@
 
     private async Task SetViewMode(string mode)
     {
+        if (mode != "universe")
+            try { await JS.InvokeVoidAsync("universe.destroy"); } catch { }
+
         ViewMode = mode;
         if (mode == "universe")
         {
-            await Task.Delay(50);
-            await InitUniverseAsync();
+            // Set flag — OnAfterRenderAsync will init once canvas is in DOM
+            _pendingUniverseInit = true;
+            StateHasChanged();
         }
     }
 
