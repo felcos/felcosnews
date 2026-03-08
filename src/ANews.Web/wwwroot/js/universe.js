@@ -215,6 +215,7 @@
 
         _buildNodes() {
             this.nodes = [];
+
             // Group events by section slug
             const groups = {};
             for (const ev of this.events) {
@@ -234,61 +235,67 @@
                 });
             }
 
-            // Ring layout per system — smaller radii so planets are visible at default zoom
             const rings = [
                 { count: 5, radius: 100 },
                 { count: 7, radius: 175 },
-                { count: 9, radius: 255 }
+                { count: 9, radius: 255 },
+                { count: 12, radius: 335 }
             ];
-            // Angular stagger between rings
-            const ringStagger = [0, Math.PI / rings[1].count, Math.PI / rings[2].count / 1.5];
+            const pColors = { Critical: '#ff0040', High: '#ff6600', Medium: '#e6b800', Low: '#4a90e2' };
 
             for (const sys of this.systems) {
                 const evList = groups[sys.slug] || [];
-                let ringIdx = 0;
-                let posInRing = 0;
+                let evIdx = 0;
 
-                for (let i = 0; i < evList.length; i++) {
-                    const ev = evList[i];
-                    // Find current ring
-                    while (ringIdx < rings.length - 1 && posInRing >= rings[ringIdx].count) {
-                        ringIdx++;
-                        posInRing = 0;
+                for (let ri = 0; ri < rings.length && evIdx < evList.length; ri++) {
+                    const ring = rings[ri];
+                    const countInRing = Math.min(ring.count, evList.length - evIdx);
+                    const stagger = ri * (Math.PI / ring.count);
+
+                    for (let pos = 0; pos < countInRing; pos++, evIdx++) {
+                        const ev = evList[evIdx];
+                        const angle = (pos / countInRing) * Math.PI * 2 + stagger;
+                        this.nodes.push({
+                            id: ev.id,
+                            x: sys.x + Math.cos(angle) * ring.radius,
+                            y: sys.y + Math.sin(angle) * ring.radius,
+                            radius: this._planetRadius(ev),
+                            event: ev,
+                            system: sys,
+                            pulsePhase: Math.random() * Math.PI * 2,
+                            color: pColors[ev.priority] || '#4a90e2',
+                            isModuleMatch: false,
+                            frozenMoonAngles: {}
+                        });
                     }
-                    const ring = rings[Math.min(ringIdx, rings.length - 1)];
-                    const totalInRing = Math.min(ring.count, evList.length - (
-                        rings.slice(0, Math.min(ringIdx, rings.length - 1)).reduce((s, r) => s + r.count, 0)
-                    ));
-                    const angle = (posInRing / totalInRing) * Math.PI * 2 + ringStagger[Math.min(ringIdx, ringStagger.length - 1)];
-                    const r = ring.radius;
+                }
 
-                    const pColors = { Critical: '#ff0040', High: '#ff6600', Medium: '#e6b800', Low: '#4a90e2' };
-                    const node = {
-                        id: ev.id,
-                        x: sys.x + Math.cos(angle) * r,
-                        y: sys.y + Math.sin(angle) * r,
-                        radius: this._planetRadius(ev),
-                        event: ev,
-                        system: sys,
-                        pulsePhase: Math.random() * Math.PI * 2,
-                        color: pColors[ev.priority] || '#4a90e2',
-                        isModuleMatch: false,
-                        frozenMoonAngles: {}
-                    };
-
-                    this.nodes.push(node);
-                    posInRing++;
-                    if (posInRing >= ring.count) {
-                        ringIdx++;
-                        posInRing = 0;
+                // Any overflow beyond 4 rings: stack on outermost ring
+                if (evIdx < evList.length) {
+                    const remaining = evList.length - evIdx;
+                    for (let pos = 0; pos < remaining; pos++, evIdx++) {
+                        const ev = evList[evIdx];
+                        const angle = (pos / remaining) * Math.PI * 2;
+                        this.nodes.push({
+                            id: ev.id,
+                            x: sys.x + Math.cos(angle) * 335,
+                            y: sys.y + Math.sin(angle) * 335,
+                            radius: this._planetRadius(ev),
+                            event: ev,
+                            system: sys,
+                            pulsePhase: Math.random() * Math.PI * 2,
+                            color: pColors[ev.priority] || '#4a90e2',
+                            isModuleMatch: false,
+                            frozenMoonAngles: {}
+                        });
                     }
                 }
             }
 
-            // Apply current keywords
             if (this._userKeywords.length > 0) {
                 this._applyKeywords();
             }
+            console.log(`[universe] built: ${this.systems.length} systems, ${this.nodes.length} nodes`);
         }
 
         _planetRadius(ev) {
@@ -615,10 +622,10 @@
                         } else {
                             node.frozenMoonAngles[mi] = angle;
                         }
-                        // Open article
+                        // Open article (same domain = same tab)
                         const art = moons[mi];
                         if (art && art.id) {
-                            window.open(`/article/${art.id}`, '_blank');
+                            window.location.href = `/article/${art.id}`;
                         }
                         return;
                     }
@@ -688,7 +695,7 @@
             const moons = (ev.articles || []).slice(0, 5);
             const moonsList = moons.map(m => `
                 <div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;color:#8892a4;">
-                    <a href="/article/${m.id}" target="_blank" style="color:#8892a4;text-decoration:none;" onmouseover="this.style.color='#4a90e2'" onmouseout="this.style.color='#8892a4'">
+                    <a href="/article/${m.id}" style="color:#8892a4;text-decoration:none;" onmouseover="this.style.color='#4a90e2'" onmouseout="this.style.color='#8892a4'">
                         ${m.title ? m.title.substring(0, 50) + (m.title.length > 50 ? '…' : '') : 'Artículo'}
                     </a>
                 </div>
@@ -1184,6 +1191,7 @@
                 console.warn('[universe.js] canvas not found:', canvasId);
                 return;
             }
+            console.log(`[universe.js] init: ${(events||[]).length} events, ${(sections||[]).length} sections`);
             try {
                 _engine = new UniverseEngine(canvas, events, sections);
                 window.universe._engine = _engine;
