@@ -884,10 +884,6 @@
             const color = sys.color || '#4a90e2';
 
             // Outer halo
-            const halo = ctx.createRadialGradient(sys.x, sys.y, r * 0.5, sys.x, sys.y, r * 3.5);
-            halo.addColorStop(0, color.replace('#', 'rgba(') + ',0.12)'.replace('rgba(', 'rgba(') );
-            halo.addColorStop(1, 'rgba(0,0,0,0)');
-            // Build proper rgba
             const haloGrad = ctx.createRadialGradient(sys.x, sys.y, r * 0.5, sys.x, sys.y, r * 3.5);
             const rgb = this._hexToRgb(color);
             haloGrad.addColorStop(0, `rgba(${rgb},0.18)`);
