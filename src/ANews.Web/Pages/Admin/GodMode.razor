@@ -4,6 +4,7 @@
 @layout AdminLayout
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject IHttpClientFactory HttpClientFactory
 @inject IHubContext<AdminHub> AdminHubCtx
 @inject AppDbContext Ctx
 @inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
@@ -127,7 +128,19 @@
                         @agent.DisplayName
                     </button>
                 }
+                <button class="btn-trigger @(_geocoding ? "running" : "")"
+                        @onclick="GeocodeEventsAsync" disabled="@_geocoding"
+                        title="Geocodifica eventos con Location pero sin coordenadas (Nominatim)">
+                    <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
+                    @(_geocoding ? "Geocodificando..." : "Geocodificar mapa")
+                </button>
             </div>
+            @if (_geocodeResult != null)
+            {
+                <div style="margin-top:6px;font-size:12px;color:var(--accent-green)">
+                    <i class="fa fa-check"></i> @_geocodeResult
+                </div>
+            }
         </div>
 
         <!-- Costes por proveedor -->
@@ -284,6 +297,8 @@
     private List<AgentTriggerItem> AgentTriggers = [];
     private List<ExecutionLogItem> ExecutionLogs = [];
     private decimal TotalCostSelected;
+    private bool _geocoding = false;
+    private string? _geocodeResult;
 
     private IEnumerable<LiveLogEntry> FilteredLogs => AgentFilter == "error"
         ? LiveLogs.Where(l => l.Level is "Error" or "Warning")
@@ -432,6 +447,39 @@
         await LoadInitialDataAsync();
         await LoadSystemHealthAsync();
         IsLoading = false;
+    }
+
+    private async Task GeocodeEventsAsync()
+    {
+        _geocoding = true;
+        _geocodeResult = null;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient();
+            client.BaseAddress = new Uri(Nav.BaseUri);
+            var response = await client.PostAsync("api/admin/geocode-events", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "Completado";
+                _geocodeResult = msg;
+            }
+            else
+            {
+                _geocodeResult = $"Error {(int)response.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _geocodeResult = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _geocoding = false;
+            StateHasChanged();
+        }
     }
 
     private async Task TriggerAgentAsync(string agentName)

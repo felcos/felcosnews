@@ -107,6 +107,11 @@ builder.Services.AddHealthChecks()
 
 // HTTP Context
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient("nominatim", c =>
+{
+    c.DefaultRequestHeaders.Add("User-Agent", "AgenteNews/1.0 (news aggregator; contact admin)");
+    c.Timeout = TimeSpan.FromSeconds(10);
+});
 
 // Controllers (para API REST pública)
 builder.Services.AddControllers();
@@ -379,6 +384,46 @@ static bool TriggerAgent<T>(IServiceProvider sp) where T : ANews.Infrastructure.
     agent.TriggerNow();
     return true;
 }
+
+// Geocode events that have a Location string but no coordinates
+app.MapPost("/api/admin/geocode-events", async (AppDbContext ctx, IHttpClientFactory hcf, ILogger<Program> log) =>
+{
+    var events = await ctx.NewsEvents
+        .Where(e => e.IsActive && !e.IsDeleted && e.Latitude == null && e.Location != null)
+        .ToListAsync();
+
+    if (events.Count == 0)
+        return Results.Ok(new { message = "No hay eventos sin geocodificar", updated = 0 });
+
+    var client = hcf.CreateClient("nominatim");
+    int updated = 0;
+
+    foreach (var ev in events)
+    {
+        try
+        {
+            await Task.Delay(400); // Nominatim rate limit: 1 req/s
+            var url = $"https://nominatim.openstreetmap.org/search?q={Uri.EscapeDataString(ev.Location!)}&format=json&limit=1";
+            var res = await client.GetAsync(url);
+            if (!res.IsSuccessStatusCode) continue;
+
+            var json = await res.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var arr = doc.RootElement;
+            if (arr.GetArrayLength() > 0)
+            {
+                var first = arr[0];
+                ev.Latitude = double.TryParse(first.GetProperty("lat").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lat) ? lat : null;
+                ev.Longitude = double.TryParse(first.GetProperty("lon").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon) ? lon : null;
+                if (ev.Latitude.HasValue) updated++;
+            }
+        }
+        catch (Exception ex) { log.LogWarning("Geocode failed for event {Id}: {Err}", ev.Id, ex.Message); }
+    }
+
+    await ctx.SaveChangesAsync();
+    return Results.Ok(new { message = $"Geocodificados {updated} de {events.Count} eventos", updated });
+}).RequireAuthorization("RequireAdmin");
 
 // Keywords del usuario logueado para el universo
 app.MapGet("/api/user/module-keywords", async (HttpContext http, AppDbContext ctx, UserManager<ApplicationUser> userMgr) =>

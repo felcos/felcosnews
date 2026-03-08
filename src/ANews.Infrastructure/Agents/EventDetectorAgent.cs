@@ -83,6 +83,8 @@ public class EventDetectorAgent : BaseAgent
             3. Define prioridad: Low/Medium/High/Critical
             4. Calcula un impact_score (0-100)
             5. Asigna categoria
+            6. Identifica la ubicacion geografica principal (ciudad o pais en ingles). Si es un evento global sin ubicacion clara pon null.
+            7. Proporciona coordenadas aproximadas (latitud y longitud) para esa ubicacion. Si no hay ubicacion geografica clara, pon null.
 
             Noticias:
             {{articlesText}}
@@ -96,6 +98,9 @@ public class EventDetectorAgent : BaseAgent
                   "priority": "High",
                   "impact_score": 75,
                   "category": "Politica",
+                  "location": "Ukraine",
+                  "latitude": 48.3794,
+                  "longitude": 31.1656,
                   "article_indices": [1, 3, 5]
                 }
               ]
@@ -145,6 +150,9 @@ public class EventDetectorAgent : BaseAgent
                 Priority = Enum.TryParse<EventPriority>(e.Priority, true, out var p) ? p : EventPriority.Medium,
                 ImpactScore = e.ImpactScore,
                 Category = e.Category,
+                Location = e.Location,
+                Latitude = e.Latitude,
+                Longitude = e.Longitude,
                 Articles = e.ArticleIndices
                     .Where(i => i >= 1 && i <= articles.Count)
                     .Select(i => articles[i - 1])
@@ -221,7 +229,10 @@ public class EventDetectorAgent : BaseAgent
                 NewsSectionId = sectionId,
                 StartDate = cluster.Articles.Min(a => a.PublishedAt),
                 IsActive = true,
-                Tags = cluster.Articles.SelectMany(a => a.Keywords).Distinct().Take(10).ToArray()
+                Tags = cluster.Articles.SelectMany(a => a.Keywords).Distinct().Take(10).ToArray(),
+                Location = cluster.Location,
+                Latitude = cluster.Latitude,
+                Longitude = cluster.Longitude
             };
             ctx.NewsEvents.Add(newsEvent);
             await ctx.SaveChangesAsync(ct);
@@ -244,6 +255,9 @@ record ArticleCluster
     public EventPriority Priority { get; init; }
     public decimal ImpactScore { get; init; }
     public required string Category { get; init; }
+    public string? Location { get; init; }
+    public double? Latitude { get; init; }
+    public double? Longitude { get; init; }
     public required List<NewsArticle> Articles { get; init; }
 }
 
@@ -260,6 +274,9 @@ record EventDto
     [System.Text.Json.Serialization.JsonPropertyName("impact_score")]
     public decimal ImpactScore { get; init; } = 50;
     public string Category { get; init; } = "General";
+    public string? Location { get; init; }
+    public double? Latitude { get; init; }
+    public double? Longitude { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("article_indices")]
     public List<int> ArticleIndices { get; init; } = [];
 }

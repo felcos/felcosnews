@@ -553,7 +553,7 @@
                     .Take(6)
                     .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
                     .ToArray(),
-                e.Latitude, e.Longitude))
+                e.Latitude, e.Longitude, e.Location))
             .ToListAsync();
 
         CriticalAlerts = await Ctx.AlertTriggers
@@ -854,7 +854,7 @@
     record EventItem(int Id, string Title, string? Description, string Priority,
         decimal ImpactScore, string Trend, string[] Tags, string SectionName, string SectionSlug,
         DateTime StartDate, int ArticleCount, MoonArticle[] Articles,
-        double? Latitude, double? Longitude);
+        double? Latitude, double? Longitude, string? Location);
     record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
     record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt);
