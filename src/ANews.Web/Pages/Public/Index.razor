@@ -23,21 +23,6 @@
             <span class="brand-beta">BETA</span>
         </div>
 
-        <nav class="section-nav" id="section-nav">
-            <button class="nav-tab @(SelectedSection == "all" ? "active" : "")"
-                    @onclick="@(() => SelectSection("all"))">
-                <i class="fa fa-globe"></i> Todo
-            </button>
-            @foreach (var s in Sections)
-            {
-                <button class="nav-tab @(SelectedSection == s.Slug ? "active" : "")"
-                        @onclick="@(() => SelectSection(s.Slug))"
-                        style="--section-color:@s.Color">
-                    <i class="fa @s.IconClass"></i> @s.Name
-                </button>
-            }
-        </nav>
-
         <div class="header-right">
             <div class="live-status @(IsConnected ? "live" : "offline")">
                 <span class="pulse-dot"></span>
@@ -96,6 +81,40 @@
             </AuthorizeView>
         </div>
     </header>
+
+    <!-- Section strip — sticky below header, icon chips that expand on hover/active -->
+    <div class="section-strip">
+        <button class="sec-scroll-btn" onclick="this.closest('.section-strip').querySelector('.sec-strip-scroll').scrollBy({left:-160,behavior:'smooth'})">
+            <i class="fa fa-chevron-left"></i>
+        </button>
+        <div class="sec-strip-scroll">
+            <button class="sec-chip @(SelectedSection == "all" ? "active" : "")"
+                    @onclick="@(() => SelectSection("all"))"
+                    title="Todo">
+                <i class="fa fa-border-all"></i>
+                <span class="sec-chip-name">Todo</span>
+            </button>
+            @foreach (var s in Sections)
+            {
+                <button class="sec-chip @(SelectedSection == s.Slug ? "active" : "")"
+                        @onclick="@(() => SelectSection(s.Slug))"
+                        style="--sc:@s.Color"
+                        title="@s.Name">
+                    <i class="fa @s.IconClass"></i>
+                    <span class="sec-chip-name">@s.Name</span>
+                </button>
+            }
+        </div>
+        <button class="sec-scroll-btn" onclick="this.closest('.section-strip').querySelector('.sec-strip-scroll').scrollBy({left:160,behavior:'smooth'})">
+            <i class="fa fa-chevron-right"></i>
+        </button>
+        @if (SelectedSection != "all" && !SelectedSection.StartsWith("module:"))
+        {
+            <button class="sec-clear-btn" @onclick="@(() => SelectSection("all"))" title="Quitar filtro">
+                <i class="fa fa-times"></i>
+            </button>
+        }
+    </div>
 
     @if (UserModules.Any())
     {

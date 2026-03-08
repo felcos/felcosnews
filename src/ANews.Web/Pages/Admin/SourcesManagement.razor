@@ -1,13 +1,17 @@
 @page "/admin/sources"
 @using Microsoft.AspNetCore.Authorization
 @using ANews.Infrastructure.Data
+@using ANews.Infrastructure.AI
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
+@using ANews.Domain.Interfaces
 @using Microsoft.EntityFrameworkCore
+@using System.Text.Json
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
 @inject AppDbContext Db
 @inject IJSRuntime JS
+@inject AiProviderFactory AiFactory
 
 <PageTitle>Fuentes de Noticias - Admin</PageTitle>
 
@@ -16,9 +20,14 @@
         <h2>Fuentes de Noticias</h2>
         <p class="text-muted">Gestion de fuentes RSS, APIs y scrapers</p>
     </div>
-    <button class="btn btn-primary" @onclick="OpenAddModal">
-        <i class="fa fa-plus"></i> Nueva Fuente
-    </button>
+    <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" @onclick="OpenDiscoverModal" title="La IA propone feeds RSS de calidad para añadir">
+            <i class="fa fa-magic"></i> Descubrir con IA
+        </button>
+        <button class="btn btn-primary" @onclick="OpenAddModal">
+            <i class="fa fa-plus"></i> Nueva Fuente
+        </button>
+    </div>
 </div>
 
 <!-- Filters -->
@@ -238,6 +247,128 @@
     </div>
 }
 
+<!-- AI Source Discovery Modal -->
+@if (_showDiscoverModal)
+{
+    <div class="modal-backdrop" @onclick="CloseDiscoverModal"></div>
+    <div class="modal-panel" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column" @onclick:stopPropagation>
+        <div class="modal-header">
+            <h3><i class="fa fa-magic" style="color:var(--accent)"></i> Descubrir fuentes RSS con IA</h3>
+            <button class="modal-close" @onclick="CloseDiscoverModal"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="modal-body" style="overflow-y:auto;flex:1">
+            @if (!_discoveredSources.Any() && !_discovering)
+            {
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+                    <div class="form-group">
+                        <label>Tema / Categoría <small style="color:var(--text-muted)">(dejar vacío = todo)</small></label>
+                        <input class="form-control" @bind="_discoveryTopic"
+                               placeholder="Ej: tecnología, deportes, economía..." />
+                    </div>
+                    <div class="form-group">
+                        <label>Sección asignada por defecto</label>
+                        <select class="form-control" @bind="_discoveryDefaultSection">
+                            @foreach (var sec in _sections)
+                            {
+                                <option value="@sec.Id">@sec.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Idioma preferido</label>
+                        <select class="form-control" @bind="_discoveryLang">
+                            <option value="any">Cualquiera</option>
+                            <option value="es">Español</option>
+                            <option value="en">Inglés</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Cantidad a generar</label>
+                        <select class="form-control" @bind="_discoveryCount">
+                            <option value="10">10 fuentes</option>
+                            <option value="20">20 fuentes</option>
+                            <option value="30">30 fuentes</option>
+                            <option value="50">50 fuentes</option>
+                        </select>
+                    </div>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+                    <i class="fa fa-info-circle"></i> Las fuentes se añadirán como <strong>inactivas</strong> — tú decides cuáles activar.
+                </p>
+            }
+
+            @if (_discovering)
+            {
+                <div style="text-align:center;padding:40px">
+                    <div class="loading-spinner" style="margin:0 auto 16px"></div>
+                    <p style="color:var(--text-muted)">La IA está buscando feeds RSS de calidad...</p>
+                </div>
+            }
+            else if (_discoveryError != null)
+            {
+                <div class="alert alert-danger"><i class="fa fa-warning"></i> @_discoveryError</div>
+            }
+            else if (_discoveredSources.Any())
+            {
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <span style="font-size:13px;color:var(--text-muted)">
+                        @_discoveredSources.Count fuentes encontradas — @_discoveredSources.Count(s => s.Selected) seleccionadas
+                    </span>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px"
+                                @onclick="@(() => _discoveredSources.ForEach(s => s.Selected = true))">Seleccionar todo</button>
+                        <button class="btn btn-secondary" style="font-size:12px;padding:4px 10px"
+                                @onclick="@(() => _discoveredSources.ForEach(s => s.Selected = false))">Ninguno</button>
+                    </div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                    @foreach (var ds in _discoveredSources)
+                    {
+                        var alreadyExists = _sources.Any(s => s.Url == ds.Url);
+                        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);@(alreadyExists ? "opacity:0.5" : "")">
+                            <input type="checkbox" @bind="ds.Selected" disabled="@alreadyExists" style="margin-top:3px;flex-shrink:0" />
+                            <div style="flex:1;min-width:0">
+                                <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+                                    <strong style="font-size:13px">@ds.Name</strong>
+                                    <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(74,144,226,0.15);color:var(--accent)">@ds.Language</span>
+                                    <span style="font-size:10px;color:var(--text-muted)">Credibilidad: @ds.Credibility%</span>
+                                    @if (alreadyExists) { <span style="font-size:10px;color:var(--accent-yellow)">Ya existe</span> }
+                                </div>
+                                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">@ds.Topic</div>
+                                <div style="font-size:11px;color:var(--text-muted);word-break:break-all">@ds.Url</div>
+                            </div>
+                            <select style="font-size:11px;padding:2px 4px;background:var(--card-bg);border:1px solid var(--border);color:var(--text-primary);border-radius:4px;flex-shrink:0"
+                                    @bind="ds.SectionId">
+                                @foreach (var sec in _sections)
+                                {
+                                    <option value="@sec.Id">@sec.Name</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        <div class="modal-footer">
+            @if (_discoveredSources.Any())
+            {
+                <button class="btn btn-secondary" @onclick="OpenDiscoverModal">Nueva búsqueda</button>
+                <button class="btn btn-primary" @onclick="AddSelectedSources"
+                        disabled="@(!_discoveredSources.Any(s => s.Selected && !_sources.Any(e => e.Url == s.Url)))">
+                    <i class="fa fa-plus"></i> Añadir @(_discoveredSources.Count(s => s.Selected && !_sources.Any(e => e.Url == s.Url))) fuentes
+                </button>
+            }
+            else if (!_discovering)
+            {
+                <button class="btn btn-secondary" @onclick="CloseDiscoverModal">Cancelar</button>
+                <button class="btn btn-primary" @onclick="RunDiscovery" disabled="@_discovering">
+                    <i class="fa fa-magic"></i> Descubrir
+                </button>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private List<NewsSource> _sources = new();
     private List<NewsSection> _sections = new();
@@ -246,6 +377,27 @@
     private string _filterActive = "";
     private bool _showModal;
     private bool _saving;
+
+    // ── AI Discovery ──────────────────────────────────────
+    private bool _showDiscoverModal;
+    private bool _discovering;
+    private string _discoveryTopic = "";
+    private string _discoveryLang = "any";
+    private int _discoveryCount = 20;
+    private int _discoveryDefaultSection;
+    private string? _discoveryError;
+    private List<DiscoveredSource> _discoveredSources = new();
+
+    class DiscoveredSource
+    {
+        public string Name { get; set; } = "";
+        public string Url { get; set; } = "";
+        public string Language { get; set; } = "en";
+        public int Credibility { get; set; } = 75;
+        public string Topic { get; set; } = "";
+        public int SectionId { get; set; }
+        public bool Selected { get; set; } = true;
+    }
     private string _formError = "";
     private NewsSource? _editingSource;
     private NewsSource? _errorSource;
@@ -413,5 +565,131 @@
         public int CredibilityScore { get; set; } = 70;
         public string Language { get; set; } = "es";
         public bool IsActive { get; set; } = true;
+    }
+
+    // ── AI Discovery methods ──────────────────────────────
+    private void OpenDiscoverModal()
+    {
+        _showDiscoverModal = true;
+        _discoveredSources.Clear();
+        _discoveryError = null;
+        _discoveryTopic = "";
+        _discoveryDefaultSection = _sections.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private void CloseDiscoverModal()
+    {
+        _showDiscoverModal = false;
+        _discoveredSources.Clear();
+        _discoveryError = null;
+    }
+
+    private async Task RunDiscovery()
+    {
+        _discovering = true;
+        _discoveryError = null;
+        _discoveredSources.Clear();
+        StateHasChanged();
+
+        try
+        {
+            var provider = await AiFactory.GetDefaultProviderAsync();
+            var existingUrls = _sources.Select(s => s.Url).Take(20).ToList();
+            var langClause = _discoveryLang == "any" ? "" : $" en idioma: {(_discoveryLang == "es" ? "español" : "inglés")}";
+            var topicClause = string.IsNullOrWhiteSpace(_discoveryTopic)
+                ? "Cubre variedad de temas: Política internacional, Economía, Tecnología, Ciencia, Deportes, Cultura, Salud, Medio Ambiente, Entretenimiento, Ciberseguridad, IA, Mercados financieros, Conflictos, Energía, Espacio."
+                : $"Especializada en: {_discoveryTopic}.";
+
+            var exampleJson = "{\"sources\":[{\"name\":\"BBC Technology\",\"url\":\"http://feeds.bbci.co.uk/news/technology/rss.xml\",\"language\":\"en\",\"credibility\":95,\"topic\":\"Tecnología\"},{\"name\":\"El Pais\",\"url\":\"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada\",\"language\":\"es\",\"credibility\":90,\"topic\":\"General\"}]}";
+            var prompt = $"Genera exactamente {_discoveryCount} fuentes RSS/Atom de noticias reales y de alta calidad{langClause}.\n" +
+                $"{topicClause}\n\n" +
+                "REQUISITOS:\n" +
+                "- URLs de feeds RSS/Atom reales y funcionales (probadas y conocidas)\n" +
+                "- Fuentes de medios reconocidos: BBC, Reuters, AP, El Pais, El Mundo, La Vanguardia, Expansion, Xataka, MIT Tech Review, Nature, Science, TechCrunch, Wired, Bloomberg, Forbes, ESPN, Marca, AS, National Geographic, CNN, Al Jazeera, DW, France24, etc.\n" +
+                $"- NO incluyas estas URLs ya existentes: {string.Join(", ", existingUrls.Take(5))}\n" +
+                "- Variedad: no repitas el mismo medio con distintas categorias mas de 2 veces\n" +
+                "- Credibilidad 60-100 segun reputacion del medio\n\n" +
+                $"Responde SOLO con JSON valido, sin markdown, sin explicaciones. Formato exacto: {exampleJson}";
+
+            var response = await provider.CompleteAsync(new AiRequest
+            {
+                SystemPrompt = "Eres un experto en medios de comunicación digitales. Conoces miles de feeds RSS de noticias reales y activos. Respondes SIEMPRE con JSON válido.",
+                UserPrompt = prompt,
+                MaxTokens = 4000,
+                Temperature = 0.4,
+                OperationTag = "source_discovery"
+            });
+
+            if (!response.Success || string.IsNullOrEmpty(response.Content))
+            {
+                _discoveryError = "La IA no devolvió respuesta. Verifica que hay un proveedor activo con tokens suficientes.";
+                return;
+            }
+
+            // Extract JSON
+            var json = response.Content;
+            var start = json.IndexOf('{');
+            var end = json.LastIndexOf('}');
+            if (start >= 0 && end > start) json = json[start..(end + 1)];
+
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("sources", out var arr)) { _discoveryError = "Formato inesperado de la respuesta IA."; return; }
+
+            foreach (var el in arr.EnumerateArray())
+            {
+                var ds = new DiscoveredSource
+                {
+                    Name = el.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+                    Url = el.TryGetProperty("url", out var u) ? u.GetString() ?? "" : "",
+                    Language = el.TryGetProperty("language", out var l) ? l.GetString() ?? "en" : "en",
+                    Credibility = el.TryGetProperty("credibility", out var c) ? c.GetInt32() : 75,
+                    Topic = el.TryGetProperty("topic", out var t) ? t.GetString() ?? "" : "",
+                    SectionId = _discoveryDefaultSection,
+                    Selected = true
+                };
+                if (!string.IsNullOrWhiteSpace(ds.Url) && !string.IsNullOrWhiteSpace(ds.Name))
+                    _discoveredSources.Add(ds);
+            }
+
+            if (!_discoveredSources.Any())
+                _discoveryError = "No se encontraron fuentes válidas en la respuesta.";
+        }
+        catch (JsonException)
+        {
+            _discoveryError = "Error al parsear la respuesta de la IA. Inténtalo de nuevo.";
+        }
+        catch (Exception ex)
+        {
+            _discoveryError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _discovering = false;
+        }
+    }
+
+    private async Task AddSelectedSources()
+    {
+        var toAdd = _discoveredSources
+            .Where(s => s.Selected && !_sources.Any(e => e.Url == s.Url))
+            .ToList();
+
+        foreach (var ds in toAdd)
+        {
+            await Db.NewsSources.AddAsync(new NewsSource
+            {
+                Name = ds.Name,
+                Url = ds.Url,
+                Type = NewsSourceType.Rss,
+                Language = ds.Language,
+                CredibilityScore = ds.Credibility,
+                NewsSectionId = ds.SectionId > 0 ? ds.SectionId : (_sections.FirstOrDefault()?.Id ?? 1),
+                IsActive = false  // inactive by default — admin activates manually
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        CloseDiscoverModal();
+        await LoadData();
     }
 }
