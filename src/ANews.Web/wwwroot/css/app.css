@@ -582,7 +582,9 @@ textarea.form-input { resize: vertical; font-family: inherit; }
   display: flex; align-items: center; gap: 10px;
   padding: 16px; color: var(--accent); font-size: 14px; font-weight: 700;
   border-bottom: 1px solid var(--admin-border);
+  text-decoration: none; cursor: pointer;
 }
+.sidebar-logo:hover { color: #fff; }
 .sidebar-logo i { font-size: 20px; flex-shrink: 0; }
 .sidebar-logo strong { color: var(--accent-green); }
 
