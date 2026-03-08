@@ -247,7 +247,7 @@
                         <div class="em-article @(isExpanded ? "em-article-expanded" : "")">
                             <div class="em-art-type">@art.ArticleType</div>
                             <div class="em-art-content">
-                                <a href="/article/@art.Id" class="em-art-title">@art.Title</a>
+                                <a href="/article/@art.Id" class="em-art-title" target="_blank" rel="noopener">@art.Title</a>
                                 <span class="em-art-source">@art.SourceName</span>
                                 @if (isExpanded && !string.IsNullOrEmpty(art.Summary))
                                 {

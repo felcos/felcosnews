@@ -127,7 +127,7 @@
                 maxX = Math.max(maxX, s.x); maxY = Math.max(maxY, s.y);
             }
             // Add ring padding
-            const pad = 420;
+            const pad = 180;
             minX -= pad; minY -= pad; maxX += pad; maxY += pad;
             const cx = (minX + maxX) / 2;
             const cy = (minY + maxY) / 2;
@@ -177,20 +177,18 @@
         _arrangeSystemCenters(n) {
             if (n === 0) return [];
             if (n === 1) return [{ x: 0, y: 0 }];
-            if (n === 2) return [{ x: -400, y: 0 }, { x: 400, y: 0 }];
+            if (n === 2) return [{ x: -260, y: 0 }, { x: 260, y: 0 }];
             if (n === 3) {
                 return [
-                    { x: 0, y: -350 },
-                    { x: -400, y: 280 },
-                    { x: 400, y: 280 }
+                    { x: 0, y: -230 },
+                    { x: -265, y: 180 },
+                    { x: 265, y: 180 }
                 ];
             }
             if (n <= 6) {
-                // Two rows
                 const cols = Math.ceil(n / 2);
-                const rows = 2;
-                const spacingX = 820;
-                const spacingY = 700;
+                const spacingX = 480;
+                const spacingY = 420;
                 const result = [];
                 for (let i = 0; i < n; i++) {
                     const row = Math.floor(i / cols);
@@ -204,15 +202,14 @@
                 }
                 return result;
             }
-            // 7+: ellipse
-            const rx = 520, ry = 380;
-            // Scale up for many systems
-            const scale = 1 + (n - 7) * 0.12;
+            // 7+: ellipse — keep systems close enough to be visible at default zoom
+            const rx = 300, ry = 210;
+            const scale = 1 + (n - 7) * 0.08;
             return Array.from({ length: n }, (_, i) => {
                 const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
                 return {
-                    x: Math.cos(angle) * rx * scale * 1.8,
-                    y: Math.sin(angle) * ry * scale * 1.8
+                    x: Math.cos(angle) * rx * scale,
+                    y: Math.sin(angle) * ry * scale
                 };
             });
         }
@@ -238,11 +235,11 @@
                 });
             }
 
-            // Ring layout per system
+            // Ring layout per system — smaller radii so planets are visible at default zoom
             const rings = [
-                { count: 5, radius: 150 },
-                { count: 7, radius: 265 },
-                { count: 9, radius: 370 }
+                { count: 5, radius: 100 },
+                { count: 7, radius: 175 },
+                { count: 9, radius: 255 }
             ];
             // Angular stagger between rings
             const ringStagger = [0, Math.PI / rings[1].count, Math.PI / rings[2].count / 1.5];
@@ -266,6 +263,7 @@
                     const angle = (posInRing / totalInRing) * Math.PI * 2 + ringStagger[Math.min(ringIdx, ringStagger.length - 1)];
                     const r = ring.radius;
 
+                    const pColors = { Critical: '#ff0040', High: '#ff6600', Medium: '#e6b800', Low: '#4a90e2' };
                     const node = {
                         id: ev.id,
                         x: sys.x + Math.cos(angle) * r,
@@ -274,7 +272,7 @@
                         event: ev,
                         system: sys,
                         pulsePhase: Math.random() * Math.PI * 2,
-                        color: sys.color,
+                        color: pColors[ev.priority] || '#4a90e2',
                         isModuleMatch: false,
                         frozenMoonAngles: {}
                     };
@@ -858,7 +856,7 @@
         }
 
         _drawSystemOrbits(ctx) {
-            const rings = [150, 265, 370];
+            const rings = [100, 175, 255];
             ctx.save();
             ctx.setLineDash([4, 8]);
             for (const sys of this.systems) {
@@ -998,17 +996,26 @@
                 ctx.stroke();
             }
 
-            // Label
-            if (dr * this.cam.scale >= 14) {
-                const fontSize = Math.max(9, Math.round(11 / this.cam.scale));
+            // Label — inside the planet circle
+            if (dr * this.cam.scale >= 10) {
+                const fontSize = Math.max(7, Math.min(13, dr * 0.38));
+                const charsPerPx = fontSize * 0.54;
+                const maxChars = Math.max(3, Math.floor((dr * 1.3) / charsPerPx));
+                const label = ev.title
+                    ? (ev.title.length > maxChars ? ev.title.substring(0, maxChars - 1) + '…' : ev.title)
+                    : '';
                 ctx.save();
-                ctx.font = `${fontSize}px 'Segoe UI', system-ui, sans-serif`;
+                ctx.font = `600 ${fontSize}px system-ui`;
                 ctx.textAlign = 'center';
-                ctx.fillStyle = 'rgba(232,234,240,0.85)';
-                ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                ctx.textBaseline = 'middle';
+                // Shadow pass for contrast
+                ctx.shadowColor = 'rgba(0,0,0,0.95)';
                 ctx.shadowBlur = 4 / this.cam.scale;
-                const label = ev.title ? ev.title.substring(0, 28) + (ev.title.length > 28 ? '…' : '') : '';
-                ctx.fillText(label, x, y + dr + 14 / this.cam.scale);
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillText(label, x + 0.5, y + 0.5);
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(label, x, y);
                 ctx.restore();
             }
         }
