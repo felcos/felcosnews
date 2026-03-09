@@ -24,6 +24,12 @@
         </div>
 
         <div class="header-right">
+            <!-- Workspace indicator -->
+            <button class="ws-indicator" @onclick="@(() => _showWorkspacePicker = true)" title="Cambiar enfoque geográfico">
+                <i class="fa @(_geoFilter.Length == 0 ? "fa-globe" : "fa-map-marker-alt")"></i>
+                <span>@_workspaceName</span>
+            </button>
+
             <div class="live-status @(IsConnected ? "live" : "offline")">
                 <span class="pulse-dot"></span>
                 @(IsConnected ? "EN VIVO" : "OFFLINE")
@@ -458,6 +464,58 @@
     </div>
 }
 
+@if (_showWorkspacePicker)
+{
+    <div class="ws-overlay" @onclick="@(() => { if(_workspaceName != "Global" || _geoFilter.Length > 0) _showWorkspacePicker = false; })">
+        <div class="ws-panel" @onclick:stopPropagation>
+            <div class="ws-logo">
+                <i class="fa fa-satellite"></i>
+                <span>AGENTE<strong>NEWS</strong></span>
+            </div>
+            <h2 class="ws-headline">¿Qué quieres seguir hoy?</h2>
+            <p class="ws-sub">Elige tu enfoque geográfico. La IA filtrará fuentes, eventos y análisis.</p>
+
+            <div class="ws-cards">
+                <div class="ws-card ws-card-global @(_geoFilter.Length == 0 ? "ws-card-active" : "")"
+                     @onclick='() => SelectWorkspace("Global", new string[0])'>
+                    <div class="ws-card-icon">🌍</div>
+                    <div class="ws-card-name">Internacional</div>
+                    <div class="ws-card-desc">Cobertura mundial completa — todos los eventos</div>
+                    <div class="ws-card-count">@Events.Count eventos activos</div>
+                </div>
+                @foreach (var geo in _wsPresets)
+                {
+                    var geoName = geo.Name;
+                    var isActive = _workspaceName == geoName;
+                    var count = Events.Count(e => MatchesGeoFilterFor(e, geoName));
+                    <div class="ws-card @(isActive ? "ws-card-active" : "")"
+                         @onclick="@(() => SelectWorkspace(geoName, new[] { geoName }))">
+                        <div class="ws-card-icon">@geo.Flag</div>
+                        <div class="ws-card-name">@geoName</div>
+                        <div class="ws-card-desc">@geo.Desc</div>
+                        <div class="ws-card-count">@count eventos disponibles</div>
+                    </div>
+                }
+            </div>
+
+            <div class="ws-custom">
+                <span>Combinación personalizada:</span>
+                <input class="ws-custom-input" placeholder="España, Venezuela, México..." @bind="_customGeoInput" @bind:event="oninput" />
+                <button class="ws-custom-btn" @onclick="SelectCustomWorkspace" disabled="@string.IsNullOrWhiteSpace(_customGeoInput)">
+                    <i class="fa fa-arrow-right"></i>
+                </button>
+            </div>
+
+            @if (_workspaceName != "Global" || _geoFilter.Length > 0)
+            {
+                <button class="ws-close-btn" @onclick="@(() => _showWorkspacePicker = false)">
+                    Continuar con @_workspaceName <i class="fa fa-times"></i>
+                </button>
+            }
+        </div>
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "eventId")]
     private int? AutoOpenEventId { get; set; }
@@ -474,13 +532,83 @@
     private List<EventItem> Events = [];
     private List<ModuleFilterItem> UserModules = [];
 
+    // ── Workspace (geo-focus) ──────────────────────────────────────────
+    private bool _showWorkspacePicker = false;
+    private string _workspaceName = "Global";
+    private string[] _geoFilter = [];
+    private string _customGeoInput = "";
+
+    // Geo terms per workspace: maps display name → list of matching strings
+    private static readonly Dictionary<string, string[]> _geoTerms = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["España"]     = ["Spain", "España", "Spanish", "Madrid", "Barcelona", "Catalonia", "Cataluña", "Basque", "Galicia", "Andalusia", "Valencia", "Seville", "Bilbao", "Malaga"],
+        ["Venezuela"]  = ["Venezuela", "Venezuelan", "Caracas", "Maduro"],
+        ["México"]     = ["Mexico", "México", "Mexican", "CDMX", "Ciudad de Mexico", "Guadalajara", "Monterrey"],
+        ["Argentina"]  = ["Argentina", "Argentine", "Buenos Aires", "Milei"],
+        ["Colombia"]   = ["Colombia", "Colombian", "Bogota", "Bogotá", "Medellín"],
+        ["EEUU"]       = ["United States", "USA", "U.S.", "American", "Washington", "New York", "California", "Biden", "Trump"],
+        ["Reino Unido"]= ["United Kingdom", "UK", "Britain", "British", "England", "London", "Scotland", "Wales"],
+        ["Francia"]    = ["France", "French", "Paris", "Macron"],
+        ["Alemania"]   = ["Germany", "German", "Berlin", "Deutschland"],
+        ["Israel/Gaza"]= ["Israel", "Gaza", "Palestine", "Palestinian", "Hamas", "Netanyahu", "West Bank"],
+        ["Ucrania"]    = ["Ukraine", "Ukrainian", "Kyiv", "Kiev", "Zelensky", "Zelenski"],
+        ["Rusia"]      = ["Russia", "Russian", "Moscow", "Putin", "Kremlin"],
+        ["China"]      = ["China", "Chinese", "Beijing", "Xi Jinping", "CCP"],
+    };
+
+    record WsPreset(string Name, string Flag, string Desc);
+    private static readonly WsPreset[] _wsPresets =
+    [
+        new("España",     "🇪🇸", "Noticias de España en profundidad"),
+        new("Venezuela",  "🇻🇪", "Seguimiento exhaustivo Venezuela"),
+        new("México",     "🇲🇽", "Todo sobre México"),
+        new("Ucrania",    "🇺🇦", "Conflicto y geopolítica"),
+        new("Israel/Gaza","⚔️",  "Conflicto y región"),
+        new("EEUU",       "🇺🇸", "Estados Unidos"),
+        new("China",      "🇨🇳", "Asia-Pacífico y economía global"),
+        new("Rusia",      "🇷🇺", "Geopolítica rusa"),
+    ];
+
+    private bool MatchesGeoFilter(EventItem ev) => MatchesGeoFilterFor(ev, null);
+
+    private bool MatchesGeoFilterFor(EventItem ev, string? singleGeo)
+    {
+        var filter = singleGeo != null ? new[] { singleGeo } : _geoFilter;
+        if (filter.Length == 0) return true;
+        var terms = filter
+            .SelectMany(g => _geoTerms.TryGetValue(g, out var t) ? t : new[] { g })
+            .Select(t => t.ToLowerInvariant())
+            .ToArray();
+        var text = $"{ev.Location} {ev.Title} {ev.Description}".ToLowerInvariant();
+        return terms.Any(t => text.Contains(t));
+    }
+
+    private async Task SelectWorkspace(string name, string[] geos)
+    {
+        _workspaceName = name;
+        _geoFilter = geos;
+        _showWorkspacePicker = false;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", "anews-workspace", name); } catch { }
+        if (ViewMode == "universe")
+            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
+        else if (ViewMode == "map")
+            try { await JS.InvokeVoidAsync("newsMap.updateData", FilteredEvents); } catch { }
+    }
+
+    private async Task SelectCustomWorkspace()
+    {
+        if (string.IsNullOrWhiteSpace(_customGeoInput)) return;
+        var geos = _customGeoInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        await SelectWorkspace(string.Join(" + ", geos), geos);
+    }
+
     record ModuleFilterItem(int Id, string Name, string Color, List<string> Keywords);
 
     private List<EventItem> FilteredEvents
     {
         get
         {
-            IEnumerable<EventItem> q = Events;
+            IEnumerable<EventItem> q = Events.Where(MatchesGeoFilter);
             if (SelectedSection.StartsWith("module:") && int.TryParse(SelectedSection[7..], out var modId))
             {
                 var mod = UserModules.FirstOrDefault(m => m.Id == modId);
@@ -631,6 +759,23 @@
         if (firstRender)
         {
             try { _currentTheme = await JS.InvokeAsync<string>("themeManager.getTheme") ?? "dark"; } catch { }
+
+            // Load workspace from localStorage
+            try
+            {
+                var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "anews-workspace");
+                if (string.IsNullOrEmpty(saved))
+                {
+                    _showWorkspacePicker = true; // First visit — show picker
+                }
+                else if (saved != "Global")
+                {
+                    _workspaceName = saved;
+                    _geoFilter = saved.Split('+', StringSplitOptions.TrimEntries);
+                }
+            }
+            catch { }
+
             await SetupSignalRAsync();
 
             if (AutoOpenEventId.HasValue)

@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text.Json;
 using ANews.Domain.Entities;
 using ANews.Domain.Enums;
@@ -68,6 +69,59 @@ public class EventDetectorAgent : BaseAgent
             await LogAsync(ctx, execution, AgentLogLevel.Error, $"Error en deteccion de eventos: {ex.Message}");
             throw;
         }
+
+        // Geocode events that have Location but no coordinates
+        await GeocodeEventsMissingCoordsAsync(services, ctx, execution, ct);
+    }
+
+    private async Task GeocodeEventsMissingCoordsAsync(IServiceProvider services, AppDbContext ctx, AgentExecution execution, CancellationToken ct)
+    {
+        var missing = await ctx.NewsEvents
+            .Where(e => e.Location != null && e.Latitude == null && e.IsActive)
+            .Take(20)
+            .ToListAsync(ct);
+
+        if (missing.Count == 0) return;
+
+        await LogAsync(ctx, execution, AgentLogLevel.Info, $"Geocodificando {missing.Count} eventos sin coordenadas");
+
+        try
+        {
+            var httpFactory = services.GetRequiredService<IHttpClientFactory>();
+            var http = httpFactory.CreateClient("nominatim");
+            int geocoded = 0;
+
+            foreach (var ev in missing)
+            {
+                if (ct.IsCancellationRequested) break;
+                await Task.Delay(500, ct); // respect Nominatim rate limit
+                try
+                {
+                    var url = $"search?q={Uri.EscapeDataString(ev.Location!)}&format=json&limit=1";
+                    var res = await http.GetAsync(url, ct);
+                    if (!res.IsSuccessStatusCode) continue;
+                    var body = await res.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(body);
+                    var arr = doc.RootElement;
+                    if (arr.GetArrayLength() == 0) continue;
+                    var first = arr[0];
+                    ev.Latitude = double.Parse(first.GetProperty("lat").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+                    ev.Longitude = double.Parse(first.GetProperty("lon").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+                    geocoded++;
+                }
+                catch { /* skip individual failures */ }
+            }
+
+            if (geocoded > 0)
+            {
+                await ctx.SaveChangesAsync(ct);
+                await LogAsync(ctx, execution, AgentLogLevel.Info, $"Geocodificados {geocoded} eventos en mapa");
+            }
+        }
+        catch (Exception ex)
+        {
+            await LogAsync(ctx, execution, AgentLogLevel.Warning, $"Error en geocodificacion: {ex.Message}");
+        }
     }
 
     private async Task<List<ArticleCluster>> ClusterArticlesWithAiAsync(
@@ -76,36 +130,34 @@ public class EventDetectorAgent : BaseAgent
         var articlesList = articles.Select((a, i) => $"{i + 1}. [{a.SourceName}] {a.Title}").ToList();
         var articlesText = string.Join("\n", articlesList);
 
-        var prompt = $$"""
-            Analiza estas noticias y agrupalas en eventos principales. Para cada evento:
-            1. Asignale un titulo claro
-            2. Indica cuales articulos pertenecen (numeros)
-            3. Define prioridad: Low/Medium/High/Critical
-            4. Calcula un impact_score (0-100)
-            5. Asigna categoria
-            6. Identifica la ubicacion geografica principal (ciudad o pais en ingles). Si es un evento global sin ubicacion clara pon null.
-            7. Proporciona coordenadas aproximadas (latitud y longitud) para esa ubicacion. Si no hay ubicacion geografica clara, pon null.
-
-            Noticias:
-            {{articlesText}}
-
-            Responde SOLO con JSON valido en este formato:
-            {
-              "events": [
-                {
-                  "title": "Titulo del evento",
-                  "description": "Descripcion breve",
-                  "priority": "High",
-                  "impact_score": 75,
-                  "category": "Politica",
-                  "location": "Ukraine",
-                  "latitude": 48.3794,
-                  "longitude": 31.1656,
-                  "article_indices": [1, 3, 5]
-                }
-              ]
-            }
-            """;
+        var prompt = "Eres editor jefe de una agencia de noticias internacional. Agrupa estas noticias en EVENTOS DISTINTOS y clasificalos con precision periodistica.\n\n" +
+            "REGLAS CRITICAS DE AGRUPACION:\n" +
+            "1. Un evento = un hecho especifico en un lugar y tiempo concretos\n" +
+            "2. NO mezcles eventos de paises distintos aunque sean del mismo tema\n" +
+            "3. Agrupa solo si los articulos hablan EXACTAMENTE del mismo hecho\n" +
+            "4. Un evento con un solo articulo es valido — no fuerces agrupaciones\n\n" +
+            "UBICACION (CRITICO):\n" +
+            "- Usa la ciudad o pais MAS ESPECIFICO posible\n" +
+            "- Usa 'Gaza Strip' NO 'Middle East' si el epicentro es Gaza\n" +
+            "- Usa 'Caracas' NO 'Venezuela' si la ciudad es el epicentro\n" +
+            "- Usa regiones solo si el evento afecta multiples paises sin epicentro claro\n" +
+            "- Coordenadas = EPICENTRO exacto del evento\n\n" +
+            "PRIORIDAD: Critical=crisis activa global / High=impacto multinacional / Medium=alcance nacional / Low=local\n\n" +
+            "IMPACT_SCORE 0-100: 90+=historico, 70-89=crisis nacional, 50-69=importante, 20-49=regional, 0-19=local\n\n" +
+            "CATEGORIAS: Conflicto/Politica/Diplomacia/Economia/Tecnologia/Seguridad/Sociedad/Desastres/Justicia/Otros\n\n" +
+            "Noticias:\n" + articlesText + "\n\n" +
+            "Responde SOLO con JSON valido:\n" +
+            "{\n  \"events\": [\n    {\n" +
+            "      \"title\": \"Titulo descriptivo del evento\",\n" +
+            "      \"description\": \"Descripcion 2-3 frases con contexto y relevancia\",\n" +
+            "      \"priority\": \"High\",\n" +
+            "      \"impact_score\": 75,\n" +
+            "      \"category\": \"Politica\",\n" +
+            "      \"location\": \"Madrid, Spain\",\n" +
+            "      \"latitude\": 40.4168,\n" +
+            "      \"longitude\": -3.7038,\n" +
+            "      \"article_indices\": [1, 3, 5]\n" +
+            "    }\n  ]\n}";
 
         var response = await ai.CompleteAsync(new AiRequest
         {

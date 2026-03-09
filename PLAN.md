@@ -343,3 +343,58 @@ ssh -i ssh-key-2026-01-16.key ubuntu@79.72.56.98 "sudo journalctl -u anews -f"
 
 **DB Producción:** `anews_prod`, usuario `anews`, contraseña en `/opt/anews/appsettings.Production.json`
 **Admin login:** `admin@anews.local` / `Admin@123456!`
+
+---
+
+## Sprint 5 — Workspace Geográfico + Mejoras UX (2026-03-09)
+
+### Objetivo
+Permitir al usuario enfocar la experiencia en uno o varios países/regiones, con la IA filtrando eventos, descubriendo fuentes y agrupando noticias con contexto geográfico preciso.
+
+### Entregado en este sprint
+
+| # | Feature | Estado |
+|---|---|---|
+| S5-01 | Workspace picker overlay (selección geográfica al entrar) | ✅ |
+| S5-02 | Geo-filtro en FilteredEvents (España, Venezuela, México, etc.) | ✅ |
+| S5-03 | Combinaciones personalizadas de países (España+Venezuela) | ✅ |
+| S5-04 | Persistencia de workspace en localStorage | ✅ |
+| S5-05 | Indicador de workspace activo en header | ✅ |
+| S5-06 | Prompt de EventDetectorAgent completamente reescrito | ✅ |
+| S5-07 | Geocodificación automática en EventDetectorAgent (Nominatim) | ✅ |
+| S5-08 | Fix "Middle East → USA" — diccionario de regiones en map.js y GodMode | ✅ |
+| S5-09 | Callout en mapa igual que planetas (punto + línea L + caja resumen) | ✅ |
+| S5-10 | Botón "Geocodificar eventos en mapa" en God Mode (lógica directa, sin HTTP) | ✅ |
+| S5-11 | Planetas con apariencia realista (8 tipos: rocoso, gaseoso, hielo, etc.) | ✅ |
+| S5-12 | Toggle ES/EN en resúmenes de artículos (ArticlePage y modal Timeline) | ✅ |
+| S5-13 | Descubrimiento de fuentes con IA (SourcesManagement) | ✅ |
+| S5-14 | Selector de tema (8 temas CSS) con persistencia localStorage | ✅ |
+| S5-15 | Section strip rediseñada (chips icon+expand, scroll horizontal) | ✅ |
+| S5-16 | Fix ruta de despliegue: /opt/anews/ (no /opt/anews/app/) | ✅ |
+
+### Presets de workspace disponibles
+- 🌍 Internacional (global, sin filtro)
+- 🇪🇸 España, 🇻🇪 Venezuela, 🇲🇽 México, 🇺🇦 Ucrania, ⚔️ Israel/Gaza, 🇺🇸 EEUU, 🇨🇳 China, 🇷🇺 Rusia
+- Combinación personalizada: cualquier nombre separado por comas
+
+### Geo-matching logic
+- Cada workspace tiene una lista de términos de búsqueda (país, capital, adjetivo gentilicio, líderes)
+- Se compara contra `Location + Title + Description` del evento (case-insensitive)
+- Ejemplo: "España" → busca Spain, España, Spanish, Madrid, Barcelona, Catalonia...
+
+### Arquitectura del workspace
+```
+localStorage["anews-workspace"] = "Global" | "España" | "España+Venezuela"
+_geoFilter: string[] → términos para filtrar FilteredEvents
+_geoTerms: Dictionary<string, string[]> → expansión de términos por país
+MatchesGeoFilterFor(ev, geo) → bool
+```
+
+### Pendiente (Sprint 6)
+- [ ] S6-01: Descubrimiento automático de fuentes al seleccionar workspace (trigger al seleccionar)
+- [ ] S6-02: Sección "España" formal en DB con fuentes RSS españolas preconfiguradas
+- [ ] S6-03: Prompt de agente con contexto geográfico cuando workspace ≠ Global
+- [ ] S6-04: Workspace multi-usuario (guardar en DB, no solo localStorage)
+- [ ] S6-05: Landing page standalone en / (con workspace picker, stats en vivo)
+- [ ] S6-06: NewsSource.Country field + migración → filtrado de fuentes por workspace
+- [ ] S6-07: Trigger automático de source discovery al activar nuevo workspace

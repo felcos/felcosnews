@@ -5,6 +5,7 @@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject IHttpClientFactory HttpClientFactory
+@inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @inject IHubContext<AdminHub> AdminHubCtx
 @inject AppDbContext Ctx
 @inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
@@ -128,19 +129,28 @@
                         @agent.DisplayName
                     </button>
                 }
-                <button class="btn-trigger @(_geocoding ? "running" : "")"
-                        @onclick="GeocodeEventsAsync" disabled="@_geocoding"
-                        title="Geocodifica eventos con Location pero sin coordenadas (Nominatim)">
-                    <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
-                    @(_geocoding ? "Geocodificando..." : "Geocodificar mapa")
-                </button>
             </div>
-            @if (_geocodeResult != null)
-            {
-                <div style="margin-top:6px;font-size:12px;color:var(--accent-green)">
-                    <i class="fa fa-check"></i> @_geocodeResult
-                </div>
-            }
+        </div>
+
+        <!-- Utilidades de mapa -->
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header">
+                <i class="fa fa-map-marked-alt"></i>
+                <span>Utilidades de Mapa</span>
+            </div>
+            <div class="agent-actions">
+                <button class="btn-trigger @(_geocoding ? "running" : "")"
+                        @onclick="GeocodeEventsAsync" disabled="@_geocoding">
+                    <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
+                    @(_geocoding ? "Geocodificando..." : "Geocodificar eventos en mapa")
+                </button>
+                @if (_geocodeResult != null)
+                {
+                    <span style="font-size:12px;color:var(--accent-green);align-self:center">
+                        <i class="fa fa-check-circle"></i> @_geocodeResult
+                    </span>
+                }
+            </div>
         </div>
 
         <!-- Costes por proveedor -->
@@ -297,7 +307,7 @@
     private List<AgentTriggerItem> AgentTriggers = [];
     private List<ExecutionLogItem> ExecutionLogs = [];
     private decimal TotalCostSelected;
-    private bool _geocoding = false;
+    private bool _geocoding;
     private string? _geocodeResult;
 
     private IEnumerable<LiveLogEntry> FilteredLogs => AgentFilter == "error"
@@ -441,13 +451,36 @@
         try { await _agentHub.StartAsync(); } catch { }
     }
 
-    private async Task RefreshAll()
+    // Region overrides — same as map.js, prevents Nominatim from mapping regions to wrong countries
+    private static readonly Dictionary<string, (double Lat, double Lng)> _regionCoords = new(StringComparer.OrdinalIgnoreCase)
     {
-        IsLoading = true;
-        await LoadInitialDataAsync();
-        await LoadSystemHealthAsync();
-        IsLoading = false;
-    }
+        ["middle east"]      = (29.5,  42.5),
+        ["near east"]        = (29.5,  42.5),
+        ["eastern europe"]   = (50.0,  30.0),
+        ["western europe"]   = (48.0,  10.0),
+        ["central europe"]   = (48.0,  16.0),
+        ["northern europe"]  = (60.0,  15.0),
+        ["southern europe"]  = (42.0,  14.0),
+        ["central asia"]     = (45.0,  65.0),
+        ["south asia"]       = (23.0,  77.0),
+        ["southeast asia"]   = (10.0, 108.0),
+        ["east asia"]        = (35.0, 115.0),
+        ["sub-saharan africa"] = (0.0, 20.0),
+        ["north africa"]     = (27.0,  17.0),
+        ["west africa"]      = (12.0,  -2.0),
+        ["east africa"]      = (0.0,   37.0),
+        ["latin america"]    = (-15.0, -60.0),
+        ["south america"]    = (-15.0, -55.0),
+        ["central america"]  = (12.0, -85.0),
+        ["caribbean"]        = (18.0, -66.0),
+        ["balkans"]          = (43.0,  20.0),
+        ["caucasus"]         = (42.0,  45.0),
+        ["horn of africa"]   = (8.0,   42.0),
+        ["persian gulf"]     = (26.0,  52.0),
+        ["gulf states"]      = (24.0,  51.0),
+        ["red sea"]          = (20.0,  38.0),
+        ["mediterranean"]    = (38.0,  18.0),
+    };
 
     private async Task GeocodeEventsAsync()
     {
@@ -456,31 +489,93 @@
         StateHasChanged();
         try
         {
-            var client = HttpClientFactory.CreateClient();
-            client.BaseAddress = new Uri(Nav.BaseUri);
-            var response = await client.PostAsync("api/admin/geocode-events", null);
-            if (response.IsSuccessStatusCode)
+            // All active events — reset coords to reprocess with correct region lookup
+            var events = await Ctx.NewsEvents
+                .Where(e => e.IsActive && !e.IsDeleted)
+                .OrderByDescending(e => e.ImpactScore)
+                .Take(50)
+                .ToListAsync();
+
+            ANews.Domain.Interfaces.IAiProvider ai;
+            try { ai = await AiFactory.GetDefaultProviderAsync(); }
+            catch { _geocodeResult = "No hay proveedor de IA configurado"; return; }
+
+            var nominatim = HttpClientFactory.CreateClient("nominatim");
+            int enriched = 0;
+
+            foreach (var ev in events)
             {
-                var body = await response.Content.ReadAsStringAsync();
-                using var doc = System.Text.Json.JsonDocument.Parse(body);
-                var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "Completado";
-                _geocodeResult = msg;
+                // Step 1: get location from AI if missing
+                if (string.IsNullOrEmpty(ev.Location))
+                {
+                    var aiResp = await ai.CompleteAsync(new ANews.Domain.Interfaces.AiRequest
+                    {
+                        SystemPrompt = "You are a geography expert. Reply ONLY with the most specific geographic location name in English (city, country, or region like 'Latin America', 'Middle East'). If truly global with no location, reply: null",
+                        UserPrompt = "What is the main geographic location of this news event?\nTitle: " + ev.Title + "\nDescription: " + (ev.Description ?? ""),
+                        MaxTokens = 20,
+                        Temperature = 0,
+                        OperationTag = "location_enrichment"
+                    }, CancellationToken.None);
+
+                    if (!aiResp.Success) continue;
+                    var loc = aiResp.Content.Trim().Trim('"').Trim('.');
+                    if (string.IsNullOrWhiteSpace(loc) || loc.Equals("null", StringComparison.OrdinalIgnoreCase)) continue;
+                    ev.Location = loc;
+                }
+
+                // Step 2: geocode with region override first
+                var locKey = ev.Location!.Trim();
+                if (_regionCoords.TryGetValue(locKey, out var rc))
+                {
+                    ev.Latitude  = rc.Lat;
+                    ev.Longitude = rc.Lng;
+                }
+                else
+                {
+                    await Task.Delay(500);
+                    try
+                    {
+                        var geoRes = await nominatim.GetAsync($"search?q={Uri.EscapeDataString(locKey)}&format=json&limit=1&accept-language=en");
+                        if (geoRes.IsSuccessStatusCode)
+                        {
+                            var geoJson = await geoRes.Content.ReadAsStringAsync();
+                            using var doc = System.Text.Json.JsonDocument.Parse(geoJson);
+                            if (doc.RootElement.GetArrayLength() > 0)
+                            {
+                                var first = doc.RootElement[0];
+                                if (double.TryParse(first.GetProperty("lat").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lat))
+                                    ev.Latitude = lat;
+                                if (double.TryParse(first.GetProperty("lon").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon))
+                                    ev.Longitude = lon;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (ev.Latitude.HasValue)
+                {
+                    enriched++;
+                    _geocodeResult = $"Procesando... {enriched} eventos";
+                    StateHasChanged();
+                }
             }
-            else
-            {
-                _geocodeResult = $"Error {(int)response.StatusCode}";
-            }
+
+            await Ctx.SaveChangesAsync();
+            _geocodeResult = $"Completado: {enriched} de {events.Count} eventos geocodificados";
         }
-        catch (Exception ex)
-        {
-            _geocodeResult = $"Error: {ex.Message}";
-        }
-        finally
-        {
-            _geocoding = false;
-            StateHasChanged();
-        }
+        catch (Exception ex) { _geocodeResult = $"Error: {ex.Message}"; }
+        finally { _geocoding = false; StateHasChanged(); }
     }
+
+    private async Task RefreshAll()
+    {
+        IsLoading = true;
+        await LoadInitialDataAsync();
+        await LoadSystemHealthAsync();
+        IsLoading = false;
+    }
+
 
     private async Task TriggerAgentAsync(string agentName)
     {
