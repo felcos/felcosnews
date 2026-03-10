@@ -1,0 +1,224 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-layer-group"></i>
+            <span>Secciones</span>
+            <div class="panel-actions">
+                <span style="font-size:11px;color:var(--text-muted)">@_sections.Count secciones</span>
+                <button class="btn-sm" style="background:var(--accent);color:#fff" @onclick="ShowAdd">
+                    <i class="fa fa-plus"></i> Nueva
+                </button>
+            </div>
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th style="width:30px"></th>
+                <th>Nombre</th>
+                <th>Slug</th>
+                <th>Keywords</th>
+                <th>Eventos</th>
+                <th>Fuentes</th>
+                <th>Estado</th>
+                <th style="width:100px">Acciones</th>
+            </tr></thead>
+            <tbody>
+                @foreach (var s in _sections)
+                {
+                    <tr>
+                        <td><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:@s.Color"></span></td>
+                        <td>
+                            <i class="fa @s.IconClass" style="color:@s.Color;margin-right:6px"></i>
+                            <strong>@s.Name</strong>
+                            @if (s.IsDefault) { <span class="badge-default" style="margin-left:6px;font-size:9px">DEFAULT</span> }
+                            @if (s.IsSystemSection) { <span style="background:var(--border);color:var(--text-muted);padding:1px 5px;border-radius:3px;font-size:9px;margin-left:4px">SYS</span> }
+                        </td>
+                        <td style="font-size:11px;color:var(--text-muted);font-family:monospace">/@s.Slug</td>
+                        <td style="font-size:11px">@s.KeywordCount</td>
+                        <td>@s.EventCount</td>
+                        <td>@s.SourceCount</td>
+                        <td>
+                            <span style="color:@(s.IsPublic ? "var(--accent-green)" : "var(--text-muted)");font-size:11px">
+                                @(s.IsPublic ? "Publica" : "Privada")
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn-icon" @onclick="() => ShowEdit(s.Id)" title="Editar"><i class="fa fa-edit"></i></button>
+                            @if (!s.IsSystemSection)
+                            {
+                                <button class="btn-icon text-danger" @onclick="() => DeleteAsync(s.Id)"><i class="fa fa-trash"></i></button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (_showModal)
+{
+    <div class="modal-overlay" @onclick="() => _showModal = false">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(_editingId == 0 ? "Nueva seccion" : "Editar seccion")</h3>
+                <button @onclick="() => _showModal = false"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Nombre *</label>
+                        <input class="form-control" @bind="_form.Name" @oninput="AutoSlug" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Slug</label>
+                        <input class="form-control" @bind="_form.Slug" />
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Descripcion</label>
+                    <textarea class="form-control" @bind="_form.Description" rows="2"></textarea>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Color</label>
+                        <div style="display:flex;gap:6px;align-items:center">
+                            <input type="color" @bind="_form.Color" style="width:36px;height:30px;border:none;cursor:pointer" />
+                            <input class="form-control" @bind="_form.Color" style="flex:1" />
+                        </div>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Icono (FA)</label>
+                        <input class="form-control" @bind="_form.IconClass" placeholder="fa-newspaper" />
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Keywords (una por linea)</label>
+                    <textarea class="form-control" @bind="_form.KeywordsText" rows="4" placeholder="nuclear&#10;biologico&#10;quimico"></textarea>
+                </div>
+                <div style="display:flex;gap:20px">
+                    <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" @bind="_form.IsPublic" /> Publica
+                    </label>
+                    <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" @bind="_form.IsDefault" /> Por defecto
+                    </label>
+                </div>
+                @if (!string.IsNullOrEmpty(_formError))
+                { <div style="color:var(--accent-red);font-size:12px">@_formError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showModal = false">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">Guardar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SectionRow> _sections = [];
+    private bool _showModal;
+    private int _editingId;
+    private string? _formError;
+    private SectionForm _form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _sections = await Ctx.NewsSections
+            .Select(s => new SectionRow(
+                s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2",
+                s.IconClass ?? "fa-newspaper", s.Keywords.Count,
+                s.IsPublic, s.IsDefault, s.IsSystemSection,
+                s.Events.Count(e => e.IsActive), s.Sources.Count(src => src.IsActive)))
+            .ToListAsync();
+    }
+
+    private void ShowAdd()
+    {
+        _form = new SectionForm { Color = "#4a90e2", IconClass = "fa-newspaper", IsPublic = true };
+        _editingId = 0; _formError = null; _showModal = true;
+    }
+
+    private async Task ShowEdit(int id)
+    {
+        var s = await Ctx.NewsSections.FindAsync(id);
+        if (s == null) return;
+        _form = new SectionForm
+        {
+            Name = s.Name, Slug = s.Slug, Description = s.Description,
+            Color = s.Color ?? "#4a90e2", IconClass = s.IconClass ?? "fa-newspaper",
+            KeywordsText = string.Join("\n", s.Keywords),
+            IsPublic = s.IsPublic, IsDefault = s.IsDefault
+        };
+        _editingId = id; _formError = null; _showModal = true;
+    }
+
+    private void AutoSlug(ChangeEventArgs e)
+    {
+        if (_editingId == 0)
+            _form.Slug = (e.Value?.ToString() ?? "").ToLower()
+                .Replace(" ", "-").Replace("a\u0301", "a").Replace("e\u0301", "e")
+                .Replace("i\u0301", "i").Replace("o\u0301", "o").Replace("u\u0301", "u");
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Name) || string.IsNullOrWhiteSpace(_form.Slug))
+        { _formError = "Nombre y slug obligatorios"; return; }
+
+        var keywords = (_form.KeywordsText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.Trim().ToLower()).Where(k => !string.IsNullOrEmpty(k)).ToList();
+
+        if (_editingId == 0)
+        {
+            Ctx.NewsSections.Add(new NewsSection
+            {
+                Name = _form.Name, Slug = _form.Slug, Description = _form.Description,
+                Color = _form.Color, IconClass = _form.IconClass, Keywords = keywords,
+                IsPublic = _form.IsPublic, IsDefault = _form.IsDefault
+            });
+        }
+        else
+        {
+            var s = await Ctx.NewsSections.FindAsync(_editingId);
+            if (s != null)
+            {
+                s.Name = _form.Name; s.Slug = _form.Slug; s.Description = _form.Description;
+                s.Color = _form.Color; s.IconClass = _form.IconClass; s.Keywords = keywords;
+                s.IsPublic = _form.IsPublic; s.IsDefault = _form.IsDefault;
+            }
+        }
+        await Ctx.SaveChangesAsync();
+        await LoadAsync();
+        _showModal = false;
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar esta seccion?")) return;
+        var s = await Ctx.NewsSections.FindAsync(id);
+        if (s != null) { s.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    record SectionRow(int Id, string Name, string Slug, string Color, string IconClass,
+        int KeywordCount, bool IsPublic, bool IsDefault, bool IsSystemSection, int EventCount, int SourceCount);
+
+    class SectionForm
+    {
+        public string Name { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public string? Description { get; set; }
+        public string Color { get; set; } = "#4a90e2";
+        public string IconClass { get; set; } = "fa-newspaper";
+        public string? KeywordsText { get; set; }
+        public bool IsPublic { get; set; } = true;
+        public bool IsDefault { get; set; }
+    }
+}

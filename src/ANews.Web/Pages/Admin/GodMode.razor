@@ -89,19 +89,41 @@
 
         <!-- Sidebar nav -->
         <nav class="gm-sidebar">
-            <button class="gm-nav-btn @(_section == "dashboard" ? "active" : "")" @onclick='@(()=>_section="dashboard")'>
+            <button class="gm-nav-btn @(_section == "dashboard" ? "active" : "")" @onclick='@(()=>SetSection("dashboard"))'>
                 <i class="fa fa-th-large"></i><span>Panel</span>
             </button>
-            <button class="gm-nav-btn @(_section == "agentes" ? "active" : "")" @onclick='@(()=>_section="agentes")'>
+            <button class="gm-nav-btn @(_section == "agentes" ? "active" : "")" @onclick='@(()=>SetSection("agentes"))'>
                 <i class="fa fa-robot"></i><span>Agentes</span>
             </button>
-            <button class="gm-nav-btn @(_section == "fuentes" ? "active" : "")" @onclick='@(()=>_section="fuentes")'>
+            <button class="gm-nav-btn @(_section == "noticias" ? "active" : "")" @onclick='@(()=>SetSection("noticias"))'>
+                <i class="fa fa-newspaper"></i><span>Noticias</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "secciones" ? "active" : "")" @onclick='@(()=>SetSection("secciones"))'>
+                <i class="fa fa-layer-group"></i><span>Secciones</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "fuentes" ? "active" : "")" @onclick='@(()=>SetSection("fuentes"))'>
                 <i class="fa fa-rss"></i><span>Fuentes</span>
             </button>
             <div class="gm-nav-sep"></div>
-            <button class="gm-nav-btn @(_section == "sistema" ? "active" : "")" @onclick='@(()=>_section="sistema")'>
-                <i class="fa fa-cog"></i><span>Sistema</span>
+            <button class="gm-nav-btn @(_section == "usuarios" ? "active" : "")" @onclick='@(()=>SetSection("usuarios"))'>
+                <i class="fa fa-users"></i><span>Usuarios</span>
             </button>
+            <button class="gm-nav-btn @(_section == "ia" ? "active" : "")" @onclick='@(()=>SetSection("ia"))'>
+                <i class="fa fa-brain"></i><span>IA</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "costes" ? "active" : "")" @onclick='@(()=>SetSection("costes"))'>
+                <i class="fa fa-dollar-sign"></i><span>Costes</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "auditoria" ? "active" : "")" @onclick='@(()=>SetSection("auditoria"))'>
+                <i class="fa fa-shield-alt"></i><span>Auditoría</span>
+            </button>
+            <div class="gm-nav-sep"></div>
+            <a href="/" class="gm-nav-btn" style="margin-top:auto">
+                <i class="fa fa-globe"></i><span>Ver web</span>
+            </a>
+            <a href="/logout" class="gm-nav-btn">
+                <i class="fa fa-sign-out-alt"></i><span>Salir</span>
+            </a>
         </nav>
 
         <!-- Main content area -->
@@ -212,16 +234,28 @@
                                 <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
                                 @(_geocoding ? "Geocodificando..." : "Geocodificar eventos")
                             </button>
-                            <button class="btn-trigger" @onclick='() => TriggerAgentAsync("EventDetectorAgent")'>
-                                <i class="fa fa-brain"></i> Reclasificar artículos
+                            <button class="btn-trigger @(AgentTriggers.FirstOrDefault(a => a.Name == "EventDetectorAgent")?.IsRunning == true ? "running" : "")"
+                                    @onclick='() => TriggerAgentAsync("EventDetectorAgent")'
+                                    disabled="@(AgentTriggers.FirstOrDefault(a => a.Name == "EventDetectorAgent")?.IsRunning == true)">
+                                <i class="fa @(AgentTriggers.FirstOrDefault(a => a.Name == "EventDetectorAgent")?.IsRunning == true ? "fa-spinner fa-spin" : "fa-brain")"></i>
+                                Reclasificar artículos
                             </button>
-                            <button class="btn-trigger" @onclick='() => TriggerAgentAsync("NewsScannerAgent")'>
-                                <i class="fa fa-rss"></i> Escanear fuentes
+                            <button class="btn-trigger @(AgentTriggers.FirstOrDefault(a => a.Name == "NewsScannerAgent")?.IsRunning == true ? "running" : "")"
+                                    @onclick='() => TriggerAgentAsync("NewsScannerAgent")'
+                                    disabled="@(AgentTriggers.FirstOrDefault(a => a.Name == "NewsScannerAgent")?.IsRunning == true)">
+                                <i class="fa @(AgentTriggers.FirstOrDefault(a => a.Name == "NewsScannerAgent")?.IsRunning == true ? "fa-spinner fa-spin" : "fa-rss")"></i>
+                                Escanear fuentes
                             </button>
                             @if (_geocodeResult != null)
                             {
                                 <span style="font-size:12px;color:var(--accent-green);align-self:center">
                                     <i class="fa fa-check-circle"></i> @_geocodeResult
+                                </span>
+                            }
+                            @if (_quickActionResult != null)
+                            {
+                                <span style="font-size:12px;color:var(--accent);align-self:center">
+                                    <i class="fa fa-info-circle"></i> @_quickActionResult
                                 </span>
                             }
                         </div>
@@ -475,69 +509,40 @@
                 </div>
             }
 
-            <!-- ═══════ SISTEMA section ═══════ -->
-            @if (_section == "sistema")
+            <!-- ═══════ NOTICIAS section ═══════ -->
+            @if (_section == "noticias")
             {
-                <div class="gm-grid">
+                <ANews.Web.Components.Admin.GmNews />
+            }
 
-                    <!-- Proveedores IA -->
-                    <div class="gm-panel gm-panel-wide">
-                        <div class="panel-header">
-                            <i class="fa fa-brain"></i>
-                            <span>Proveedores de IA</span>
-                            <a href="/admin/ai" class="panel-link" @onclick:preventDefault @onclick='() => Nav.NavigateTo("/admin/ai", true)'>Gestionar completo</a>
-                        </div>
-                        <table class="gm-table">
-                            <thead><tr>
-                                <th>Proveedor</th><th>Modelo</th><th>Coste hoy</th>
-                                <th>Coste mes</th><th>Max tokens</th><th>Estado</th>
-                            </tr></thead>
-                            <tbody>
-                                @foreach (var p in _aiProviders)
-                                {
-                                    <tr>
-                                        <td>
-                                            @p.Name
-                                            @if (p.IsDefault) { <span class="badge-default" style="margin-left:6px">default</span> }
-                                        </td>
-                                        <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">@p.Model</td>
-                                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostToday.ToString("F4")</td>
-                                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostMonth.ToString("F4")</td>
-                                        <td>@p.MaxTokens</td>
-                                        <td>
-                                            <span style="color:@(p.IsActive ? "var(--accent-green)" : "var(--text-muted)")">
-                                                @(p.IsActive ? "Activo" : "Inactivo")
-                                            </span>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
+            <!-- ═══════ SECCIONES section ═══════ -->
+            @if (_section == "secciones")
+            {
+                <ANews.Web.Components.Admin.GmSections />
+            }
 
-                    <!-- Audit log -->
-                    <div class="gm-panel gm-panel-wide">
-                        <div class="panel-header">
-                            <i class="fa fa-clipboard-list"></i>
-                            <span>Audit Log</span>
-                            <span style="font-size:11px;color:var(--text-muted)">Últimas 100 acciones de admin</span>
-                        </div>
-                        <div class="audit-list">
-                            @foreach (var entry in _auditLogs)
-                            {
-                                <div class="audit-row">
-                                    <span class="audit-time">@entry.CreatedAt.ToString("dd/MM HH:mm")</span>
-                                    <span class="audit-user">@entry.UserName</span>
-                                    <span class="audit-action">@entry.Action</span>
-                                    <span class="audit-entity">@entry.EntityName</span>
-                                </div>
-                            }
-                            @if (!_auditLogs.Any())
-                            { <div style="padding:20px;text-align:center;color:var(--text-muted)">Sin entradas de auditoría</div> }
-                        </div>
-                    </div>
+            <!-- ═══════ USUARIOS section ═══════ -->
+            @if (_section == "usuarios")
+            {
+                <ANews.Web.Components.Admin.GmUsers />
+            }
 
-                </div>
+            <!-- ═══════ IA section ═══════ -->
+            @if (_section == "ia")
+            {
+                <ANews.Web.Components.Admin.GmAiProviders />
+            }
+
+            <!-- ═══════ COSTES section ═══════ -->
+            @if (_section == "costes")
+            {
+                <ANews.Web.Components.Admin.GmCosts />
+            }
+
+            <!-- ═══════ AUDITORIA section ═══════ -->
+            @if (_section == "auditoria")
+            {
+                <ANews.Web.Components.Admin.GmAudit />
             }
 
         </div><!-- /gm-content -->
@@ -628,6 +633,8 @@
     private string _section = "dashboard";
     private DateTime _now = DateTime.Now;
 
+    private void SetSection(string section) { _section = section; }
+
     // KPI flash
     private bool _kpiFlash;
 
@@ -653,7 +660,6 @@
     private List<AgentConfig> _agentConfigs = [];
     private List<SourceHealthItem> _sources = [];
     private List<AiProviderConfig> _aiProviders = [];
-    private List<AuditEntry> _auditLogs = [];
     private decimal TotalCostSelected;
     private bool _geocoding;
     private string? _geocodeResult;
@@ -696,7 +702,6 @@
             await LoadAgentConfigsAsync();
             await LoadSourcesAsync();
             await LoadAiProvidersAsync();
-            await LoadAuditLogsAsync();
         }
         catch (Exception ex)
         {
@@ -866,13 +871,6 @@
         _aiProviders = await Ctx.AiProviderConfigs.OrderByDescending(p => p.IsDefault).ToListAsync();
     }
 
-    private async Task LoadAuditLogsAsync()
-    {
-        _auditLogs = await Ctx.AuditLogs
-            .OrderByDescending(l => l.Timestamp).Take(100)
-            .Select(l => new AuditEntry(l.Action, l.EntityType, l.Timestamp, l.UserEmail))
-            .ToListAsync();
-    }
 
     private async Task SetupHubsAsync()
     {
@@ -1144,18 +1142,28 @@
     }
 
     // ── Agent triggers ───────────────────────────────
+    private string? _quickActionResult;
+
     private async Task TriggerAgentAsync(string agentName)
     {
         var trigger = AgentTriggers.FirstOrDefault(a => a.Name == agentName);
         if (trigger != null) trigger.IsRunning = true;
+        _quickActionResult = $"Activando {agentName}...";
         StateHasChanged();
         try
         {
             trigger?.Agent?.TriggerNow();
             LiveLogs.Add(new(agentName, "Info", $"Agente {agentName} activado manualmente", DateTime.Now));
-            await Task.Delay(500);
+            _quickActionResult = $"{agentName} activado. Ejecutando en segundo plano...";
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(3000);
+            _quickActionResult = null;
         }
-        catch (Exception ex) { LiveLogs.Add(new(agentName, "Error", $"Error: {ex.Message}", DateTime.Now)); }
+        catch (Exception ex)
+        {
+            LiveLogs.Add(new(agentName, "Error", $"Error: {ex.Message}", DateTime.Now));
+            _quickActionResult = $"Error: {ex.Message}";
+        }
         finally { if (trigger != null) trigger.IsRunning = false; await InvokeAsync(StateHasChanged); }
     }
 
@@ -1252,7 +1260,6 @@
     record HealthItem(string Name, bool IsOk, string Value);
     record ExecutionLogItem(string Level, string Message, DateTime Timestamp);
     record SourceHealthItem(int Id, string Name, string SectionName, int SuccessfulScans, int FailedScans, int ReliabilityPct, string HealthStatus, DateTime? LastScannedAt, bool IsActive);
-    record AuditEntry(string Action, string EntityName, DateTime CreatedAt, string UserName);
     class AgentTriggerItem(string name, string displayName, ANews.Infrastructure.Agents.BaseAgent? agent)
     {
         public string Name = name;

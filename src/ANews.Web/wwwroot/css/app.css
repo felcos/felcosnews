@@ -263,6 +263,15 @@ a:hover { color: var(--accent-green); }
 }
 .search-clear:hover { color: var(--text); }
 
+.time-slider {
+  display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+  border-left: 1px solid var(--border); white-space: nowrap;
+}
+.slider-range { height: 4px; cursor: pointer; }
+.slider-label {
+  font-size: 11px; color: var(--accent); font-weight: 600; min-width: 28px;
+}
+
 /* Content */
 .content-area { flex: 1; overflow-y: auto; padding: 20px; }
 

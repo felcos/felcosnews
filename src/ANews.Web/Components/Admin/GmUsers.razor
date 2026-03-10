@@ -1,0 +1,197 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject Microsoft.AspNetCore.Identity.UserManager<ANews.Infrastructure.Data.ApplicationUser> UserManager
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-users"></i>
+            <span>Usuarios</span>
+            <div class="panel-actions">
+                <span style="font-size:11px;color:var(--text-muted)">
+                    @_users.Count total · @_users.Count(u => u.IsActive) activos
+                </span>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center">
+            <input class="form-control" style="max-width:200px;height:30px;font-size:12px"
+                   @bind="_search" @bind:event="oninput" @bind:after="ApplyFilter" placeholder="Buscar..." />
+            <select class="form-control" style="max-width:140px;height:30px;font-size:12px" @onchange="OnRoleFilter">
+                <option value="">Todos los roles</option>
+                @foreach (var r in Enum.GetValues<UserRole>())
+                { <option value="@r">@r</option> }
+            </select>
+            <label style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--text-muted)">
+                <input type="checkbox" @bind="_showInactive" @bind:after="ApplyFilter" /> Inactivos
+            </label>
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th style="width:40px">ID</th>
+                <th>Usuario</th>
+                <th>Email</th>
+                <th>Rol</th>
+                <th>Registro</th>
+                <th>Ultimo acceso</th>
+                <th>Estado</th>
+                <th style="width:80px">Acciones</th>
+            </tr></thead>
+            <tbody>
+                @foreach (var u in _filtered.Skip((_page - 1) * PageSize).Take(PageSize))
+                {
+                    <tr style="@(!u.IsActive ? "opacity:0.5" : "")">
+                        <td style="color:var(--text-muted)">#@u.Id</td>
+                        <td><strong>@u.DisplayName</strong></td>
+                        <td style="font-size:11px">@u.Email</td>
+                        <td><span class="priority-badge" style="font-size:10px">@u.Role</span></td>
+                        <td style="font-size:11px;color:var(--text-muted)">@u.CreatedAt.ToString("dd/MM/yyyy")</td>
+                        <td style="font-size:11px;color:var(--text-muted)">@(u.LastLoginAt?.ToString("dd/MM HH:mm") ?? "Nunca")</td>
+                        <td>
+                            <span style="color:@(u.IsActive ? "var(--accent-green)" : "var(--text-muted)");font-size:11px">
+                                @(u.IsActive ? "Activo" : "Inactivo")
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn-icon" @onclick="() => ShowEditUser(u)" title="Editar"><i class="fa fa-edit"></i></button>
+                            <button class="btn-icon" @onclick="() => ToggleUserAsync(u.Id)" title="@(u.IsActive ? "Desactivar" : "Activar")">
+                                <i class="fa @(u.IsActive ? "fa-lock" : "fa-unlock")"></i>
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+            <button class="btn-sm" @onclick="() => { if (_page > 1) _page--; }" disabled="@(_page <= 1)"><i class="fa fa-chevron-left"></i></button>
+            <span>@_page / @TotalPages</span>
+            <button class="btn-sm" @onclick="() => { if (_page < TotalPages) _page++; }" disabled="@(_page >= TotalPages)"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    </div>
+</div>
+
+@if (_showEdit && _editingUser != null)
+{
+    <div class="modal-overlay" @onclick="() => _showEdit = false">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Editar: @_editingUser.Email</h3>
+                <button @onclick="() => _showEdit = false"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Nombre visible</label>
+                    <input class="form-control" @bind="_editForm.DisplayName" />
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Rol</label>
+                    <select class="form-control" @bind="_editForm.Role">
+                        @foreach (var r in Enum.GetValues<UserRole>())
+                        { <option value="@r">@r</option> }
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Nueva contrasena (vacio = no cambiar)</label>
+                    <input type="password" class="form-control" @bind="_editForm.NewPassword" />
+                </div>
+                @if (!string.IsNullOrEmpty(_editError))
+                { <div style="color:var(--accent-red);font-size:12px">@_editError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showEdit = false">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveUserAsync">Guardar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<UserRow> _users = [];
+    private List<UserRow> _filtered = [];
+    private string _search = "";
+    private string? _roleFilter;
+    private bool _showInactive;
+    private int _page = 1;
+    private const int PageSize = 25;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_filtered.Count / (double)PageSize));
+
+    private bool _showEdit;
+    private UserRow? _editingUser;
+    private UserEditForm _editForm = new();
+    private string? _editError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _users = await Ctx.Users
+            .Select(u => new UserRow(u.Id, u.DisplayName ?? "", u.Email ?? "",
+                u.Role.ToString(), u.IsActive, u.CreatedAt, u.LastLoginAt))
+            .ToListAsync();
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        _filtered = _users
+            .Where(u => _showInactive || u.IsActive)
+            .Where(u => string.IsNullOrEmpty(_search) ||
+                u.Email.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                u.DisplayName.Contains(_search, StringComparison.OrdinalIgnoreCase))
+            .Where(u => string.IsNullOrEmpty(_roleFilter) || u.Role == _roleFilter)
+            .ToList();
+        _page = 1;
+    }
+
+    private void OnRoleFilter(ChangeEventArgs e) { _roleFilter = e.Value?.ToString(); ApplyFilter(); }
+
+    private async Task ToggleUserAsync(int id)
+    {
+        var user = await UserManager.FindByIdAsync(id.ToString());
+        if (user != null)
+        {
+            user.IsActive = !user.IsActive;
+            await UserManager.UpdateAsync(user);
+            var row = _users.FirstOrDefault(u => u.Id == id);
+            if (row != null) _users[_users.IndexOf(row)] = row with { IsActive = user.IsActive };
+            ApplyFilter();
+        }
+    }
+
+    private void ShowEditUser(UserRow u)
+    {
+        _editingUser = u;
+        _editForm = new UserEditForm { DisplayName = u.DisplayName, Role = Enum.Parse<UserRole>(u.Role) };
+        _editError = null; _showEdit = true;
+    }
+
+    private async Task SaveUserAsync()
+    {
+        if (_editingUser == null) return;
+        var user = await UserManager.FindByIdAsync(_editingUser.Id.ToString());
+        if (user == null) return;
+        user.DisplayName = _editForm.DisplayName;
+        user.Role = _editForm.Role;
+        await UserManager.UpdateAsync(user);
+        if (!string.IsNullOrWhiteSpace(_editForm.NewPassword))
+        {
+            var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+            var result = await UserManager.ResetPasswordAsync(user, token, _editForm.NewPassword);
+            if (!result.Succeeded) { _editError = string.Join(", ", result.Errors.Select(e => e.Description)); return; }
+        }
+        _showEdit = false;
+        await OnInitializedAsync();
+    }
+
+    record UserRow(int Id, string DisplayName, string Email, string Role,
+        bool IsActive, DateTime CreatedAt, DateTime? LastLoginAt);
+
+    class UserEditForm
+    {
+        public string DisplayName { get; set; } = "";
+        public UserRole Role { get; set; } = UserRole.User;
+        public string? NewPassword { get; set; }
+    }
+}

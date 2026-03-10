@@ -1,0 +1,309 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
+@inject ANews.Infrastructure.Security.KeyEncryptionService KeyEncryption
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.AI
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-brain"></i>
+            <span>Proveedores de IA</span>
+            <div class="panel-actions">
+                <span style="font-size:11px;color:var(--text-muted)">@_providers.Count proveedores</span>
+                <button class="btn-sm" style="background:var(--accent);color:#fff" @onclick="ShowAddModal">
+                    <i class="fa fa-plus"></i> Nuevo
+                </button>
+            </div>
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th>Nombre</th>
+                <th>Proveedor</th>
+                <th>Modelo</th>
+                <th>Coste hoy</th>
+                <th>Coste mes</th>
+                <th>Budget</th>
+                <th>Estado</th>
+                <th style="width:140px">Acciones</th>
+            </tr></thead>
+            <tbody>
+                @foreach (var p in _providers)
+                {
+                    <tr>
+                        <td>
+                            <strong>@p.Name</strong>
+                            @if (p.IsDefault) { <span class="badge-default" style="margin-left:6px;font-size:9px">DEFAULT</span> }
+                        </td>
+                        <td style="font-size:11px">@p.Provider</td>
+                        <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">@p.Model</td>
+                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostToday.ToString("F4")</td>
+                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostMonth.ToString("F4")</td>
+                        <td style="font-size:11px">$@(p.MonthlyBudgetLimit > 0 ? p.MonthlyBudgetLimit.ToString("F0") : "∞")</td>
+                        <td>
+                            <span style="color:@(p.IsActive ? "var(--accent-green)" : "var(--text-muted)");font-size:11px">
+                                @(p.IsActive ? "Activo" : "Inactivo")
+                            </span>
+                        </td>
+                        <td>
+                            @if (!p.IsDefault)
+                            {
+                                <button class="btn-icon" @onclick="() => SetDefaultAsync(p.Id)" title="Default"><i class="fa fa-star"></i></button>
+                            }
+                            <button class="btn-icon" @onclick="() => TestConnectionAsync(p.Id)" title="Test" disabled="@(_testingId == p.Id)">
+                                <i class="fa @(_testingId == p.Id ? "fa-spinner fa-spin" : "fa-plug")"></i>
+                            </button>
+                            <button class="btn-icon" @onclick="() => ShowEditModal(p)" title="Editar"><i class="fa fa-edit"></i></button>
+                            <button class="btn-icon text-danger" @onclick="() => DeleteAsync(p.Id)"><i class="fa fa-trash"></i></button>
+                        </td>
+                    </tr>
+                    @if (_testResults.TryGetValue(p.Id, out var result))
+                    {
+                        <tr><td colspan="8" style="padding:4px 16px">
+                            <span style="font-size:11px;color:@(result.Ok ? "var(--accent-green)" : "var(--accent-red)")">
+                                <i class="fa @(result.Ok ? "fa-check-circle" : "fa-times-circle")"></i> @result.Message
+                            </span>
+                        </td></tr>
+                    }
+                }
+            </tbody>
+        </table>
+        @if (!_providers.Any())
+        {
+            <div style="padding:30px;text-align:center;color:var(--text-muted)">
+                <i class="fa fa-robot" style="font-size:24px;margin-bottom:8px"></i>
+                <p>Sin proveedores configurados</p>
+            </div>
+        }
+    </div>
+</div>
+
+@if (_showModal)
+{
+    <div class="modal-overlay" @onclick="() => _showModal = false">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(_editingId == 0 ? "Nuevo proveedor IA" : "Editar proveedor")</h3>
+                <button @onclick="() => _showModal = false"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Nombre *</label>
+                        <input class="form-control" @bind="_form.Name" placeholder="Ej: Claude Principal" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Proveedor</label>
+                        <select class="form-control" @bind="_form.Provider">
+                            @foreach (var p in Enum.GetValues<AiProviderType>())
+                            { <option value="@p">@p</option> }
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Modelo *</label>
+                    <input class="form-control" @bind="_form.Model" placeholder="@GetModelPlaceholder(_form.Provider)" />
+                    <small style="color:var(--text-muted);font-size:10px">@GetModelHint(_form.Provider)</small>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">API Key</label>
+                    <input type="password" class="form-control" @bind="_form.ApiKey"
+                           placeholder="@(_editingId > 0 ? "Vacio = mantener actual" : "sk-...")" />
+                </div>
+                @if (_form.Provider is AiProviderType.Kimi or AiProviderType.Custom or AiProviderType.Groq)
+                {
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Base URL</label>
+                        <input class="form-control" @bind="_form.BaseUrl" />
+                    </div>
+                }
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">$/1K in</label>
+                        <input type="number" step="0.000001" class="form-control" @bind="_form.CostInput" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">$/1K out</label>
+                        <input type="number" step="0.000001" class="form-control" @bind="_form.CostOutput" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Budget/mes</label>
+                        <input type="number" class="form-control" @bind="_form.MonthlyBudget" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Rate/min</label>
+                        <input type="number" class="form-control" @bind="_form.RateLimit" />
+                    </div>
+                </div>
+                <div style="display:flex;gap:20px">
+                    <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" @bind="_form.IsActive" /> Activo
+                    </label>
+                    <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" @bind="_form.IsDefault" /> Default
+                    </label>
+                </div>
+                @if (!string.IsNullOrEmpty(_formError))
+                { <div style="color:var(--accent-red);font-size:12px">@_formError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showModal = false">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                    @(_saving ? "Guardando..." : "Guardar")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AiProviderConfig> _providers = [];
+    private bool _showModal;
+    private int _editingId;
+    private bool _saving;
+    private string? _formError;
+    private int? _testingId;
+    private Dictionary<int, (bool Ok, string Message)> _testResults = new();
+    private ProviderForm _form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _providers = await Ctx.AiProviderConfigs
+            .OrderByDescending(p => p.IsDefault).ThenBy(p => p.Name).ToListAsync();
+    }
+
+    private void ShowAddModal()
+    {
+        _form = new ProviderForm { CostInput = 0.003m, CostOutput = 0.015m, RateLimit = 60, IsActive = true };
+        _editingId = 0; _formError = null; _showModal = true;
+    }
+
+    private void ShowEditModal(AiProviderConfig p)
+    {
+        _form = new ProviderForm
+        {
+            Name = p.Name, Provider = p.Provider, Model = p.Model,
+            BaseUrl = p.BaseUrl, CostInput = p.CostPerInputTokenK,
+            CostOutput = p.CostPerOutputTokenK, MonthlyBudget = p.MonthlyBudgetLimit,
+            RateLimit = p.RateLimitPerMinute, IsActive = p.IsActive, IsDefault = p.IsDefault
+        };
+        _editingId = p.Id; _formError = null; _showModal = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Name) || string.IsNullOrWhiteSpace(_form.Model))
+        { _formError = "Nombre y modelo obligatorios"; return; }
+        _saving = true;
+        try
+        {
+            if (_editingId == 0)
+            {
+                if (string.IsNullOrWhiteSpace(_form.ApiKey))
+                { _formError = "API Key obligatoria para nuevos proveedores"; return; }
+                if (_form.IsDefault)
+                    await Ctx.AiProviderConfigs.Where(p => p.IsDefault)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
+                Ctx.AiProviderConfigs.Add(new AiProviderConfig
+                {
+                    Name = _form.Name, Provider = _form.Provider, Model = _form.Model,
+                    EncryptedApiKey = KeyEncryption.Encrypt(_form.ApiKey!), BaseUrl = _form.BaseUrl,
+                    CostPerInputTokenK = _form.CostInput, CostPerOutputTokenK = _form.CostOutput,
+                    MonthlyBudgetLimit = _form.MonthlyBudget, RateLimitPerMinute = _form.RateLimit,
+                    IsActive = _form.IsActive, IsDefault = _form.IsDefault
+                });
+            }
+            else
+            {
+                var existing = await Ctx.AiProviderConfigs.FindAsync(_editingId);
+                if (existing == null) return;
+                if (_form.IsDefault && !existing.IsDefault)
+                    await Ctx.AiProviderConfigs.Where(p => p.IsDefault && p.Id != _editingId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
+                existing.Name = _form.Name; existing.Provider = _form.Provider;
+                existing.Model = _form.Model; existing.BaseUrl = _form.BaseUrl;
+                existing.CostPerInputTokenK = _form.CostInput; existing.CostPerOutputTokenK = _form.CostOutput;
+                existing.MonthlyBudgetLimit = _form.MonthlyBudget; existing.RateLimitPerMinute = _form.RateLimit;
+                existing.IsActive = _form.IsActive; existing.IsDefault = _form.IsDefault;
+                if (!string.IsNullOrWhiteSpace(_form.ApiKey))
+                    existing.EncryptedApiKey = KeyEncryption.Encrypt(_form.ApiKey);
+            }
+            await Ctx.SaveChangesAsync();
+            await LoadAsync();
+            _showModal = false;
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task SetDefaultAsync(int id)
+    {
+        await Ctx.AiProviderConfigs.Where(p => p.IsDefault)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
+        await Ctx.AiProviderConfigs.Where(p => p.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, true));
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este proveedor?")) return;
+        await Ctx.AiProviderConfigs.Where(p => p.Id == id).ExecuteDeleteAsync();
+        await LoadAsync();
+    }
+
+    private async Task TestConnectionAsync(int id)
+    {
+        _testingId = id; _testResults.Remove(id); StateHasChanged();
+        try
+        {
+            var config = await Ctx.AiProviderConfigs.FindAsync(id);
+            if (config == null) return;
+            var provider = AiFactory.CreateProvider(config.Provider, KeyEncryption.Decrypt(config.EncryptedApiKey), config.Model, config.BaseUrl);
+            var ok = await provider.TestConnectionAsync();
+            _testResults[id] = (ok, ok ? "Conexion exitosa" : "Error de conexion");
+        }
+        catch (Exception ex) { _testResults[id] = (false, ex.Message); }
+        finally { _testingId = null; StateHasChanged(); }
+    }
+
+    private static string GetModelPlaceholder(AiProviderType p) => p switch
+    {
+        AiProviderType.Claude => "claude-sonnet-4-6",
+        AiProviderType.OpenAI => "gpt-4o",
+        AiProviderType.Kimi => "moonshot-v1-8k",
+        AiProviderType.Gemini => "gemini-2.0-flash",
+        AiProviderType.Groq => "llama-3.3-70b-versatile",
+        _ => "model-name"
+    };
+
+    private static string GetModelHint(AiProviderType p) => p switch
+    {
+        AiProviderType.Claude => "claude-sonnet-4-6 / claude-opus-4-6 / claude-haiku-4-5",
+        AiProviderType.OpenAI => "gpt-4o / gpt-4o-mini / gpt-4-turbo",
+        AiProviderType.Kimi => "moonshot-v1-8k / moonshot-v1-32k / moonshot-v1-128k",
+        AiProviderType.Gemini => "gemini-2.0-flash / gemini-1.5-pro / gemini-1.5-flash",
+        AiProviderType.Groq => "llama-3.3-70b-versatile / mixtral-8x7b",
+        _ => "URL base requerida para custom"
+    };
+
+    class ProviderForm
+    {
+        public string Name { get; set; } = "";
+        public AiProviderType Provider { get; set; } = AiProviderType.Claude;
+        public string Model { get; set; } = "";
+        public string? ApiKey { get; set; }
+        public string? BaseUrl { get; set; }
+        public decimal CostInput { get; set; }
+        public decimal CostOutput { get; set; }
+        public decimal MonthlyBudget { get; set; }
+        public int RateLimit { get; set; } = 60;
+        public bool IsActive { get; set; } = true;
+        public bool IsDefault { get; set; }
+    }
+}

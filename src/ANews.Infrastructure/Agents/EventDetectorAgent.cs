@@ -142,23 +142,30 @@ public class EventDetectorAgent : BaseAgent
 
         int totalRerouted = 0;
 
-        // Batch: 80 articles per AI call (just titles — cheap)
-        var batches = articles.Chunk(80).ToList();
+        // Batch: 40 articles per AI call (titles + summaries)
+        var batches = articles.Chunk(40).ToList();
         foreach (var batch in batches)
         {
             if (ct.IsCancellationRequested) break;
             try
             {
                 var articleLines = batch
-                    .Select((a, i) => $"{i + 1}. {a.Title}")
+                    .Select((a, i) =>
+                    {
+                        var summary = (a.Summary ?? a.Content ?? "");
+                        if (summary.Length > 200) summary = summary[..200];
+                        return $"{i + 1}. [{a.SourceName}] {a.Title}" +
+                               (string.IsNullOrWhiteSpace(summary) ? "" : $"\n   > {summary}");
+                    })
                     .ToList();
 
                 var prompt =
                     "Eres el jefe de clasificacion de una agencia de noticias mundial.\n" +
-                    "Tu unica tarea: asignar CADA articulo a la seccion mas apropiada.\n\n" +
+                    "Tu unica tarea: asignar CADA articulo a la seccion mas apropiada.\n" +
+                    "LEE CUIDADOSAMENTE el titulo Y el resumen para decidir la seccion correcta.\n\n" +
                     "SECCIONES DISPONIBLES (slug: descripcion):\n" +
                     sectionDesc + "\n\n" +
-                    "REGLAS CRITICAS DE CLASIFICACION:\n" +
+                    "REGLAS CRITICAS DE CLASIFICACION (lee el contenido, no solo el titulo):\n" +
                     "- Guerras, conflictos armados, diplomacia, relaciones entre paises → mundo\n" +
                     "- Politica nacional (elecciones, gobierno, leyes, partidos) → politica\n" +
                     "- Empresas, mercados, finanzas, inmobiliario, empleo, startups → economia\n" +
@@ -172,15 +179,22 @@ public class EventDetectorAgent : BaseAgent
                     "- Celebrities, prensa rosa, realeza, bodas de famosos, reality TV, farandula → gente\n" +
                     "- Editoriales, columnas de opinion, analisis de fondo → opinion\n" +
                     "- Breaking news, emergencias en desarrollo, alertas urgentes → ultimahora\n\n" +
+                    "ERRORES COMUNES A EVITAR:\n" +
+                    "- Un ataque militar es 'seguridad' o 'mundo', NO 'tecnologia'\n" +
+                    "- Un juicio penal es 'justicia', NO 'politica' (salvo que sea sobre politicos)\n" +
+                    "- Una epidemia es 'ciencia', NO 'sociedad'\n" +
+                    "- Un hackeo/ciberataque es 'seguridad', NO 'tecnologia'\n" +
+                    "- Un desastre natural es 'medioambiente', NO 'mundo'\n" +
+                    "- Deportes y arte van a 'cultura', NO a 'sociedad'\n\n" +
                     "ARTICULOS:\n" +
                     string.Join("\n", articleLines) + "\n\n" +
                     "Responde SOLO con JSON valido: {\"assignments\": {\"1\": \"slug\", \"2\": \"slug\", ...}}";
 
                 var response = await ai.CompleteAsync(new AiRequest
                 {
-                    SystemPrompt = "Eres un clasificador de noticias. Responde SOLO con JSON válido, sin markdown.",
+                    SystemPrompt = "Eres un clasificador de noticias experto. Lee TITULO Y RESUMEN de cada articulo para clasificar correctamente. Responde SOLO con JSON válido, sin markdown.",
                     UserPrompt = prompt,
-                    MaxTokens = 1200,
+                    MaxTokens = 1500,
                     Temperature = 0.0,
                     OperationTag = "section_routing"
                 }, ct);

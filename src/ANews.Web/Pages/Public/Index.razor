@@ -191,6 +191,13 @@
                 <button class="search-clear" @onclick="@(() => _searchQuery = "")"><i class="fa fa-times"></i></button>
             }
         </div>
+        <!-- Time range slider -->
+        <div class="time-slider" title="Rango temporal de eventos">
+            <i class="fa fa-clock" style="color:var(--accent);font-size:12px"></i>
+            <input type="range" min="1" max="30" step="1" @bind="_daysBack" @bind:event="oninput"
+                   class="slider-range" style="width:90px;accent-color:var(--accent)" />
+            <span class="slider-label">@(_daysBack == 1 ? "Hoy" : $"{_daysBack}d")</span>
+        </div>
     </div>
 
     <!-- Main content area -->
@@ -534,6 +541,7 @@
     private DateTime LastUpdate = DateTime.Now;
 
     private string _searchQuery = "";
+    private int _daysBack = 7;
     private List<SectionItem> Sections = [];
     private List<EventItem> Events = [];
     private List<ModuleFilterItem> UserModules = [];
@@ -593,7 +601,8 @@
     {
         get
         {
-            IEnumerable<EventItem> q = Events.Where(MatchesGeoFilter);
+            var cutoff = DateTime.UtcNow.AddDays(-_daysBack);
+            IEnumerable<EventItem> q = Events.Where(e => e.StartDate >= cutoff).Where(MatchesGeoFilter);
             if (SelectedSection.StartsWith("module:") && int.TryParse(SelectedSection[7..], out var modId))
             {
                 var mod = UserModules.FirstOrDefault(m => m.Id == modId);

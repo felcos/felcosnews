@@ -1,0 +1,188 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <!-- KPIs -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-dollar-sign"></i>
+            <span>Costes de IA</span>
+            <div class="panel-actions">
+                <select class="form-control" style="width:auto;height:28px;font-size:11px" @bind="_period" @bind:after="LoadData">
+                    <option value="7">7 dias</option>
+                    <option value="30">30 dias</option>
+                    <option value="90">90 dias</option>
+                </select>
+                <button class="btn-sm" @onclick="ExportCsv"><i class="fa fa-download"></i> CSV</button>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;padding:12px 16px;flex-wrap:wrap">
+            <div style="text-align:center">
+                <div style="font-size:20px;font-weight:700;color:var(--accent)">$@_totalCost.ToString("F4")</div>
+                <div style="font-size:10px;color:var(--text-muted)">Total periodo</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:20px;font-weight:700">$@_todayCost.ToString("F4")</div>
+                <div style="font-size:10px;color:var(--text-muted)">Hoy</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600">@FormatTokens(_totalInputTokens)</div>
+                <div style="font-size:10px;color:var(--text-muted)">Tokens in</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600">@FormatTokens(_totalOutputTokens)</div>
+                <div style="font-size:10px;color:var(--text-muted)">Tokens out</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600">@_entries.Count</div>
+                <div style="font-size:10px;color:var(--text-muted)">Operaciones</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Breakdown por proveedor y agente -->
+    <div class="gm-panel">
+        <div class="panel-header"><i class="fa fa-chart-pie"></i><span>Por Proveedor</span></div>
+        <div style="padding:8px 16px">
+            @foreach (var prov in _byProvider)
+            {
+                var pct = _totalCost > 0 ? (double)(prov.Cost / _totalCost) * 100 : 0;
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
+                    <span style="min-width:80px">@prov.Provider</span>
+                    <div style="flex:1;height:6px;background:var(--border);border-radius:3px">
+                        <div style="width:@pct.ToString("F0")%;height:100%;background:var(--accent);border-radius:3px"></div>
+                    </div>
+                    <span style="min-width:70px;text-align:right;font-variant-numeric:tabular-nums">$@prov.Cost.ToString("F4")</span>
+                    <span style="color:var(--text-muted);min-width:40px">@prov.Count ops</span>
+                </div>
+            }
+            @if (!_byProvider.Any())
+            { <div style="color:var(--text-muted);font-size:12px;padding:10px 0">Sin datos</div> }
+        </div>
+    </div>
+
+    <div class="gm-panel">
+        <div class="panel-header"><i class="fa fa-robot"></i><span>Por Agente</span></div>
+        <div style="padding:8px 16px">
+            @foreach (var ag in _byAgent)
+            {
+                var pct = _totalCost > 0 ? (double)(ag.Cost / _totalCost) * 100 : 0;
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
+                    <span style="min-width:100px">@ag.Agent</span>
+                    <div style="flex:1;height:6px;background:var(--border);border-radius:3px">
+                        <div style="width:@pct.ToString("F0")%;height:100%;background:var(--accent-green);border-radius:3px"></div>
+                    </div>
+                    <span style="min-width:70px;text-align:right;font-variant-numeric:tabular-nums">$@ag.Cost.ToString("F4")</span>
+                    <span style="color:var(--text-muted);min-width:40px">@ag.Count ops</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Trend chart - compact -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header"><i class="fa fa-chart-line"></i><span>Tendencia Diaria</span></div>
+        <div style="padding:8px 16px">
+            <canvas id="gmCostTrendChart" style="max-height:120px"></canvas>
+        </div>
+    </div>
+
+    <!-- Detail table -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-list"></i>
+            <span>Detalle</span>
+            <span style="font-size:11px;color:var(--text-muted)">@_entries.Count registros</span>
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th>Fecha</th>
+                <th>Proveedor</th>
+                <th>Operacion</th>
+                <th>Tokens in</th>
+                <th>Tokens out</th>
+                <th>Coste</th>
+            </tr></thead>
+            <tbody>
+                @foreach (var e in _entries.Take(100))
+                {
+                    <tr>
+                        <td style="font-size:11px;color:var(--text-muted)">@e.Date.ToString("dd/MM/yyyy")</td>
+                        <td style="font-size:11px">@e.Provider?.Name</td>
+                        <td style="font-size:11px;color:var(--text-muted)">@e.Operation</td>
+                        <td style="font-size:11px">@FormatTokens(e.InputTokens)</td>
+                        <td style="font-size:11px">@FormatTokens(e.OutputTokens)</td>
+                        <td style="font-size:11px;font-variant-numeric:tabular-nums">$@e.Cost.ToString("F6")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    private List<CostEntry> _entries = [];
+    private decimal _totalCost, _todayCost;
+    private long _totalInputTokens, _totalOutputTokens;
+    private int _period = 30;
+
+    private record ProviderStat(string Provider, decimal Cost, int Count);
+    private record AgentStat(string Agent, decimal Cost, int Count);
+    private List<ProviderStat> _byProvider = [];
+    private List<AgentStat> _byAgent = [];
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await RenderChart();
+    }
+
+    private async Task LoadData()
+    {
+        var since = DateTime.UtcNow.Date.AddDays(-_period);
+        _entries = await Ctx.CostEntries
+            .Include(e => e.Provider).Include(e => e.AgentExecution)
+            .Where(e => e.Date >= since).OrderByDescending(e => e.Date).ToListAsync();
+        _totalCost = _entries.Sum(e => e.Cost);
+        _todayCost = _entries.Where(e => e.Date == DateTime.UtcNow.Date).Sum(e => e.Cost);
+        _totalInputTokens = _entries.Sum(e => e.InputTokens);
+        _totalOutputTokens = _entries.Sum(e => e.OutputTokens);
+        _byProvider = _entries.GroupBy(e => e.Provider?.Name ?? "Unknown")
+            .Select(g => new ProviderStat(g.Key, g.Sum(e => e.Cost), g.Count()))
+            .OrderByDescending(p => p.Cost).ToList();
+        _byAgent = _entries.GroupBy(e => e.AgentExecution?.AgentType.ToString() ?? "Manual")
+            .Select(g => new AgentStat(g.Key, g.Sum(e => e.Cost), g.Count()))
+            .OrderByDescending(a => a.Cost).ToList();
+        await RenderChart();
+    }
+
+    private async Task RenderChart()
+    {
+        var daily = _entries.GroupBy(e => e.Date)
+            .Select(g => new { date = g.Key.ToString("dd/MM"), cost = (double)g.Sum(e => e.Cost) })
+            .OrderBy(d => d.date).ToList();
+        if (daily.Any())
+        {
+            try { await JS.InvokeVoidAsync("adminRenderCostTrend", daily, "gmCostTrendChart"); } catch { }
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = "Fecha,Proveedor,Operacion,TokensEntrada,TokensSalida,Coste\n" +
+            string.Join("\n", _entries.Select(e =>
+                $"{e.Date:dd/MM/yyyy},{e.Provider?.Name},{e.Operation},{e.InputTokens},{e.OutputTokens},{e.Cost:F6}"));
+        await JS.InvokeVoidAsync("copyToClipboard", csv);
+    }
+
+    private static string FormatTokens(long t)
+    {
+        if (t >= 1_000_000) return $"{t / 1_000_000.0:F1}M";
+        if (t >= 1_000) return $"{t / 1_000.0:F1}K";
+        return t.ToString();
+    }
+}

@@ -1,0 +1,309 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-newspaper"></i>
+            <span>@(_newsTab == "events" ? "Eventos" : "Articulos")</span>
+            <div class="panel-actions">
+                <button class="btn-sm @(_newsTab == "events" ? "active" : "")" @onclick='() => SetNewsTab("events")'>Eventos</button>
+                <button class="btn-sm @(_newsTab == "articles" ? "active" : "")" @onclick='() => SetNewsTab("articles")'>Articulos</button>
+                @if (_newsTab == "events")
+                {
+                    <button class="btn-sm" style="background:var(--accent);color:#fff" @onclick="OpenCreateEvent">
+                        <i class="fa fa-plus"></i> Nuevo
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- Filtros -->
+        <div style="display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center">
+            <input class="form-control" style="max-width:200px;height:30px;font-size:12px"
+                   @bind="_search" @bind:event="oninput" @bind:after="ReloadAsync" placeholder="Buscar..." />
+            <select class="form-control" style="max-width:160px;height:30px;font-size:12px" @onchange="OnSectionFilter">
+                <option value="">Todas secciones</option>
+                @foreach (var s in _sections)
+                { <option value="@s.Id">@s.Name</option> }
+            </select>
+            @if (_newsTab == "events")
+            {
+                <select class="form-control" style="max-width:140px;height:30px;font-size:12px" @onchange="OnPriorityFilter">
+                    <option value="">Toda prioridad</option>
+                    @foreach (var p in Enum.GetValues<EventPriority>())
+                    { <option value="@p">@p</option> }
+                </select>
+            }
+            <span style="font-size:11px;color:var(--text-muted);margin-left:auto">@_total registros</span>
+        </div>
+
+        @if (_newsTab == "events")
+        {
+            <table class="gm-table">
+                <thead><tr>
+                    <th style="width:40px">ID</th>
+                    <th>Titulo</th>
+                    <th>Seccion</th>
+                    <th>Prior.</th>
+                    <th>Impact</th>
+                    <th>Arts</th>
+                    <th>Estado</th>
+                    <th>Fecha</th>
+                    <th style="width:100px">Acciones</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var ev in _events)
+                    {
+                        <tr>
+                            <td style="color:var(--text-muted)">#@ev.Id</td>
+                            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@ev.Title">@ev.Title</td>
+                            <td><span class="section-badge" style="font-size:10px">@ev.SectionName</span></td>
+                            <td><span class="priority-badge priority-@ev.Priority.ToLower()" style="font-size:10px">@ev.Priority</span></td>
+                            <td>@ev.ImpactScore.ToString("F0")</td>
+                            <td>@ev.ArticleCount</td>
+                            <td>
+                                <span style="color:@(ev.IsActive ? "var(--accent-green)" : "var(--text-muted)");font-size:11px">
+                                    @(ev.IsActive ? "Activo" : "Inactivo")
+                                </span>
+                            </td>
+                            <td style="font-size:11px;color:var(--text-muted)">@ev.CreatedAt.ToString("dd/MM")</td>
+                            <td>
+                                <button class="btn-icon" @onclick='() => Nav.NavigateTo($"/admin/events/{ev.Id}")' title="Editar"><i class="fa fa-edit"></i></button>
+                                <button class="btn-icon" @onclick="() => ToggleEventAsync(ev.Id)" title="Toggle"><i class="fa @(ev.IsActive ? "fa-eye-slash" : "fa-eye")"></i></button>
+                                <button class="btn-icon text-danger" @onclick="() => DeleteEventAsync(ev.Id)"><i class="fa fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <table class="gm-table">
+                <thead><tr>
+                    <th style="width:40px">ID</th>
+                    <th>Titulo</th>
+                    <th>Fuente</th>
+                    <th>Relevancia</th>
+                    <th>Tipo</th>
+                    <th>Publicado</th>
+                    <th style="width:50px"></th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var a in _articles)
+                    {
+                        <tr>
+                            <td style="color:var(--text-muted)">#@a.Id</td>
+                            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                                <a href="@a.SourceUrl" target="_blank" style="color:var(--accent)">@a.Title</a>
+                            </td>
+                            <td style="font-size:11px">@a.SourceName</td>
+                            <td>
+                                <div style="width:60px;height:6px;background:var(--border);border-radius:3px">
+                                    <div style="width:@(a.Relevance)%;height:100%;background:var(--accent);border-radius:3px"></div>
+                                </div>
+                            </td>
+                            <td style="font-size:11px">@a.ArticleType</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@a.PublishedAt.ToString("dd/MM HH:mm")</td>
+                            <td>
+                                <button class="btn-icon text-danger" @onclick="() => DeleteArticleAsync(a.Id)"><i class="fa fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <!-- Paginacion -->
+        <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+            <button class="btn-sm" @onclick="PrevPage" disabled="@(_page <= 1)"><i class="fa fa-chevron-left"></i></button>
+            <span>@_page / @TotalPages</span>
+            <button class="btn-sm" @onclick="NextPage" disabled="@(_page >= TotalPages)"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    </div>
+
+    <!-- Purga -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-trash-alt"></i>
+            <span>Purgar Archivados</span>
+            <span style="font-size:11px;color:var(--text-muted)">
+                @_archived total | @_archived30 &gt;30d | @_archived90 &gt;90d
+            </span>
+        </div>
+        <div class="agent-actions">
+            <button class="btn-trigger" @onclick="() => PurgeAsync(30)" disabled="@(_archived30 == 0)">
+                <i class="fa fa-trash-alt"></i> Purgar &gt;30 dias (@_archived30)
+            </button>
+            <button class="btn-trigger" style="border-color:var(--accent-red)" @onclick="() => PurgeAsync(90)" disabled="@(_archived90 == 0)">
+                <i class="fa fa-trash-alt"></i> Purgar &gt;90 dias (@_archived90)
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal crear evento -->
+@if (_showCreate)
+{
+    <div class="modal-overlay" @onclick="() => _showCreate = false">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Nuevo Evento</h3>
+                <button @onclick="() => _showCreate = false"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div><label style="font-size:12px;color:var(--text-muted)">Titulo *</label>
+                    <input class="form-control" @bind="_newTitle" /></div>
+                <div><label style="font-size:12px;color:var(--text-muted)">Descripcion</label>
+                    <textarea class="form-control" rows="3" @bind="_newDesc"></textarea></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                    <div><label style="font-size:12px;color:var(--text-muted)">Prioridad</label>
+                        <select class="form-control" @bind="_newPriority">
+                            @foreach (var p in Enum.GetValues<EventPriority>())
+                            { <option value="@p">@p</option> }
+                        </select></div>
+                    <div><label style="font-size:12px;color:var(--text-muted)">Impact</label>
+                        <input type="number" class="form-control" @bind="_newImpact" min="0" max="100" /></div>
+                    <div><label style="font-size:12px;color:var(--text-muted)">Seccion</label>
+                        <select class="form-control" @bind="_newSectionId">
+                            @foreach (var s in _sections)
+                            { <option value="@s.Id">@s.Name</option> }
+                        </select></div>
+                </div>
+                @if (!string.IsNullOrEmpty(_createError))
+                { <div style="color:var(--accent-red);font-size:12px">@_createError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showCreate = false">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveNewEventAsync">Crear</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _newsTab = "events";
+    private string _search = "";
+    private int? _sectionFilter;
+    private string? _priorityFilter;
+    private int _page = 1, _total;
+    private const int PageSize = 25;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+
+    private List<NewsSection> _sections = [];
+    private List<EventRow> _events = [];
+    private List<ArticleRow> _articles = [];
+    private int _archived, _archived30, _archived90;
+
+    // Create modal
+    private bool _showCreate;
+    private string _newTitle = "", _createError = "";
+    private string? _newDesc;
+    private EventPriority _newPriority = EventPriority.Medium;
+    private decimal _newImpact = 50;
+    private int _newSectionId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _sections = await Ctx.NewsSections.OrderBy(s => s.Name).ToListAsync();
+        if (_sections.Any()) _newSectionId = _sections.First().Id;
+        await LoadEventsAsync();
+        await LoadPurgeStats();
+    }
+
+    private async Task SetNewsTab(string tab) { _newsTab = tab; _page = 1; _search = ""; await ReloadAsync(); }
+    private async Task OnSectionFilter(ChangeEventArgs e) { _sectionFilter = int.TryParse(e.Value?.ToString(), out var id) ? id : null; _page = 1; await ReloadAsync(); }
+    private async Task OnPriorityFilter(ChangeEventArgs e) { _priorityFilter = e.Value?.ToString(); _page = 1; await ReloadAsync(); }
+    private async Task PrevPage() { if (_page > 1) { _page--; await ReloadAsync(); } }
+    private async Task NextPage() { if (_page < TotalPages) { _page++; await ReloadAsync(); } }
+    private Task ReloadAsync() => _newsTab == "events" ? LoadEventsAsync() : LoadArticlesAsync();
+
+    private async Task LoadEventsAsync()
+    {
+        var q = Ctx.NewsEvents.Where(e => !e.IsDeleted);
+        if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(e => e.Title.Contains(_search));
+        if (_sectionFilter.HasValue) q = q.Where(e => e.NewsSectionId == _sectionFilter.Value);
+        if (!string.IsNullOrEmpty(_priorityFilter) && Enum.TryParse<EventPriority>(_priorityFilter, out var pri))
+            q = q.Where(e => e.Priority == pri);
+        _total = await q.CountAsync();
+        _events = await q.OrderByDescending(e => e.CreatedAt)
+            .Skip((_page - 1) * PageSize).Take(PageSize)
+            .Select(e => new EventRow(e.Id, e.Title, e.Priority.ToString(), e.ImpactScore, e.IsActive,
+                e.Section.Name, e.Articles.Count(a => !a.IsDeleted), e.CreatedAt))
+            .ToListAsync();
+    }
+
+    private async Task LoadArticlesAsync()
+    {
+        var q = Ctx.NewsArticles.Where(a => !a.IsDeleted);
+        if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(a => a.Title.Contains(_search));
+        if (_sectionFilter.HasValue) q = q.Where(a => a.Event.NewsSectionId == _sectionFilter.Value);
+        _total = await q.CountAsync();
+        _articles = await q.OrderByDescending(a => a.PublishedAt)
+            .Skip((_page - 1) * PageSize).Take(PageSize)
+            .Select(a => new ArticleRow(a.Id, a.Title, a.SourceName, a.SourceUrl, a.Relevance, a.ArticleType.ToString(), a.PublishedAt))
+            .ToListAsync();
+    }
+
+    private async Task ToggleEventAsync(int id)
+    {
+        var ev = await Ctx.NewsEvents.FindAsync(id);
+        if (ev != null) { ev.IsActive = !ev.IsActive; await Ctx.SaveChangesAsync(); await LoadEventsAsync(); }
+    }
+
+    private async Task DeleteEventAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este evento?")) return;
+        var ev = await Ctx.NewsEvents.FindAsync(id);
+        if (ev != null) { ev.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadEventsAsync(); }
+    }
+
+    private async Task DeleteArticleAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este articulo?")) return;
+        var a = await Ctx.NewsArticles.FindAsync(id);
+        if (a != null) { a.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadArticlesAsync(); }
+    }
+
+    private void OpenCreateEvent() { _newTitle = ""; _newDesc = null; _createError = ""; _showCreate = true; }
+
+    private async Task SaveNewEventAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newTitle)) { _createError = "Titulo obligatorio"; return; }
+        Ctx.NewsEvents.Add(new NewsEvent
+        {
+            Title = _newTitle.Trim(), Description = _newDesc, Priority = _newPriority,
+            ImpactScore = _newImpact, NewsSectionId = _newSectionId,
+            EventType = "Manual", StartDate = DateTime.UtcNow, IsActive = true, Tags = []
+        });
+        await Ctx.SaveChangesAsync();
+        _showCreate = false; _page = 1; await LoadEventsAsync();
+    }
+
+    private async Task LoadPurgeStats()
+    {
+        var now = DateTime.UtcNow;
+        _archived = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived"));
+        _archived30 = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-30));
+        _archived90 = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-90));
+    }
+
+    private async Task PurgeAsync(int days)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Purgar eventos archivados >{days} dias?")) return;
+        var cutoff = DateTime.UtcNow.AddDays(-days);
+        var list = await Ctx.NewsEvents.Where(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < cutoff).ToListAsync();
+        foreach (var e in list) e.IsDeleted = true;
+        await Ctx.SaveChangesAsync();
+        await LoadEventsAsync(); await LoadPurgeStats();
+    }
+
+    record EventRow(int Id, string Title, string Priority, decimal ImpactScore, bool IsActive, string SectionName, int ArticleCount, DateTime CreatedAt);
+    record ArticleRow(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, DateTime PublishedAt);
+}

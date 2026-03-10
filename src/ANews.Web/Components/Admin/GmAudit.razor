@@ -1,0 +1,147 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@using AuditLogEntity = ANews.Domain.Entities.AuditLog
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-shield-alt"></i>
+            <span>Log de Auditoria</span>
+            <div class="panel-actions">
+                <span style="font-size:11px;color:var(--text-muted)">@_totalCount registros</span>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center">
+            <input class="form-control" style="max-width:200px;height:30px;font-size:12px"
+                   @bind="_search" @bind:event="oninput" placeholder="Buscar..." />
+            <select class="form-control" style="max-width:140px;height:30px;font-size:12px" @bind="_filterAction" @bind:after="LoadData">
+                <option value="">Todas</option>
+                <option value="Create">Create</option>
+                <option value="Update">Update</option>
+                <option value="Delete">Delete</option>
+                <option value="Login">Login</option>
+            </select>
+            <input type="date" class="form-control" style="max-width:160px;height:30px;font-size:12px"
+                   @bind="_filterDate" @bind:after="LoadData" />
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>Accion</th>
+                <th>Entidad</th>
+                <th>IP</th>
+                <th style="width:50px"></th>
+            </tr></thead>
+            <tbody>
+                @foreach (var log in _filteredLogs)
+                {
+                    <tr>
+                        <td style="font-size:11px;white-space:nowrap;color:var(--text-muted)">@log.Timestamp.ToString("dd/MM HH:mm:ss")</td>
+                        <td style="font-size:11px">@(log.UserId != 0 ? log.UserEmail : "Sistema")</td>
+                        <td>
+                            <span class="priority-badge priority-@log.Action.ToLower()" style="font-size:10px">@log.Action</span>
+                        </td>
+                        <td style="font-size:11px">
+                            <strong>@log.EntityType</strong>
+                            @if (!string.IsNullOrEmpty(log.EntityId))
+                            { <span style="color:var(--text-muted)"> #@log.EntityId</span> }
+                        </td>
+                        <td style="font-size:10px;font-family:monospace;color:var(--text-muted)">@log.IpAddress</td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(log.NewValues) || !string.IsNullOrEmpty(log.OldValues))
+                            {
+                                <button class="btn-icon" @onclick="() => _detail = log" title="Ver"><i class="fa fa-search"></i></button>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (!_filteredLogs.Any())
+                {
+                    <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">Sin registros</td></tr>
+                }
+            </tbody>
+        </table>
+        <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+            <button class="btn-sm" @onclick="PrevPage" disabled="@(_page == 0)"><i class="fa fa-chevron-left"></i></button>
+            <span>@(_page + 1) / @_totalPages</span>
+            <button class="btn-sm" @onclick="NextPage" disabled="@(_page >= _totalPages - 1)"><i class="fa fa-chevron-right"></i></button>
+        </div>
+    </div>
+</div>
+
+@if (_detail != null)
+{
+    <div class="modal-overlay" @onclick="() => _detail = null">
+        <div class="modal-box" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@_detail.Action @_detail.EntityType</h3>
+                <button @onclick="() => _detail = null"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                @if (!string.IsNullOrEmpty(_detail.OldValues))
+                {
+                    <h4 style="font-size:11px;color:var(--text-muted);margin-bottom:4px">ANTES</h4>
+                    <pre style="background:var(--card-bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;max-height:200px">@FormatJson(_detail.OldValues)</pre>
+                }
+                @if (!string.IsNullOrEmpty(_detail.NewValues))
+                {
+                    <h4 style="font-size:11px;color:var(--text-muted);margin:8px 0 4px">DESPUES</h4>
+                    <pre style="background:var(--card-bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;max-height:200px">@FormatJson(_detail.NewValues)</pre>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _detail = null">Cerrar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AuditLogEntity> _logs = [];
+    private AuditLogEntity? _detail;
+    private string _search = "";
+    private string _filterAction = "";
+    private DateTime? _filterDate;
+    private int _page;
+    private int _pageSize = 50;
+    private int _totalPages = 1;
+    private int _totalCount;
+
+    private IEnumerable<AuditLogEntity> _filteredLogs => _logs
+        .Where(l => string.IsNullOrEmpty(_search) ||
+            l.Action.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+            l.EntityType.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        var query = Ctx.AuditLogs.AsQueryable();
+        if (!string.IsNullOrEmpty(_filterAction))
+            query = query.Where(l => l.Action == _filterAction);
+        if (_filterDate.HasValue)
+            query = query.Where(l => l.Timestamp.Date == _filterDate.Value.Date);
+        _totalCount = await query.CountAsync();
+        _totalPages = Math.Max(1, (int)Math.Ceiling(_totalCount / (double)_pageSize));
+        if (_page >= _totalPages) _page = 0;
+        _logs = await query.IgnoreQueryFilters()
+            .OrderByDescending(l => l.Timestamp)
+            .Skip(_page * _pageSize).Take(_pageSize).ToListAsync();
+    }
+
+    private async Task PrevPage() { _page--; await LoadData(); }
+    private async Task NextPage() { _page++; await LoadData(); }
+
+    private static string FormatJson(string json)
+    {
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+}

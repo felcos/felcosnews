@@ -236,22 +236,21 @@
                 });
             }
 
-            const rings = [
-                { count: 5, radius: 100 },
-                { count: 7, radius: 175 },
-                { count: 9, radius: 255 },
-                { count: 12, radius: 335 }
-            ];
             const pColors = { Critical: '#ff0040', High: '#ff6600', Medium: '#e6b800', Low: '#4a90e2' };
 
             for (const sys of this.systems) {
                 const evList = groups[sys.slug] || [];
+                if (evList.length === 0) continue;
+
+                // Dynamic rings based on planet count — ensure enough spacing
+                const totalPlanets = evList.length;
+                const rings = this._computeRings(totalPlanets);
                 let evIdx = 0;
 
                 for (let ri = 0; ri < rings.length && evIdx < evList.length; ri++) {
                     const ring = rings[ri];
                     const countInRing = Math.min(ring.count, evList.length - evIdx);
-                    const stagger = ri * (Math.PI / ring.count);
+                    const stagger = ri * (Math.PI / (ring.count + 1));
 
                     for (let pos = 0; pos < countInRing; pos++, evIdx++) {
                         const ev = evList[evIdx];
@@ -272,30 +271,10 @@
                         });
                     }
                 }
-
-                // Any overflow beyond 4 rings: stack on outermost ring
-                if (evIdx < evList.length) {
-                    const remaining = evList.length - evIdx;
-                    for (let pos = 0; pos < remaining; pos++, evIdx++) {
-                        const ev = evList[evIdx];
-                        const angle = (pos / remaining) * Math.PI * 2;
-                        const pp = (ev.id * 0.6173 + pos * 0.314) % (Math.PI * 2);
-                        this.nodes.push({
-                            id: ev.id,
-                            x: sys.x + Math.cos(angle) * 335,
-                            y: sys.y + Math.sin(angle) * 335,
-                            radius: this._planetRadius(ev),
-                            event: ev,
-                            system: sys,
-                            pulsePhase: pp,
-                            planetType: ev.id % 8,
-                            color: pColors[ev.priority] || '#4a90e2',
-                            isModuleMatch: false,
-                            frozenMoonAngles: {}
-                        });
-                    }
-                }
             }
+
+            // Collision resolution — push overlapping planets apart
+            this._resolveCollisions();
 
             if (this._userKeywords.length > 0) {
                 this._applyKeywords();
@@ -303,11 +282,60 @@
             console.log(`[universe] built: ${this.systems.length} systems, ${this.nodes.length} nodes`);
         }
 
+        _computeRings(totalPlanets) {
+            // Dynamically compute ring layout so planets don't overlap
+            const rings = [];
+            let remaining = totalPlanets;
+            let ringIdx = 0;
+            const baseRadius = 100;
+            const ringGap = 80;
+
+            while (remaining > 0) {
+                const radius = baseRadius + ringIdx * ringGap;
+                // How many planets fit at this radius with comfortable spacing
+                const circumference = Math.PI * 2 * radius;
+                const minSpacing = 55; // minimum px between planet centers
+                const maxInRing = Math.max(3, Math.floor(circumference / minSpacing));
+                const count = Math.min(maxInRing, remaining);
+                rings.push({ count, radius });
+                remaining -= count;
+                ringIdx++;
+            }
+            return rings;
+        }
+
+        _resolveCollisions() {
+            // Simple iterative collision resolution
+            const minGap = 8; // minimum px gap between planet edges
+            for (let iter = 0; iter < 5; iter++) {
+                let moved = false;
+                for (let i = 0; i < this.nodes.length; i++) {
+                    for (let j = i + 1; j < this.nodes.length; j++) {
+                        const a = this.nodes[i], b = this.nodes[j];
+                        const dx = b.x - a.x, dy = b.y - a.y;
+                        const dist = Math.hypot(dx, dy);
+                        const minDist = a.radius + b.radius + minGap;
+                        if (dist < minDist && dist > 0.1) {
+                            const overlap = (minDist - dist) / 2;
+                            const nx = dx / dist, ny = dy / dist;
+                            a.x -= nx * overlap;
+                            a.y -= ny * overlap;
+                            b.x += nx * overlap;
+                            b.y += ny * overlap;
+                            moved = true;
+                        }
+                    }
+                }
+                if (!moved) break;
+            }
+        }
+
         _planetRadius(ev) {
-            const bonus = { Critical: 14, High: 9, Medium: 4, Low: 0 };
+            // Bigger planets so text fits inside
+            const bonus = { Critical: 16, High: 11, Medium: 6, Low: 2 };
             const b = bonus[ev.priority] || 0;
             const impact = Math.min(1, Math.max(0, (ev.impactScore || 0) / 100));
-            return Math.min(46, 18 + b + impact * 14);
+            return Math.min(52, 24 + b + impact * 16);
         }
 
         _applyKeywords() {
@@ -984,19 +1012,35 @@
             }
         }
 
+        _isNodeVisible(node) {
+            // Frustum culling — skip off-screen nodes
+            const s = this._worldToScreen(node.x, node.y);
+            const margin = node.radius * this.cam.scale + 80;
+            return s.x > -margin && s.x < this.W + margin &&
+                   s.y > -margin && s.y < this.H + margin;
+        }
+
         _drawNode(ctx, node, ts) {
+            if (!this._isNodeVisible(node)) return;
+
             const { x, y, radius: dr, color, event: ev } = node;
             const rgb = this._hexToRgb(color);
             const pulse = 0.9 + 0.1 * Math.sin(ts * 1.8 + node.pulsePhase);
+            const screenR = dr * this.cam.scale;
 
-            // Glow
-            const glow = ctx.createRadialGradient(x, y, 0, x, y, dr * 2.8);
-            glow.addColorStop(0, `rgba(${rgb},0.25)`);
-            glow.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = glow;
-            ctx.beginPath();
-            ctx.arc(x, y, dr * 2.8, 0, Math.PI * 2);
-            ctx.fill();
+            // Performance: simplified rendering at small sizes
+            const isSmall = screenR < 10;
+
+            // Glow (skip for tiny planets)
+            if (!isSmall) {
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, dr * 2.2);
+                glow.addColorStop(0, `rgba(${rgb},0.2)`);
+                glow.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(x, y, dr * 2.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
 
             // Critical ring
             if (ev.priority === 'Critical') {
@@ -1019,58 +1063,87 @@
                 ctx.setLineDash([]);
             }
 
-            // Planet core — diverse realistic types
-            this._drawPlanetSurface(ctx, x, y, dr * pulse, color, rgb, ts, node);
-
-            // Moons
-            const moons = (ev.articles || []).slice(0, 5);
-            for (let mi = 0; mi < moons.length; mi++) {
-                const frozen = node.frozenMoonAngles[mi];
-                const angle = frozen !== undefined ? frozen : (ts * 0.4 + (mi / moons.length) * Math.PI * 2 + node.pulsePhase);
-                const moonR = dr * 1.9 + mi * 12;
-                const mx = x + Math.cos(angle) * moonR;
-                const my = y + Math.sin(angle) * moonR;
-                const moonSize = 3.5;
-
-                ctx.fillStyle = `rgba(${rgb},0.7)`;
+            // Planet core
+            if (isSmall) {
+                // Simple circle for tiny planets
+                ctx.fillStyle = color;
                 ctx.beginPath();
-                ctx.arc(mx, my, moonSize, 0, Math.PI * 2);
+                ctx.arc(x, y, dr * pulse, 0, Math.PI * 2);
                 ctx.fill();
-
-                // Moon orbit trail (faint)
-                ctx.strokeStyle = `rgba(${rgb},0.07)`;
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.arc(x, y, moonR, 0, Math.PI * 2);
-                ctx.stroke();
+            } else {
+                this._drawPlanetSurface(ctx, x, y, dr * pulse, color, rgb, ts, node);
             }
 
-            // Label — below the planet, more words visible
-            if (dr * this.cam.scale >= 12) {
-                const fontSize = Math.max(9, Math.min(13, 11 / this.cam.scale));
-                const maxChars = 30;
-                const label = ev.title
-                    ? (ev.title.length > maxChars ? ev.title.substring(0, maxChars - 1) + '…' : ev.title)
-                    : '';
-                if (label) {
-                    ctx.save();
-                    ctx.font = `500 ${fontSize}px system-ui`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'top';
-                    const labelY = y + dr * pulse + 6;
-                    const tw = ctx.measureText(label).width;
-                    const pad = 5;
-                    // Dark pill background
-                    ctx.fillStyle = 'rgba(0,5,17,0.78)';
+            // Moons — only draw when zoomed in enough
+            if (screenR >= 18) {
+                const moons = (ev.articles || []).slice(0, 4);
+                for (let mi = 0; mi < moons.length; mi++) {
+                    const frozen = node.frozenMoonAngles[mi];
+                    const angle = frozen !== undefined ? frozen : (ts * 0.4 + (mi / moons.length) * Math.PI * 2 + node.pulsePhase);
+                    const moonR = dr * 1.9 + mi * 12;
+                    const mx = x + Math.cos(angle) * moonR;
+                    const my = y + Math.sin(angle) * moonR;
+                    ctx.fillStyle = `rgba(${rgb},0.7)`;
                     ctx.beginPath();
-                    ctx.roundRect(x - tw / 2 - pad, labelY - 1, tw + pad * 2, fontSize + 4, 3);
+                    ctx.arc(mx, my, 3, 0, Math.PI * 2);
                     ctx.fill();
-                    // Text
-                    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-                    ctx.fillText(label, x, labelY + 1);
-                    ctx.restore();
                 }
             }
+
+            // Text INSIDE the planet (multi-line, centered)
+            if (screenR >= 14 && ev.title) {
+                this._drawPlanetLabel(ctx, x, y, dr * pulse, ev.title);
+            }
+        }
+
+        _drawPlanetLabel(ctx, cx, cy, r, title) {
+            ctx.save();
+            const innerR = r * 0.78; // usable text area
+            const maxWidth = innerR * 1.6;
+            const fontSize = Math.max(7, Math.min(11, r * 0.38));
+            ctx.font = `600 ${fontSize}px system-ui`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+
+            // Word-wrap into lines that fit inside the planet
+            const words = title.split(' ');
+            const lines = [];
+            let currentLine = '';
+            for (const word of words) {
+                const testLine = currentLine ? currentLine + ' ' + word : word;
+                if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+                    lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = testLine;
+                }
+            }
+            if (currentLine) lines.push(currentLine);
+
+            // Limit to 3 lines max
+            const maxLines = 3;
+            if (lines.length > maxLines) {
+                lines.length = maxLines;
+                lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1) + '…';
+            }
+
+            const lineHeight = fontSize + 2;
+            const totalHeight = lines.length * lineHeight;
+            const startY = cy - totalHeight / 2 + lineHeight / 2;
+
+            // Draw semi-transparent overlay for readability
+            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw text lines
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(lines[i], cx, startY + i * lineHeight);
+            }
+            ctx.restore();
         }
 
         // ─────────────────────────────────────────────────────────
@@ -1279,16 +1352,20 @@
         }
 
         _drawConnections(ctx) {
-            const maxDist = 280;
+            // Skip connections entirely when too many nodes (performance)
+            if (this.nodes.length > 100) return;
+            const maxDist = 200;
             ctx.save();
             ctx.setLineDash([3, 6]);
             for (let i = 0; i < this.nodes.length; i++) {
+                const a = this.nodes[i];
+                if (!this._isNodeVisible(a)) continue;
                 for (let j = i + 1; j < this.nodes.length; j++) {
-                    const a = this.nodes[i], b = this.nodes[j];
+                    const b = this.nodes[j];
                     if (a.system !== b.system) continue;
                     const d = Math.hypot(a.x - b.x, a.y - b.y);
                     if (d > maxDist) continue;
-                    const alpha = (1 - d / maxDist) * 0.12;
+                    const alpha = (1 - d / maxDist) * 0.1;
                     ctx.strokeStyle = `rgba(74,144,226,${alpha})`;
                     ctx.lineWidth = 1;
                     ctx.beginPath();
