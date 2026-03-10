@@ -923,9 +923,129 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .gm-table th { padding: 10px 12px; text-align: left; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 1px solid var(--admin-border); }
 .gm-table td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); }
 .gm-table tr:hover td { background: rgba(255,255,255,0.02); }
+.clickable-row { cursor: pointer; }
 
 /* Log modal */
 .log-modal-body { max-height: 400px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: var(--radius); }
+
+/* ── GodMode sidebar navigation ─────────────── */
+.gm-body { display: flex; gap: 0; min-height: calc(100vh - 200px); }
+.gm-sidebar {
+  width: 60px; flex-shrink: 0;
+  background: var(--admin-card); border: 1px solid var(--admin-border);
+  border-radius: var(--radius-lg); padding: 8px 6px;
+  display: flex; flex-direction: column; gap: 4px;
+  position: sticky; top: 20px; height: fit-content;
+}
+.gm-nav-btn {
+  width: 48px; height: 48px; border-radius: 10px; border: 1px solid transparent;
+  background: transparent; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  color: var(--text-muted); transition: all 0.15s; padding: 0;
+}
+.gm-nav-btn i { font-size: 16px; }
+.gm-nav-btn span { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.gm-nav-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-secondary); }
+.gm-nav-btn.active {
+  background: rgba(74,144,226,0.12); border-color: rgba(74,144,226,0.3);
+  color: var(--accent);
+}
+.gm-nav-sep { height: 1px; background: var(--admin-border); margin: 4px 4px; }
+.gm-content { flex: 1; min-width: 0; padding-left: 16px; }
+
+/* ── Agent config grid ───────────────────── */
+.agent-config-grid { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.agent-cfg-row {
+  display: grid; grid-template-columns: 44px 1fr 130px 120px;
+  align-items: center; gap: 10px; padding: 8px 16px;
+  border-radius: 6px; border: 1px solid transparent; transition: background 0.12s;
+}
+.agent-cfg-row:hover { background: rgba(255,255,255,0.03); border-color: var(--admin-border); }
+.agent-cfg-row.disabled-agent { opacity: 0.5; }
+.agent-cfg-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+.agent-cfg-interval, .agent-cfg-maxtokens { display: flex; align-items: center; gap: 6px; }
+.agent-cfg-interval input, .agent-cfg-maxtokens input {
+  width: 72px; background: rgba(0,0,0,0.3); border: 1px solid var(--admin-border);
+  border-radius: 5px; padding: 4px 8px; color: var(--text-primary); font-size: 12px;
+}
+.cfg-unit { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.next-run-badge {
+  font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.04);
+  border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+}
+.next-run-running { color: var(--accent-green); }
+
+/* toggle switch */
+.toggle-sw { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.toggle-sw input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  width: 32px; height: 17px; background: rgba(255,255,255,0.1); border-radius: 9px;
+  border: 1px solid var(--admin-border); transition: background 0.2s;
+  display: flex; align-items: center;
+}
+.toggle-sw input:checked + .toggle-track { background: rgba(0,255,136,0.3); border-color: rgba(0,255,136,0.4); }
+.toggle-thumb {
+  width: 11px; height: 11px; background: var(--text-muted); border-radius: 50%;
+  margin-left: 2px; transition: all 0.2s; flex-shrink: 0;
+}
+.toggle-sw input:checked + .toggle-track .toggle-thumb {
+  background: var(--accent-green); margin-left: 17px;
+}
+
+/* ── Source health panel ─────────────────── */
+.source-health-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.source-health-table th { padding: 8px 10px; text-align: left; color: var(--text-muted); font-size: 10px; text-transform: uppercase; border-bottom: 1px solid var(--admin-border); }
+.source-health-table td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.source-health-table tr:hover td { background: rgba(255,255,255,0.02); }
+.health-bar { width: 60px; height: 5px; background: var(--admin-border); border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; }
+.health-bar-fill { height: 100%; border-radius: 3px; }
+.src-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.src-ok { background: var(--accent-green); box-shadow: 0 0 6px rgba(0,255,136,0.5); }
+.src-warn { background: var(--accent-yellow); }
+.src-fail { background: var(--accent-red); box-shadow: 0 0 6px rgba(255,0,64,0.4); }
+
+/* ── Kpi flash animation on refresh ─────── */
+@keyframes kpi-flash {
+  0%   { opacity: 1; }
+  30%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+.kpi-refreshing .kpi-value { animation: kpi-flash 0.4s ease; }
+
+/* ── Audit log ───────────────────────────── */
+.audit-list { max-height: 300px; overflow-y: auto; font-size: 12px; }
+.audit-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.1s;
+}
+.audit-row:hover { background: rgba(255,255,255,0.02); }
+.audit-time { color: var(--text-muted); flex-shrink: 0; font-size: 11px; width: 70px; }
+.audit-user { color: var(--accent); flex-shrink: 0; width: 90px; overflow: hidden; text-overflow: ellipsis; }
+.audit-action { color: var(--text-secondary); flex: 1; }
+.audit-entity { color: var(--text-muted); font-size: 11px; }
+
+/* ── Metrics row ─────────────────────────── */
+.metrics-row {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px; padding: 12px 16px;
+}
+.metric-box {
+  background: rgba(0,0,0,0.2); border: 1px solid var(--admin-border);
+  border-radius: 8px; padding: 10px 12px; text-align: center;
+}
+.metric-val { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.metric-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
+
+/* ── Log search bar ──────────────────────── */
+.log-search { display: flex; align-items: center; gap: 6px; }
+.log-search input {
+  width: 160px; background: rgba(0,0,0,0.3); border: 1px solid var(--admin-border);
+  border-radius: 5px; padding: 4px 8px; color: var(--text-primary); font-size: 12px;
+}
+.btn-pause { padding: 4px 8px; font-size: 11px; background: rgba(255,204,0,0.1); border: 1px solid rgba(255,204,0,0.3); border-radius: 5px; color: var(--accent-yellow); cursor: pointer; }
+.btn-pause.paused { background: rgba(0,255,136,0.1); border-color: rgba(0,255,136,0.3); color: var(--accent-green); }
+.btn-export { padding: 4px 8px; font-size: 11px; background: transparent; border: 1px solid var(--admin-border); border-radius: 5px; color: var(--text-muted); cursor: pointer; }
+.btn-export:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
 
 /* ============================================
    AI CONFIGS
@@ -1938,38 +2058,88 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 }
 
 /* ============================================
-   THEME SELECTOR
+   THEME SELECTOR — Galaxy Planet Picker
    ============================================ */
 .theme-selector { position: relative; display: flex; align-items: center; }
-.theme-btn {
-  width: 32px; height: 32px; border-radius: 50%;
-  border: 2px solid var(--border);
-  background: conic-gradient(#4a90e2 0deg 72deg, #00ff88 72deg 144deg, #ff0040 144deg 216deg, #ff9900 216deg 288deg, #a855f7 288deg 360deg);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: border-color 0.2s, transform 0.2s;
-  flex-shrink: 0;
+
+/* Trigger: small planet orb with dashed orbit ring */
+.theme-planet-trigger {
+  width: 30px; height: 30px; background: transparent; border: none;
+  cursor: pointer; position: relative; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0;
 }
-.theme-btn:hover { border-color: var(--accent); transform: scale(1.1); }
-.theme-dropdown {
-  position: absolute; top: 42px; right: 0;
-  background: var(--card-bg); border: 1px solid var(--border);
-  border-radius: 10px; padding: 10px; width: 220px;
-  box-shadow: var(--shadow); z-index: 200;
-  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+.theme-trigger-orb {
+  width: 14px; height: 14px; border-radius: 50%; display: block;
+  background: radial-gradient(circle at 35% 35%, color-mix(in srgb, var(--trigger-color,#4a90e2) 80%, white 40%), var(--trigger-color,#4a90e2) 55%, color-mix(in srgb, var(--trigger-color,#4a90e2) 25%, black));
+  box-shadow: 0 0 6px var(--trigger-color,#4a90e2), 0 0 14px color-mix(in srgb, var(--trigger-color,#4a90e2) 35%, transparent);
+  transition: box-shadow 0.3s; position: relative; z-index: 1;
 }
-.theme-swatch {
-  width: 36px; height: 36px; border-radius: 8px; border: 2px solid transparent;
-  cursor: pointer; transition: border-color 0.15s, transform 0.15s;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.8);
+.theme-planet-trigger:hover .theme-trigger-orb {
+  box-shadow: 0 0 10px var(--trigger-color,#4a90e2), 0 0 24px color-mix(in srgb, var(--trigger-color,#4a90e2) 55%, transparent);
 }
-.theme-swatch:hover, .theme-swatch.active { border-color: #fff; transform: scale(1.1); }
-.theme-swatch-label {
-  width: 100%; text-align: center; font-size: 10px;
-  color: var(--text-muted); margin-top: 4px;
+.theme-trigger-ring {
+  position: absolute; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px dashed color-mix(in srgb, var(--trigger-color,#4a90e2) 55%, transparent);
+  animation: planet-orbit-spin 7s linear infinite; pointer-events: none;
 }
-.theme-swatch-wrap {
-  display: flex; flex-direction: column; align-items: center; width: 52px;
+
+/* Dropdown panel */
+.theme-planet-dropdown {
+  position: absolute; top: 38px; right: -8px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px;
+  width: 196px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.04);
+  z-index: 300;
+  animation: planet-dropdown-in 0.18s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes planet-dropdown-in {
+  from { opacity:0; transform:translateY(-8px) scale(0.95); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
+.theme-planet-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+}
+.theme-planet-cell {
+  background: transparent; border: 1px solid transparent; border-radius: 10px;
+  padding: 7px 2px 5px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  transition: background 0.15s, border-color 0.15s; position: relative;
+}
+.theme-planet-cell:hover { background: rgba(255,255,255,0.05); }
+.theme-planet-cell.theme-active {
+  background: rgba(255,255,255,0.04);
+  border-color: color-mix(in srgb, var(--planet-color) 50%, transparent);
+}
+.planet-orb {
+  width: 28px; height: 28px; border-radius: 50%; display: block; flex-shrink: 0;
+  background: radial-gradient(circle at 35% 35%,
+    color-mix(in srgb, var(--planet-color) 80%, white 40%),
+    var(--planet-color) 55%,
+    color-mix(in srgb, var(--planet-color) 25%, black));
+  box-shadow: 0 0 5px color-mix(in srgb, var(--planet-color) 45%, transparent);
+  transition: box-shadow 0.2s;
+}
+.theme-planet-cell:hover .planet-orb,
+.theme-planet-cell.theme-active .planet-orb {
+  box-shadow: 0 0 10px var(--planet-color), 0 0 20px color-mix(in srgb, var(--planet-color) 40%, transparent);
+}
+/* Dashed orbit ring — only on active */
+.planet-orbit-ring {
+  position: absolute; top: 3px; width: 36px; height: 36px;
+  border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--planet-color) 65%, transparent);
+  animation: planet-orbit-spin 4s linear infinite; pointer-events: none;
+}
+.planet-name {
+  font-size: 8.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted); line-height: 1; white-space: nowrap;
+}
+.theme-planet-cell.theme-active .planet-name { color: var(--text-secondary); }
+
+@keyframes planet-orbit-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
 

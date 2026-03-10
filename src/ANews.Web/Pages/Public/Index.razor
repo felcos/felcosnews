@@ -6,6 +6,7 @@
 @using ANews.Infrastructure.Data
 @using ANews.Infrastructure.AI
 @using ANews.Domain.Interfaces
+@using ANews.Domain.Entities
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
 @using Microsoft.EntityFrameworkCore
@@ -56,22 +57,27 @@
 
             <!-- Theme selector -->
             <div class="theme-selector" @onclick:stopPropagation>
-                <button class="theme-btn" @onclick="ToggleThemeMenu" title="Cambiar tema"></button>
+                <button class="theme-planet-trigger" @onclick="ToggleThemeMenu" title="Tema"
+                        style="--trigger-color:@(_themes[_currentTheme].Accent)">
+                    <span class="theme-trigger-ring"></span>
+                    <span class="theme-trigger-orb"></span>
+                </button>
                 @if (_themeMenuOpen)
                 {
-                    <div class="theme-dropdown">
-                        @foreach (var th in _themes)
-                        {
-                            <div class="theme-swatch-wrap">
-                                <div class="theme-swatch @(_currentTheme == th.Key ? "active" : "")"
-                                     style="background:@th.Value.Bg"
-                                     title="@th.Value.Name"
-                                     @onclick="@(() => SetTheme(th.Key))">
-                                    <span style="color:@th.Value.Accent;font-size:10px;font-weight:900;">A</span>
-                                </div>
-                                <div class="theme-swatch-label">@th.Value.Name</div>
-                            </div>
-                        }
+                    <div class="theme-planet-dropdown">
+                        <div class="theme-planet-grid">
+                            @foreach (var th in _themes)
+                            {
+                                var isActive = _currentTheme == th.Key;
+                                <button class="theme-planet-cell @(isActive ? "theme-active" : "")"
+                                        style="--planet-color:@th.Value.Accent"
+                                        @onclick="@(() => SetTheme(th.Key))">
+                                    @if (isActive) { <span class="planet-orbit-ring"></span> }
+                                    <span class="planet-orb"></span>
+                                    <span class="planet-name">@th.Value.PlanetName</span>
+                                </button>
+                            }
+                        </div>
                     </div>
                 }
             </div>
@@ -492,7 +498,7 @@
                          @onclick="@(() => SelectWorkspace(geoName, new[] { geoName }))">
                         <div class="ws-card-icon">@geo.Flag</div>
                         <div class="ws-card-name">@geoName</div>
-                        <div class="ws-card-desc">@geo.Desc</div>
+                        <div class="ws-card-desc">@geo.Description</div>
                         <div class="ws-card-count">@count eventos disponibles</div>
                     </div>
                 }
@@ -538,36 +544,15 @@
     private string[] _geoFilter = [];
     private string _customGeoInput = "";
 
-    // Geo terms per workspace: maps display name → list of matching strings
-    private static readonly Dictionary<string, string[]> _geoTerms = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["España"]     = ["Spain", "España", "Spanish", "Madrid", "Barcelona", "Catalonia", "Cataluña", "Basque", "Galicia", "Andalusia", "Valencia", "Seville", "Bilbao", "Malaga"],
-        ["Venezuela"]  = ["Venezuela", "Venezuelan", "Caracas", "Maduro"],
-        ["México"]     = ["Mexico", "México", "Mexican", "CDMX", "Ciudad de Mexico", "Guadalajara", "Monterrey"],
-        ["Argentina"]  = ["Argentina", "Argentine", "Buenos Aires", "Milei"],
-        ["Colombia"]   = ["Colombia", "Colombian", "Bogota", "Bogotá", "Medellín"],
-        ["EEUU"]       = ["United States", "USA", "U.S.", "American", "Washington", "New York", "California", "Biden", "Trump"],
-        ["Reino Unido"]= ["United Kingdom", "UK", "Britain", "British", "England", "London", "Scotland", "Wales"],
-        ["Francia"]    = ["France", "French", "Paris", "Macron"],
-        ["Alemania"]   = ["Germany", "German", "Berlin", "Deutschland"],
-        ["Israel/Gaza"]= ["Israel", "Gaza", "Palestine", "Palestinian", "Hamas", "Netanyahu", "West Bank"],
-        ["Ucrania"]    = ["Ukraine", "Ukrainian", "Kyiv", "Kiev", "Zelensky", "Zelenski"],
-        ["Rusia"]      = ["Russia", "Russian", "Moscow", "Putin", "Kremlin"],
-        ["China"]      = ["China", "Chinese", "Beijing", "Xi Jinping", "CCP"],
-    };
+    // Workspace zones loaded from DB
+    private List<WorkspaceZone> _wsPresets = [];
 
-    record WsPreset(string Name, string Flag, string Desc);
-    private static readonly WsPreset[] _wsPresets =
-    [
-        new("España",     "🇪🇸", "Noticias de España en profundidad"),
-        new("Venezuela",  "🇻🇪", "Seguimiento exhaustivo Venezuela"),
-        new("México",     "🇲🇽", "Todo sobre México"),
-        new("Ucrania",    "🇺🇦", "Conflicto y geopolítica"),
-        new("Israel/Gaza","⚔️",  "Conflicto y región"),
-        new("EEUU",       "🇺🇸", "Estados Unidos"),
-        new("China",      "🇨🇳", "Asia-Pacífico y economía global"),
-        new("Rusia",      "🇷🇺", "Geopolítica rusa"),
-    ];
+    private string[] GetGeoTerms(string zoneName)
+    {
+        var zone = _wsPresets.FirstOrDefault(z => z.Name.Equals(zoneName, StringComparison.OrdinalIgnoreCase));
+        if (zone != null && zone.GeoTerms.Count > 0) return zone.GeoTerms.ToArray();
+        return [zoneName]; // fallback: use name itself as search term
+    }
 
     private bool MatchesGeoFilter(EventItem ev) => MatchesGeoFilterFor(ev, null);
 
@@ -576,7 +561,7 @@
         var filter = singleGeo != null ? new[] { singleGeo } : _geoFilter;
         if (filter.Length == 0) return true;
         var terms = filter
-            .SelectMany(g => _geoTerms.TryGetValue(g, out var t) ? t : new[] { g })
+            .SelectMany(g => GetGeoTerms(g))
             .Select(t => t.ToLowerInvariant())
             .ToArray();
         var text = $"{ev.Location} {ev.Title} {ev.Description}".ToLowerInvariant();
@@ -659,18 +644,26 @@
             .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
             .ToListAsync();
 
+        _wsPresets = await Ctx.WorkspaceZones
+            .Where(z => z.IsActive && !z.IsDeleted)
+            .OrderBy(z => z.SortOrder)
+            .ToListAsync();
+
         await LoadEventsAsync();
         IsLoading = false;
     }
 
     private async Task LoadEventsAsync()
     {
-        Events = await Ctx.NewsEvents
+        var baseQuery = Ctx.NewsEvents
             .Include(e => e.Section)
-            .Where(e => e.IsActive && e.EventType != "Unclassified")
+            .Where(e => e.IsActive && e.EventType != "Unclassified");
+
+        // Always load global top events
+        var globalTop = await baseQuery
             .OrderByDescending(e => e.Priority)
             .ThenByDescending(e => e.ImpactScore)
-            .Take(50)
+            .Take(200)
             .Select(e => new EventItem(
                 e.Id, e.Title, e.Description, e.Priority.ToString(),
                 e.ImpactScore, e.Trend.ToString(), e.Tags,
@@ -683,6 +676,43 @@
                     .ToArray(),
                 e.Latitude, e.Longitude, e.Location))
             .ToListAsync();
+
+        // When a workspace is active, also load geo-specific events that may not be in top 200
+        if (_geoFilter.Length > 0)
+        {
+            var geoTerms = _geoFilter
+                .SelectMany(g => GetGeoTerms(g))
+                .Select(t => t.ToLowerInvariant())
+                .ToList();
+
+            var loadedIds = globalTop.Select(e => e.Id).ToHashSet();
+
+            // Load recent events matching geo terms in location/title/description
+            var geoEvents = await baseQuery
+                .Where(e => !loadedIds.Contains(e.Id) &&
+                    (geoTerms.Any(t => e.Location != null && e.Location.ToLower().Contains(t)) ||
+                     geoTerms.Any(t => e.Title.ToLower().Contains(t))))
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(100)
+                .Select(e => new EventItem(
+                    e.Id, e.Title, e.Description, e.Priority.ToString(),
+                    e.ImpactScore, e.Trend.ToString(), e.Tags,
+                    e.Section.Name, e.Section.Slug, e.StartDate,
+                    e.Articles.Count(a => !a.IsDeleted),
+                    e.Articles.Where(a => !a.IsDeleted)
+                        .OrderByDescending(a => a.Relevance)
+                        .Take(6)
+                        .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
+                        .ToArray(),
+                    e.Latitude, e.Longitude, e.Location))
+                .ToListAsync();
+
+            Events = globalTop.Concat(geoEvents).ToList();
+        }
+        else
+        {
+            Events = globalTop;
+        }
 
         CriticalAlerts = await Ctx.AlertTriggers
             .Where(a => !a.IsAcknowledged)
@@ -732,17 +762,17 @@
     // ── Theme ──────────────────────────────────────────────
     private bool _themeMenuOpen = false;
     private string _currentTheme = "dark";
-    record ThemeInfo(string Name, string Bg, string Accent);
+    record ThemeInfo(string Name, string Bg, string Accent, string PlanetName);
     private static readonly Dictionary<string, ThemeInfo> _themes = new()
     {
-        ["dark"]   = new ThemeInfo("Oscuro",  "#000511", "#4a90e2"),
-        ["light"]  = new ThemeInfo("Claro",   "#f0f4f8", "#1a6fd4"),
-        ["blue"]   = new ThemeInfo("Océano",  "#020c1b", "#00b4ff"),
-        ["matrix"] = new ThemeInfo("Matrix",  "#000800", "#00cc44"),
-        ["amber"]  = new ThemeInfo("Ámbar",   "#0a0400", "#ff9900"),
-        ["neon"]   = new ThemeInfo("Neon",    "#05000f", "#ff00cc"),
-        ["cosmos"] = new ThemeInfo("Cosmos",  "#0a0515", "#a855f7"),
-        ["red"]    = new ThemeInfo("Rojo",    "#0f0000", "#ff2020"),
+        ["dark"]   = new ThemeInfo("Oscuro",  "#000511", "#4a90e2", "Void"),
+        ["light"]  = new ThemeInfo("Claro",   "#f0f4f8", "#1a6fd4", "Pulsar"),
+        ["blue"]   = new ThemeInfo("Océano",  "#020c1b", "#00b4ff", "Neptune"),
+        ["matrix"] = new ThemeInfo("Matrix",  "#000800", "#00cc44", "Matrix"),
+        ["amber"]  = new ThemeInfo("Ámbar",   "#0a0400", "#ff9900", "Sol"),
+        ["neon"]   = new ThemeInfo("Neon",    "#05000f", "#ff00cc", "Neon"),
+        ["cosmos"] = new ThemeInfo("Cosmos",  "#0a0515", "#a855f7", "Cosmos"),
+        ["red"]    = new ThemeInfo("Rojo",    "#0f0000", "#ff2020", "Nova"),
     };
 
     private void ToggleThemeMenu() => _themeMenuOpen = !_themeMenuOpen;
@@ -772,6 +802,8 @@
                 {
                     _workspaceName = saved;
                     _geoFilter = saved.Split('+', StringSplitOptions.TrimEntries);
+                    // Reload events geo-aware now that filter is known
+                    await LoadEventsAsync();
                 }
             }
             catch { }

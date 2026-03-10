@@ -110,3 +110,13 @@ window.copyToClipboard = function(text) {
 window.confirmDialog = function(message) {
     return confirm(message);
 };
+
+// Download a text file from Blazor
+window.downloadTextFile = function(filename, content) {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+};

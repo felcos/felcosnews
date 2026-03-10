@@ -7,6 +7,7 @@
 @using ANews.Domain.Interfaces
 @using Microsoft.EntityFrameworkCore
 @using System.Text.Json
+@using System.Collections.Generic
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
 @inject AppDbContext Db
@@ -15,6 +16,7 @@
 
 <PageTitle>Fuentes de Noticias - Admin</PageTitle>
 
+<div @onclick="@(() => _seedMenuOpen = false)">
 <div class="admin-page-header">
     <div>
         <h2>Fuentes de Noticias</h2>
@@ -24,28 +26,88 @@
         <button class="btn btn-secondary" @onclick="OpenDiscoverModal" title="La IA propone feeds RSS de calidad para añadir">
             <i class="fa fa-magic"></i> Descubrir con IA
         </button>
+        <div style="position:relative" @onclick:stopPropagation>
+            <button class="btn btn-secondary" @onclick="ToggleSeedMenu" disabled="@_seeding" title="Carga feeds conocidos según zona geográfica">
+                @if (_seeding) { <i class="fa fa-spinner fa-spin"></i> } else { <i class="fa fa-flag"></i> }
+                Semilla de fuentes <i class="fa fa-caret-down" style="font-size:10px;margin-left:2px"></i>
+            </button>
+            @if (_seedMenuOpen)
+            {
+                <div style="position:absolute;top:calc(100% + 4px);right:0;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:6px;z-index:999;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+                    @if (!_seedWorkspaces.Any())
+                    {
+                        <div style="padding:8px 12px;font-size:12px;color:var(--text-muted)">
+                            Sin zonas configuradas.<br/>
+                            <a href="/admin/godmode" style="color:var(--accent)">Configúralas en GodMode</a>
+                        </div>
+                    }
+                    @foreach (var ws in _seedWorkspaces)
+                    {
+                        var wsName = ws.Name;
+                        <button style="@($"display:flex;gap:8px;align-items:center;width:100%;padding:7px 12px;border:none;color:var(--text);cursor:pointer;border-radius:6px;font-size:13px;background:{(_seedHover == wsName ? "rgba(255,255,255,.06)" : "none")}")"
+                                @onmouseover="@(e => _seedHover = wsName)" @onmouseout="@(e => _seedHover = "")"
+                                @onclick="@(() => SeedSourcesForWorkspace(wsName))">
+                            <span style="font-size:16px">@ws.Flag</span>
+                            <span>@wsName</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
         <button class="btn btn-primary" @onclick="OpenAddModal">
             <i class="fa fa-plus"></i> Nueva Fuente
         </button>
     </div>
 </div>
 
-<!-- Filters -->
+<!-- Filters + Bulk actions -->
 <div class="filter-bar">
     <input class="form-control search-input" placeholder="Buscar por nombre o URL..."
            @bind="_search" @bind:event="oninput" />
     <select class="form-control" @bind="_filterType">
         <option value="">Todos los tipos</option>
         @foreach (var t in Enum.GetValues<NewsSourceType>())
-        {
-            <option value="@t">@t</option>
-        }
+        { <option value="@t">@t</option> }
+    </select>
+    <select class="form-control" @bind="_filterSection">
+        <option value="">Todas las secciones</option>
+        @foreach (var s in _sections)
+        { <option value="@s.Id">@s.Name</option> }
     </select>
     <select class="form-control" @bind="_filterActive">
         <option value="">Todos</option>
         <option value="true">Activos</option>
         <option value="false">Inactivos</option>
     </select>
+    <select class="form-control" @bind="_filterHealth">
+        <option value="">Cualquier salud</option>
+        <option value="ok">Sin errores</option>
+        <option value="error">Con errores</option>
+        <option value="never">Nunca escaneados</option>
+    </select>
+</div>
+
+<!-- Bulk actions -->
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <span style="font-size:12px;color:var(--text-muted)">
+        @FilteredSources.Count() fuentes filtradas
+    </span>
+    <button class="btn btn-sm btn-secondary" @onclick="BulkEnableFilteredAsync" disabled="@_bulkWorking">
+        <i class="fa fa-toggle-on"></i> Activar filtradas
+    </button>
+    <button class="btn btn-sm btn-secondary" @onclick="BulkDisableFilteredAsync" disabled="@_bulkWorking">
+        <i class="fa fa-toggle-off"></i> Desactivar filtradas
+    </button>
+    <button class="btn btn-sm btn-secondary" @onclick="BulkResetErrorsAsync" disabled="@_bulkWorking">
+        <i class="fa fa-eraser"></i> Limpiar errores
+    </button>
+    <button class="btn btn-sm btn-danger" @onclick="BulkDeleteFilteredAsync" disabled="@_bulkWorking">
+        <i class="fa fa-trash"></i> Eliminar filtradas
+    </button>
+    @if (_bulkMsg != "")
+    {
+        <span style="font-size:12px;color:var(--accent-green)">@_bulkMsg</span>
+    }
 </div>
 
 <!-- Stats bar -->
@@ -67,6 +129,14 @@
         <span class="stat-label">Scans exitosos</span>
     </div>
 </div>
+
+@if (!string.IsNullOrEmpty(_seedMsg))
+{
+    <div class="alert @(_seedMsg.StartsWith("✓") ? "alert-success" : "alert-info")" style="margin-bottom:12px">
+        @_seedMsg
+        <button style="float:right;background:none;border:none;cursor:pointer;color:inherit" @onclick="@(() => _seedMsg = "")">×</button>
+    </div>
+}
 
 <!-- Table -->
 <div class="data-table-wrapper">
@@ -299,9 +369,27 @@
 
             @if (_discovering)
             {
-                <div style="text-align:center;padding:40px">
-                    <div class="loading-spinner" style="margin:0 auto 16px"></div>
-                    <p style="color:var(--text-muted)">La IA está buscando feeds RSS de calidad...</p>
+                <div style="padding:24px 0">
+                    <div style="text-align:center;margin-bottom:16px">
+                        <div class="loading-spinner" style="margin:0 auto 12px"></div>
+                        <p style="color:var(--text-muted);font-size:13px">@(_discoveryProgress != "" ? _discoveryProgress : "Iniciando búsqueda exhaustiva...")</p>
+                    </div>
+                    @if (_discoveredSources.Any())
+                    {
+                        <div style="font-size:12px;color:var(--accent);text-align:center;margin-bottom:12px">
+                            <i class="fa fa-check-circle"></i> @_discoveredSources.Count fuentes encontradas hasta ahora
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;opacity:0.7">
+                            @foreach (var ds in _discoveredSources.TakeLast(8))
+                            {
+                                <div style="font-size:11px;padding:4px 8px;background:var(--card-bg);border-radius:4px;display:flex;gap:8px">
+                                    <span style="color:var(--accent-green)">✓</span>
+                                    <span style="color:var(--text)">@ds.Name</span>
+                                    <span style="color:var(--text-muted);font-size:10px;word-break:break-all">@ds.Url</span>
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             }
             else if (_discoveryError != null)
@@ -369,14 +457,26 @@
     </div>
 }
 
+</div><!-- close outer click-to-close wrapper -->
+
 @code {
     private List<NewsSource> _sources = new();
     private List<NewsSection> _sections = new();
     private string _search = "";
     private string _filterType = "";
     private string _filterActive = "";
+    private string _filterSection = "";
+    private string _filterHealth = "";
+    private bool _bulkWorking;
+    private string _bulkMsg = "";
     private bool _showModal;
     private bool _saving;
+
+    private bool _seeding;
+    private bool _seedMenuOpen;
+    private string _seedHover = "";
+    private string _seedMsg = "";
+    private List<WorkspaceZone> _seedWorkspaces = [];
 
     // ── AI Discovery ──────────────────────────────────────
     private bool _showDiscoverModal;
@@ -386,6 +486,7 @@
     private int _discoveryCount = 20;
     private int _discoveryDefaultSection;
     private string? _discoveryError;
+    private string _discoveryProgress = "";
     private List<DiscoveredSource> _discoveredSources = new();
 
     class DiscoveredSource
@@ -404,13 +505,20 @@
 
     private SourceForm _form = new();
 
-    private IEnumerable<NewsSource> FilteredSources => _sources
-        .Where(s =>
-            (string.IsNullOrEmpty(_search) ||
-             s.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
-             s.Url.Contains(_search, StringComparison.OrdinalIgnoreCase)) &&
-            (string.IsNullOrEmpty(_filterType) || s.Type.ToString() == _filterType) &&
-            (string.IsNullOrEmpty(_filterActive) || s.IsActive.ToString().ToLower() == _filterActive));
+    private IEnumerable<NewsSource> FilteredSources => _sources.Where(s =>
+        (string.IsNullOrEmpty(_search) ||
+         s.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+         s.Url.Contains(_search, StringComparison.OrdinalIgnoreCase)) &&
+        (string.IsNullOrEmpty(_filterType) || s.Type.ToString() == _filterType) &&
+        (string.IsNullOrEmpty(_filterSection) || s.NewsSectionId.ToString() == _filterSection) &&
+        (string.IsNullOrEmpty(_filterActive) || s.IsActive.ToString().ToLower() == _filterActive) &&
+        (_filterHealth switch
+        {
+            "ok"    => s.LastError == null,
+            "error" => s.LastError != null,
+            "never" => !s.LastScannedAt.HasValue,
+            _       => true
+        }));
 
     protected override async Task OnInitializedAsync()
     {
@@ -426,6 +534,11 @@
 
         _sections = await Db.NewsSections
             .OrderBy(s => s.Name)
+            .ToListAsync();
+
+        _seedWorkspaces = await Db.WorkspaceZones
+            .Where(z => z.IsActive && !z.IsDeleted)
+            .OrderBy(z => z.SortOrder)
             .ToListAsync();
     }
 
@@ -516,6 +629,53 @@
         await Db.SaveChangesAsync();
     }
 
+    private async Task BulkEnableFilteredAsync()
+    {
+        _bulkWorking = true; _bulkMsg = "";
+        var targets = FilteredSources.Where(s => !s.IsActive).ToList();
+        foreach (var s in targets) s.IsActive = true;
+        await Db.SaveChangesAsync();
+        _bulkMsg = $"✓ {targets.Count} fuentes activadas";
+        _bulkWorking = false;
+        _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task BulkDisableFilteredAsync()
+    {
+        _bulkWorking = true; _bulkMsg = "";
+        var targets = FilteredSources.Where(s => s.IsActive).ToList();
+        foreach (var s in targets) s.IsActive = false;
+        await Db.SaveChangesAsync();
+        _bulkMsg = $"✓ {targets.Count} fuentes desactivadas";
+        _bulkWorking = false;
+        _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task BulkResetErrorsAsync()
+    {
+        _bulkWorking = true; _bulkMsg = "";
+        var targets = FilteredSources.Where(s => s.LastError != null).ToList();
+        foreach (var s in targets) { s.LastError = null; s.FailedScans = 0; }
+        await Db.SaveChangesAsync();
+        _bulkMsg = $"✓ Errores limpiados en {targets.Count} fuentes";
+        _bulkWorking = false;
+        _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task BulkDeleteFilteredAsync()
+    {
+        var count = FilteredSources.Count();
+        var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"¿Eliminar {count} fuentes filtradas?");
+        if (!confirmed) return;
+        _bulkWorking = true; _bulkMsg = "";
+        var targets = FilteredSources.ToList();
+        foreach (var s in targets) { s.IsDeleted = true; _sources.Remove(s); }
+        await Db.SaveChangesAsync();
+        _bulkMsg = $"✓ {targets.Count} fuentes eliminadas";
+        _bulkWorking = false;
+        _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
+    }
+
     private async Task ConfirmDelete(NewsSource src)
     {
         var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"Eliminar fuente '{src.Name}'?");
@@ -567,6 +727,253 @@
         public bool IsActive { get; set; } = true;
     }
 
+    // ── Seed feeds by workspace ───────────────────────────
+    private void ToggleSeedMenu() => _seedMenuOpen = !_seedMenuOpen;
+
+    private async Task SeedSourcesForWorkspace(string workspace)
+    {
+        _seedMenuOpen = false;
+        _seeding = true;
+        _seedMsg = "";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var feeds = GetSeedFeeds(workspace);
+            var existingUrls = _sources.Select(s => s.Url).ToHashSet();
+            int added = 0;
+
+            foreach (var (name, url, lang, cred, topic) in feeds)
+            {
+                if (existingUrls.Contains(url)) continue;
+
+                var sectionId = ResolveSectionId(topic);
+
+                await Db.NewsSources.AddAsync(new NewsSource
+                {
+                    Name = name,
+                    Url = url,
+                    Type = NewsSourceType.Rss,
+                    Language = lang,
+                    CredibilityScore = cred,
+                    NewsSectionId = sectionId,
+                    IsActive = false
+                });
+                existingUrls.Add(url);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                await Db.SaveChangesAsync();
+                await LoadData();
+                _seedMsg = $"✓ {added} fuentes de {workspace} añadidas (inactivas — actívalas desde la tabla)";
+            }
+            else
+            {
+                _seedMsg = $"Todas las fuentes de {workspace} ya estaban en el sistema.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _seedMsg = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _seeding = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private int ResolveSectionId(string topic)
+    {
+        // Try exact or partial match on section name
+        var match = _sections.FirstOrDefault(s =>
+            s.Name.Contains(topic, StringComparison.OrdinalIgnoreCase) ||
+            topic.Contains(s.Name, StringComparison.OrdinalIgnoreCase));
+        if (match != null) return match.Id;
+        // Specific slug overrides
+        if (topic is "Farándula" or "Sociedad")
+        {
+            var sec = _sections.FirstOrDefault(s => s.Slug is "farandula" or "social");
+            if (sec != null) return sec.Id;
+        }
+        return _sections.FirstOrDefault()?.Id ?? 1;
+    }
+
+    // Feed catalogue per workspace: (Name, Url, Lang, Credibility, Topic)
+    private static List<(string, string, string, int, string)> GetSeedFeeds(string workspace) => workspace switch
+    {
+        "España" =>
+        [
+            // Prensa general
+            ("El País", "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", "es", 95, "Noticias"),
+            ("El Mundo", "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", "es", 88, "Noticias"),
+            ("ABC España", "https://www.abc.es/rss/feeds/abc_ultima_hora_nacional.xml", "es", 85, "Noticias"),
+            ("La Vanguardia", "https://www.lavanguardia.com/mvc/feed/rss/home", "es", 87, "Noticias"),
+            ("El Confidencial", "https://rss.elconfidencial.com/espana/", "es", 84, "Noticias"),
+            ("elDiario.es", "https://www.eldiario.es/rss/", "es", 83, "Noticias"),
+            ("El Español", "https://feeds.feedburner.com/elespanolcom", "es", 78, "Noticias"),
+            ("La Razón", "https://www.larazon.es/rss/", "es", 76, "Noticias"),
+            ("Público", "https://www.publico.es/rss/", "es", 77, "Noticias"),
+            ("InfoLibre", "https://www.infolibre.es/rss.xml", "es", 78, "Noticias"),
+            ("20minutos", "https://www.20minutos.es/rss/", "es", 74, "Noticias"),
+            ("El Periódico", "https://www.elperiodico.com/es/rss/rss_portada.xml", "es", 80, "Noticias"),
+            ("OKDiario", "https://okdiario.com/feed", "es", 68, "Noticias"),
+            // TV / Radio
+            ("RTVE Noticias", "https://www.rtve.es/noticias/rss/portada/", "es", 90, "Noticias"),
+            ("La Sexta Noticias", "https://www.lasexta.com/rss/noticias", "es", 80, "Noticias"),
+            ("Antena 3 Noticias", "https://www.antena3.com/noticias/rss/", "es", 80, "Noticias"),
+            ("Cadena SER", "https://cadenaser.com/rss/portada/", "es", 85, "Noticias"),
+            ("COPE", "https://www.cope.es/feed", "es", 80, "Noticias"),
+            // Economía
+            ("Expansión", "https://e00-expansion.uecdn.es/rss/portada.xml", "es", 88, "Economía Global"),
+            ("Cinco Días", "https://cincodias.elpais.com/rss/feed.html?", "es", 86, "Economía Global"),
+            ("El Economista", "https://www.eleconomista.es/rss/rss-portada.php", "es", 83, "Economía Global"),
+            // Tecnología
+            ("Xataka", "https://feeds.weblogssl.com/xataka", "es", 90, "Tecnologia"),
+            ("Genbeta", "https://feeds.weblogssl.com/genbeta", "es", 85, "Tecnologia"),
+            ("Hipertextual", "https://hipertextual.com/feed", "es", 84, "Tecnologia"),
+            ("Muy Interesante", "https://www.muyinteresante.es/rss", "es", 82, "Tecnologia"),
+            // Deportes
+            ("Marca", "https://e00-marca.uecdn.es/rss/portada.xml", "es", 90, "Deportes"),
+            ("AS", "https://as.com/rss/portada.xml", "es", 88, "Deportes"),
+            ("Sport", "https://www.sport.es/rss/portada.xml", "es", 82, "Deportes"),
+            ("Mundo Deportivo", "https://www.mundodeportivo.com/mvc/feed/rss/home", "es", 84, "Deportes"),
+            // Política
+            ("El País Política", "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/espana/portada", "es", 93, "Politica"),
+            ("El Mundo España", "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml", "es", 86, "Politica"),
+            // Regional
+            ("El Correo", "https://www.elcorreo.com/rss/2.0/?section=portada", "es", 80, "Noticias"),
+            ("La Voz de Galicia", "https://www.lavozdegalicia.es/rss/portada.xml", "es", 79, "Noticias"),
+            ("Heraldo de Aragón", "https://www.heraldo.es/rss/portada.xml", "es", 78, "Noticias"),
+            ("Diario Sur", "https://www.diariosur.es/rss/feeds/noticias.xml", "es", 75, "Noticias"),
+            // Social / Farándula
+            ("Hola.com", "https://www.hola.com/rss/", "es", 80, "Farándula"),
+            ("Semana", "https://www.semana.es/feed/", "es", 76, "Farándula"),
+            ("Lecturas", "https://www.lecturas.com/rss/", "es", 74, "Farándula"),
+            ("Vanitatis", "https://www.vanitatis.elconfidencial.com/rss/", "es", 78, "Farándula"),
+            ("Pronto", "https://www.pronto.es/feed", "es", 72, "Farándula"),
+            ("Diez Minutos", "https://www.diezminutos.es/rss/", "es", 71, "Farándula"),
+        ],
+
+        "Venezuela" =>
+        [
+            ("El Nacional VE", "https://www.el-nacional.com/feed/", "es", 82, "Politica"),
+            ("Tal Cual Digital", "https://talcualdigital.com/feed/", "es", 83, "Politica"),
+            ("El Pitazo", "https://elpitazo.net/feed/", "es", 81, "Noticias"),
+            ("Efecto Cocuyo", "https://efectococuyo.com/feed/", "es", 84, "Noticias"),
+            ("La Patilla", "https://www.lapatilla.com/feed/", "es", 79, "Noticias"),
+            ("Analítica", "https://analitica.com/feed/", "es", 78, "Noticias"),
+            ("Caraota Digital", "https://caraotadigital.net/feed/", "es", 77, "Noticias"),
+            ("Últimas Noticias VE", "https://www.ultimasnoticias.com.ve/feed/", "es", 75, "Noticias"),
+            ("El Universal VE", "https://www.eluniversal.com/rss", "es", 80, "Noticias"),
+            ("Runrun.es", "https://runrun.es/feed/", "es", 83, "Noticias"),
+            ("VPI TV", "https://vpitv.com/feed/", "es", 78, "Noticias"),
+            ("TalCual Economía", "https://talcualdigital.com/seccion/economia/feed/", "es", 82, "Economía Global"),
+            ("BBC Mundo Venezuela", "https://feeds.bbci.co.uk/mundo/rss.xml", "es", 90, "Noticias"),
+            ("CNN en Español", "https://cnnespanol.cnn.com/feed/", "es", 88, "Noticias"),
+        ],
+
+        "México" =>
+        [
+            ("El Universal MX", "https://www.eluniversal.com.mx/rss.xml", "es", 88, "Noticias"),
+            ("Milenio", "https://www.milenio.com/rss", "es", 84, "Noticias"),
+            ("La Jornada", "https://www.jornada.com.mx/rss/edicion.xml", "es", 82, "Noticias"),
+            ("Excélsior", "https://www.excelsior.com.mx/rss.xml", "es", 83, "Noticias"),
+            ("El Financiero MX", "https://www.elfinanciero.com.mx/arc/outboundfeeds/rss/", "es", 86, "Economía Global"),
+            ("Proceso", "https://www.proceso.com.mx/rss", "es", 85, "Politica"),
+            ("Animal Político", "https://www.animalpolitico.com/feed", "es", 87, "Politica"),
+            ("Sin Embargo", "https://www.sinembargo.mx/feed", "es", 80, "Noticias"),
+            ("Reforma", "https://www.reforma.com/rss/portada.xml", "es", 85, "Noticias"),
+            ("Aristegui Noticias", "https://aristeguinoticias.com/feed/", "es", 86, "Noticias"),
+            ("El Economista MX", "https://www.eleconomista.com.mx/rss/rss.xml", "es", 82, "Economía Global"),
+            ("MILENIO Deportes", "https://www.milenio.com/deportes/rss", "es", 80, "Deportes"),
+            ("Record MX", "https://www.record.com.mx/rss", "es", 78, "Deportes"),
+        ],
+
+        "EEUU" =>
+        [
+            ("AP News", "https://feeds.apnews.com/apnews/topnews", "en", 98, "Noticias"),
+            ("Reuters", "https://feeds.reuters.com/reuters/topNews", "en", 97, "Noticias"),
+            ("NPR News", "https://feeds.npr.org/1001/rss.xml", "en", 92, "Noticias"),
+            ("PBS NewsHour", "https://www.pbs.org/newshour/feeds/rss/headlines", "en", 91, "Noticias"),
+            ("CNN Top Stories", "http://rss.cnn.com/rss/cnn_topstories.rss", "en", 88, "Noticias"),
+            ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml", "en", 93, "Noticias"),
+            ("The New York Times", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", "en", 94, "Noticias"),
+            ("The Washington Post", "http://feeds.washingtonpost.com/rss/world", "en", 93, "Noticias"),
+            ("Wall Street Journal", "https://feeds.a.dj.com/rss/RSSWorldNews.xml", "en", 93, "Economía Global"),
+            ("Politico", "https://www.politico.com/rss/politicopicks.xml", "en", 88, "Politica"),
+            ("The Hill", "https://thehill.com/news/feed/", "en", 84, "Politica"),
+            ("Axios", "https://api.axios.com/feed/", "en", 86, "Noticias"),
+            ("Bloomberg", "https://feeds.bloomberg.com/markets/news.rss", "en", 93, "Economía Global"),
+            ("Forbes", "https://www.forbes.com/innovation/feed2", "en", 86, "Economía Global"),
+            ("TechCrunch", "https://techcrunch.com/feed/", "en", 90, "Tecnologia"),
+            ("The Verge", "https://www.theverge.com/rss/index.xml", "en", 88, "Tecnologia"),
+            ("Wired", "https://www.wired.com/feed/rss", "en", 87, "Tecnologia"),
+            ("ESPN", "https://www.espn.com/espn/rss/news", "en", 88, "Deportes"),
+        ],
+
+        "Ucrania" =>
+        [
+            ("Kyiv Independent", "https://kyivindependent.com/feed/", "en", 88, "Noticias"),
+            ("Ukrainska Pravda EN", "https://www.pravda.com.ua/eng/rss/view_news/", "en", 87, "Noticias"),
+            ("Kyiv Post", "https://www.kyivpost.com/rss", "en", 84, "Noticias"),
+            ("Reuters Ukraine", "https://feeds.reuters.com/reuters/worldNews", "en", 97, "Noticias"),
+            ("BBC Ukraine", "https://feeds.bbci.co.uk/news/world/europe/rss.xml", "en", 93, "Noticias"),
+            ("Al Jazeera Europe", "https://www.aljazeera.com/xml/rss/all.xml", "en", 88, "Noticias"),
+            ("DW Ukraine", "https://rss.dw.com/rdf/rss-en-eur", "en", 87, "Geopolítica"),
+            ("Euronews", "https://feeds.feedburner.com/euronews/en/news", "en", 85, "Noticias"),
+            ("Foreign Policy", "https://foreignpolicy.com/feed/", "en", 90, "Geopolítica"),
+            ("UNIAN", "https://www.unian.info/rss", "en", 82, "Noticias"),
+            ("Interfax Ukraine", "https://en.interfax.com.ua/news/general.rss", "en", 83, "Noticias"),
+        ],
+
+        "Israel/Gaza" =>
+        [
+            ("Haaretz", "https://www.haaretz.com/srv/haaretz-en/rss.xml", "en", 87, "Noticias"),
+            ("Jerusalem Post", "https://www.jpost.com/Rss/RssFeedsHeadlines.aspx", "en", 83, "Noticias"),
+            ("Times of Israel", "https://www.timesofisrael.com/feed/", "en", 85, "Noticias"),
+            ("Al Jazeera Middle East", "https://www.aljazeera.com/xml/rss/all.xml", "en", 88, "Noticias"),
+            ("Middle East Eye", "https://www.middleeasteye.net/rss", "en", 82, "Noticias"),
+            ("Reuters Middle East", "https://feeds.reuters.com/reuters/worldNews", "en", 97, "Noticias"),
+            ("BBC Middle East", "http://feeds.bbci.co.uk/news/world/middle_east/rss.xml", "en", 93, "Noticias"),
+            ("i24 News", "https://www.i24news.tv/en/rss", "en", 80, "Noticias"),
+            ("Arab News", "https://www.arabnews.com/rss.xml", "en", 78, "Noticias"),
+            ("The Guardian ME", "https://www.theguardian.com/world/middleeast/rss", "en", 88, "Noticias"),
+        ],
+
+        "China" =>
+        [
+            ("Xinhua English", "http://www.xinhuanet.com/english/rss/worldrss.xml", "en", 70, "Noticias"),
+            ("CGTN", "https://www.cgtn.com/subscribe/rss/section/world.xml", "en", 68, "Noticias"),
+            ("South China Morning Post", "https://www.scmp.com/rss/91/feed", "en", 88, "Noticias"),
+            ("Global Times", "https://www.globaltimes.cn/rss/outboundfeeds/world-rss.xml", "en", 65, "Noticias"),
+            ("Reuters China", "https://feeds.reuters.com/reuters/CNTopNews", "en", 97, "Noticias"),
+            ("BBC China", "http://feeds.bbci.co.uk/news/world/asia/china/rss.xml", "en", 93, "Noticias"),
+            ("Nikkei Asia China", "https://asia.nikkei.com/rss/feed/section/china", "en", 87, "Economía Global"),
+            ("Bloomberg Asia", "https://feeds.bloomberg.com/asia/news.rss", "en", 92, "Economía Global"),
+            ("The Diplomat China", "https://thediplomat.com/category/the-pulse/china/feed/", "en", 86, "Geopolítica"),
+            ("Foreign Affairs", "https://www.foreignaffairs.com/rss.xml", "en", 91, "Geopolítica"),
+        ],
+
+        "Rusia" =>
+        [
+            ("The Moscow Times", "https://www.themoscowtimes.com/rss/news", "en", 86, "Noticias"),
+            ("Meduza EN", "https://meduza.io/en/rss/all", "en", 85, "Noticias"),
+            ("The Insider Russia", "https://theins.ru/en/feed", "en", 83, "Noticias"),
+            ("Reuters Russia", "https://feeds.reuters.com/reuters/worldNews", "en", 97, "Noticias"),
+            ("BBC Russia/Europe", "http://feeds.bbci.co.uk/news/world/europe/rss.xml", "en", 93, "Noticias"),
+            ("Al Jazeera Russia", "https://www.aljazeera.com/xml/rss/all.xml", "en", 88, "Noticias"),
+            ("DW Russia", "https://rss.dw.com/rdf/rss-en-eur", "en", 87, "Noticias"),
+            ("Kyiv Independent (Rusia)", "https://kyivindependent.com/feed/", "en", 88, "Noticias"),
+            ("Foreign Policy", "https://foreignpolicy.com/feed/", "en", 90, "Geopolítica"),
+            ("RFERL", "https://www.rferl.org/api/epiqrllz_ruqpme-lem", "en", 84, "Noticias"),
+        ],
+
+        _ => []
+    };
+
     // ── AI Discovery methods ──────────────────────────────
     private void OpenDiscoverModal()
     {
@@ -584,79 +991,195 @@
         _discoveryError = null;
     }
 
+    record DiscoveryRound(string Label, string Prompt);
+
+    private List<DiscoveryRound> BuildDiscoveryRounds()
+    {
+        var hasTopic = !string.IsNullOrWhiteSpace(_discoveryTopic);
+        var topic = _discoveryTopic.Trim();
+        var rounds = new List<DiscoveryRound>();
+        var langNote = _discoveryLang switch { "es" => "en ESPAÑOL únicamente", "en" => "in ENGLISH only", _ => "in English and Spanish" };
+
+        if (hasTopic)
+        {
+            // Topic-focused: 4 rounds drilling deep into that topic
+            rounds.Add(new($"Medios principales sobre «{topic}»",
+                $"List 20 RSS/Atom feeds from MAJOR mainstream news outlets covering \"{topic}\" {langNote}. " +
+                "Include newspapers, TV networks, wire services (AP, Reuters, AFP). " +
+                "Only use feeds you are certain exist and are currently active."));
+
+            rounds.Add(new($"Medios especializados en «{topic}»",
+                $"List 20 RSS/Atom feeds from SPECIALIST and NICHE publications about \"{topic}\" {langNote}. " +
+                "Think trade press, industry blogs, academic news sites, think tanks, NGOs related to this topic. " +
+                "Avoid repeating mainstream outlets from previous searches."));
+
+            rounds.Add(new($"Fuentes regionales / locales sobre «{topic}»",
+                $"List 15 RSS/Atom feeds from REGIONAL or LOCAL news sources covering \"{topic}\" {langNote}. " +
+                "Include sources from different countries or regions that cover this topic actively."));
+
+            rounds.Add(new($"Podcasts, newsletters y alternativos sobre «{topic}»",
+                $"List 15 RSS/Atom feeds from newsletters, podcast feeds, alternative media, and independent journalists covering \"{topic}\" {langNote}. " +
+                "Include Substack feeds, podcast RSS, independent outlets."));
+        }
+        else if (_discoveryLang == "es")
+        {
+            rounds.Add(new("Grandes diarios españoles",
+                "List 20 RSS/Atom feeds from major SPANISH newspapers and portals: El País, El Mundo, ABC, La Vanguardia, El Confidencial, elDiario.es, El Economista, Cinco Días, Expansión, Abc.es, La Razón, 20minutos, El Periódico, El Español, OKDiario, InfoLibre, Publico.es, La Sexta Noticias, Antena3 Noticias, RTVE. Include their section feeds (política, economía, tecnología, deportes)."));
+
+            rounds.Add(new("Medios latinoamericanos en español",
+                "List 20 RSS/Atom feeds from LATIN AMERICAN news outlets: Infobae, Clarín, La Nación (Argentina), El Universal (Mexico), Milenio, La Jornada, El Tiempo (Colombia), El Comercio (Peru/Ecuador), El País (Uruguay), El Nacional (Venezuela), Últimas Noticias, TalCual Digital, El Pitazo, La República, BBC Mundo, CNN en Español, RT en Español, Deutsche Welle Español, France24 Español."));
+
+            rounds.Add(new("Tecnología, ciencia y economía en español",
+                "List 20 RSS/Atom feeds from Spanish-language TECH, SCIENCE and ECONOMY sources: Xataka, Hipertextual, Genbeta, Incognitosis, MIT Technology Review Español, El País Tecnología, Muy Interesante, National Geographic España, Investigación y Ciencia, SINC, Eleconomista.es, Expansión Economía, Cinco Días Mercados, CincoDías Tecnología."));
+
+            rounds.Add(new("Deportes, cultura y sociedad en español",
+                "List 20 RSS/Atom feeds from Spanish-language SPORTS, CULTURE and SOCIETY: Marca, AS, Sport, Mundo Deportivo, El Confidencial Deportes, Radio Marca, SER Deportivos, UEFA, FIFA, LaLiga, El Cultural, El País Cultura, ABC Cultural, Cadena SER, COPE, RNE, eldiario.es Sociedad, La Vanguardia Vida."));
+        }
+        else if (_discoveryLang == "en")
+        {
+            rounds.Add(new("International wire services and newspapers",
+                "List 20 RSS/Atom feeds from top INTERNATIONAL English news: Reuters, AP, AFP, BBC News, BBC World Service, The Guardian, The Times, Financial Times, The Economist, The Telegraph, Independent, The New York Times, Washington Post, Wall Street Journal, Los Angeles Times, USA Today, Chicago Tribune, Politico, NPR, PBS NewsHour."));
+
+            rounds.Add(new("Technology and science in English",
+                "List 20 RSS/Atom feeds from top ENGLISH tech, science and innovation: TechCrunch, Wired, The Verge, Ars Technica, Engadget, MIT Technology Review, IEEE Spectrum, Nature News, Science Magazine, New Scientist, Popular Science, Popular Mechanics, Gizmodo, 9to5Mac, 9to5Google, AndroidPolice, AnandTech, Tom's Hardware, ExtremeTech, Hacker News."));
+
+            rounds.Add(new("Business, economy and markets in English",
+                "List 20 RSS/Atom feeds from ENGLISH business and economy: Bloomberg, Forbes, Fortune, Business Insider, CNBC, MarketWatch, Investopedia, Financial Times, The Economist, Harvard Business Review, Inc Magazine, Fast Company, Quartz, Rest of World, The Information, Morning Brew, Axios Markets, Yahoo Finance, Seeking Alpha, Barron's."));
+
+            rounds.Add(new("TV, politics, world affairs in English",
+                "List 20 RSS/Atom feeds from ENGLISH TV news, politics and world affairs: CNN, Fox News, MSNBC, Al Jazeera English, France24 English, DW English, Euronews English, Sky News, Channel 4 News, ABC News, CBS News, NBC News, Axios, Politico, The Hill, Foreign Policy, Foreign Affairs, The Atlantic, New Yorker, Mother Jones."));
+        }
+        else
+        {
+            // Any language — broad mix
+            rounds.Add(new("Medios internacionales principales",
+                "List 25 RSS/Atom feeds from top INTERNATIONAL mainstream news in both English and Spanish: BBC, Reuters, AP, El País, CNN, Al Jazeera, Deutsche Welle, France24, Euronews, RTVE, Infobae, The Guardian, El Mundo, Clarín, La Vanguardia, ABC Spain, NPR, Bloomberg, Forbes, El Economista. Include section-specific feeds where available."));
+
+            rounds.Add(new("Tecnología y ciencia (ES+EN)",
+                "List 25 RSS/Atom feeds from TOP TECHNOLOGY and SCIENCE sources in Spanish and English: TechCrunch, The Verge, Wired, Ars Technica, MIT Technology Review, Xataka, Hipertextual, Genbeta, Nature, Science Magazine, New Scientist, IEEE Spectrum, Engadget, 9to5Mac, Gizmodo, El País Tecnología, Muy Interesante, SINC, Popular Science."));
+
+            rounds.Add(new("Economía, política y geopolítica",
+                "List 25 RSS/Atom feeds from ECONOMY, POLITICS and GEOPOLITICS: Financial Times, The Economist, Bloomberg, Wall Street Journal, Forbes, Expansión, Cinco Días, El Economista, Foreign Policy, Foreign Affairs, Politico, The Hill, Axios, El Confidencial, Mercado Financiero, Project Syndicate, Council on Foreign Relations, Brookings Institution, IISS, Chatham House."));
+
+            rounds.Add(new("Deportes, cultura, salud y sociedad",
+                "List 20 RSS/Atom feeds from SPORTS, CULTURE, HEALTH and SOCIETY: Marca, AS, ESPN, BBC Sport, Sky Sports, Olympic Channel, El País Cultura, The Guardian Culture, Rolling Stone, Pitchfork, NPR Music, WHO News, WebMD, Healthline, National Geographic, Smithsonian Magazine, TED Talks, Medium, Longreads, Aeon."));
+        }
+
+        return rounds;
+    }
+
+    private List<DiscoveredSource> ParseDiscoveryResponse(string content, HashSet<string> existingUrls)
+    {
+        var result = new List<DiscoveredSource>();
+        try
+        {
+            var start = content.IndexOf('{');
+            var end = content.LastIndexOf('}');
+            if (start < 0 || end <= start) return result;
+            var json = content[start..(end + 1)];
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("sources", out var arr)) return result;
+            foreach (var el in arr.EnumerateArray())
+            {
+                var url = (el.TryGetProperty("url", out var u) ? u.GetString() : null) ?? "";
+                var name = (el.TryGetProperty("name", out var n) ? n.GetString() : null) ?? "";
+                if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(name)) continue;
+                // Normalize URL
+                url = url.Trim();
+                if (!url.StartsWith("http")) continue;
+                if (existingUrls.Contains(url)) continue;
+                if (_discoveredSources.Any(s => s.Url == url)) continue;
+                result.Add(new DiscoveredSource
+                {
+                    Name = name,
+                    Url = url,
+                    Language = (el.TryGetProperty("language", out var l) ? l.GetString() : null) ?? (_discoveryLang == "es" ? "es" : "en"),
+                    Credibility = el.TryGetProperty("credibility", out var c) ? Math.Clamp(c.GetInt32(), 40, 100) : 75,
+                    Topic = (el.TryGetProperty("topic", out var t) ? t.GetString() : null) ?? _discoveryTopic,
+                    SectionId = _discoveryDefaultSection,
+                    Selected = true
+                });
+            }
+        }
+        catch { }
+        return result;
+    }
+
     private async Task RunDiscovery()
     {
         _discovering = true;
         _discoveryError = null;
+        _discoveryProgress = "";
         _discoveredSources.Clear();
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
 
         try
         {
             var provider = await AiFactory.GetDefaultProviderAsync();
-            var existingUrls = _sources.Select(s => s.Url).Take(20).ToList();
-            var langClause = _discoveryLang == "any" ? "" : $" en idioma: {(_discoveryLang == "es" ? "español" : "inglés")}";
-            var topicClause = string.IsNullOrWhiteSpace(_discoveryTopic)
-                ? "Cubre variedad de temas: Política internacional, Economía, Tecnología, Ciencia, Deportes, Cultura, Salud, Medio Ambiente, Entretenimiento, Ciberseguridad, IA, Mercados financieros, Conflictos, Energía, Espacio."
-                : $"Especializada en: {_discoveryTopic}.";
+            var existingUrls = _sources.Select(s => s.Url).ToHashSet();
+            var rounds = BuildDiscoveryRounds();
+            var systemPrompt =
+                "You are a journalism and digital media expert with encyclopedic knowledge of RSS/Atom feeds worldwide. " +
+                "You only list feeds that you are CERTAIN exist and are currently active. " +
+                "You always provide the exact, full RSS/Atom URL — not the website homepage. " +
+                "Common RSS URL patterns: /feed, /rss, /rss.xml, /atom.xml, /feed.xml, /news/rss, /rss/all.xml. " +
+                "You respond ONLY with valid JSON, no markdown, no explanations.";
 
-            var exampleJson = "{\"sources\":[{\"name\":\"BBC Technology\",\"url\":\"http://feeds.bbci.co.uk/news/technology/rss.xml\",\"language\":\"en\",\"credibility\":95,\"topic\":\"Tecnología\"},{\"name\":\"El Pais\",\"url\":\"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada\",\"language\":\"es\",\"credibility\":90,\"topic\":\"General\"}]}";
-            var prompt = $"Genera exactamente {_discoveryCount} fuentes RSS/Atom de noticias reales y de alta calidad{langClause}.\n" +
-                $"{topicClause}\n\n" +
-                "REQUISITOS:\n" +
-                "- URLs de feeds RSS/Atom reales y funcionales (probadas y conocidas)\n" +
-                "- Fuentes de medios reconocidos: BBC, Reuters, AP, El Pais, El Mundo, La Vanguardia, Expansion, Xataka, MIT Tech Review, Nature, Science, TechCrunch, Wired, Bloomberg, Forbes, ESPN, Marca, AS, National Geographic, CNN, Al Jazeera, DW, France24, etc.\n" +
-                $"- NO incluyas estas URLs ya existentes: {string.Join(", ", existingUrls.Take(5))}\n" +
-                "- Variedad: no repitas el mismo medio con distintas categorias mas de 2 veces\n" +
-                "- Credibilidad 60-100 segun reputacion del medio\n\n" +
-                $"Responde SOLO con JSON valido, sin markdown, sin explicaciones. Formato exacto: {exampleJson}";
+            var exampleJson =
+                "{\"sources\":[" +
+                "{\"name\":\"BBC World News\",\"url\":\"http://feeds.bbci.co.uk/news/world/rss.xml\",\"language\":\"en\",\"credibility\":97,\"topic\":\"General\"}," +
+                "{\"name\":\"El País\",\"url\":\"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada\",\"language\":\"es\",\"credibility\":92,\"topic\":\"General\"}" +
+                "]}";
 
-            var response = await provider.CompleteAsync(new AiRequest
+            int roundNum = 0;
+            foreach (var round in rounds)
             {
-                SystemPrompt = "Eres un experto en medios de comunicación digitales. Conoces miles de feeds RSS de noticias reales y activos. Respondes SIEMPRE con JSON válido.",
-                UserPrompt = prompt,
-                MaxTokens = 4000,
-                Temperature = 0.4,
-                OperationTag = "source_discovery"
-            });
+                roundNum++;
+                _discoveryProgress = $"Ronda {roundNum}/{rounds.Count}: {round.Label}";
+                await InvokeAsync(StateHasChanged);
 
-            if (!response.Success || string.IsNullOrEmpty(response.Content))
-            {
-                _discoveryError = "La IA no devolvió respuesta. Verifica que hay un proveedor activo con tokens suficientes.";
-                return;
-            }
+                var alreadyFoundUrls = _discoveredSources.Select(s => s.Url).Take(20).ToList();
+                var skipNote = alreadyFoundUrls.Any()
+                    ? $"\nDo NOT repeat these already found URLs: {string.Join(", ", alreadyFoundUrls.Take(10))}"
+                    : "";
 
-            // Extract JSON
-            var json = response.Content;
-            var start = json.IndexOf('{');
-            var end = json.LastIndexOf('}');
-            if (start >= 0 && end > start) json = json[start..(end + 1)];
+                var prompt = round.Prompt + skipNote +
+                    $"\n\nRespond ONLY with valid JSON, no markdown. Exact format:\n{exampleJson}";
 
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("sources", out var arr)) { _discoveryError = "Formato inesperado de la respuesta IA."; return; }
-
-            foreach (var el in arr.EnumerateArray())
-            {
-                var ds = new DiscoveredSource
+                try
                 {
-                    Name = el.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    Url = el.TryGetProperty("url", out var u) ? u.GetString() ?? "" : "",
-                    Language = el.TryGetProperty("language", out var l) ? l.GetString() ?? "en" : "en",
-                    Credibility = el.TryGetProperty("credibility", out var c) ? c.GetInt32() : 75,
-                    Topic = el.TryGetProperty("topic", out var t) ? t.GetString() ?? "" : "",
-                    SectionId = _discoveryDefaultSection,
-                    Selected = true
-                };
-                if (!string.IsNullOrWhiteSpace(ds.Url) && !string.IsNullOrWhiteSpace(ds.Name))
-                    _discoveredSources.Add(ds);
+                    var response = await provider.CompleteAsync(new AiRequest
+                    {
+                        SystemPrompt = systemPrompt,
+                        UserPrompt = prompt,
+                        MaxTokens = 4000,
+                        Temperature = 0.6,
+                        OperationTag = "source_discovery"
+                    });
+
+                    if (response.Success && !string.IsNullOrEmpty(response.Content))
+                    {
+                        var newSources = ParseDiscoveryResponse(response.Content, existingUrls);
+                        _discoveredSources.AddRange(newSources);
+                        foreach (var s in newSources) existingUrls.Add(s.Url);
+                        await InvokeAsync(StateHasChanged);
+                    }
+                    else
+                    {
+                        _discoveryProgress = $"Ronda {roundNum}/{rounds.Count}: sin respuesta, continuando...";
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch (Exception roundEx)
+                {
+                    _discoveryProgress = $"Ronda {roundNum}/{rounds.Count}: error ({roundEx.Message}), continuando...";
+                    await InvokeAsync(StateHasChanged);
+                }
             }
 
+            _discoveryProgress = "";
             if (!_discoveredSources.Any())
-                _discoveryError = "No se encontraron fuentes válidas en la respuesta.";
-        }
-        catch (JsonException)
-        {
-            _discoveryError = "Error al parsear la respuesta de la IA. Inténtalo de nuevo.";
+                _discoveryError = "No se encontraron fuentes válidas. Verifica que el proveedor de IA esté activo en GodMode.";
         }
         catch (Exception ex)
         {
@@ -665,6 +1188,8 @@
         finally
         {
             _discovering = false;
+            _discoveryProgress = "";
+            await InvokeAsync(StateHasChanged);
         }
     }
 

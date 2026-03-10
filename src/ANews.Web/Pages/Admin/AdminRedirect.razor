@@ -1,0 +1,11 @@
+@page "/admin"
+@attribute [Authorize(Policy = "RequireAdmin")]
+@inject NavigationManager Nav
+@using Microsoft.AspNetCore.Authorization
+
+@code {
+    protected override void OnInitialized()
+    {
+        Nav.NavigateTo("/admin/godmode", replace: true);
+    }
+}

@@ -11,7 +11,7 @@ public class AlertGeneratorAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.AlertGenerator;
     protected override string AgentName => "AlertGeneratorAgent";
-    protected override TimeSpan Interval => TimeSpan.FromMinutes(15);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromMinutes(15);
 
     public AlertGeneratorAgent(IServiceProvider services, ILogger<AlertGeneratorAgent> logger)
         : base(services, logger) { }

@@ -12,7 +12,7 @@ public class NotificationDispatcherAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.NotificationDispatcher;
     protected override string AgentName => "NotificationDispatcherAgent";
-    protected override TimeSpan Interval => TimeSpan.FromMinutes(5);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromMinutes(5);
 
     public NotificationDispatcherAgent(IServiceProvider services, ILogger<NotificationDispatcherAgent> logger)
         : base(services, logger) { }

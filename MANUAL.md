@@ -2,9 +2,9 @@
 
 ## ¿Qué es AgenteNews?
 
-AgenteNews es un sistema de inteligencia de noticias que:
-1. **Escanea** fuentes RSS de seguridad/geopolítica cada hora
-2. **Clasifica** los artículos en eventos usando IA (Groq/Claude)
+AgenteNews es un sistema de inteligencia de noticias global que:
+1. **Escanea** cientos de fuentes RSS de todo el mundo cada hora
+2. **Clasifica** los artículos en secciones y eventos usando IA en 2 fases
 3. **Alerta** cuando hay eventos críticos
 4. **Notifica** a tus canales (Telegram, Email, Discord) con lo que te importa
 
@@ -20,7 +20,7 @@ AgenteNews es un sistema de inteligencia de noticias que:
 | `https://news.websoftware.es/user` | Panel de usuario |
 | `https://news.websoftware.es/admin` | Panel de administración (solo admins) |
 
-**Cuenta admin:** `admin@anews.local` / `Admin@123456!`
+**Cuenta admin:** Configurada en `appsettings.Production.json` en la VM
 
 ---
 
@@ -34,8 +34,13 @@ La portada muestra todos los eventos activos clasificados por IA.
 - **Universo**: visualización canvas interactiva (cada evento es una "estrella")
 
 ### Navegación por secciones
-Usa el menú superior para filtrar por sección:
-- Todo | NBQ | Geopolítica | Conflictos | Ciberguerra | Inteligencia | Terrorismo | Tecnología Dual | Economía
+Usa el menú superior para filtrar por sección. Las 19 secciones cubren todo tipo de noticias:
+- **Mundo** | **Política** | **Economía** | **Negocios** | **Tecnología** | **Ciencia** | **Salud**
+- **Sociedad** | **Justicia & Crimen** | **Conflictos** | **Seguridad** | **Ciberseguridad**
+- **Medio Ambiente** | **Cultura & Arte** | **Deportes** | **Entretenimiento**
+- **Geopolítica** | **Inteligencia** | **NBQ & Armas**
+
+La IA asigna automáticamente cada artículo a la sección correcta según su contenido (no según la fuente de origen).
 
 ### Bandas de alertas críticas
 Si hay eventos `Critical`, aparece una banda roja en la parte superior con un ticker de alertas.
@@ -133,21 +138,36 @@ Solo accesible con rol Admin o SuperAdmin.
 
 ### God Mode (`/admin`)
 
-Vista general del sistema:
-- Estado de los 4 agentes (corriendo/parado/error)
-- Últimas ejecuciones de cada agente
-- Salud del sistema (base de datos, Redis, fuentes, IA)
-- Botones "Ejecutar ahora" para forzar el ciclo de cualquier agente
+Panel de control total del sistema con 4 secciones en sidebar:
 
-**Qué hace cada agente:**
-| Agente | Intervalo | Función |
+**Dashboard:** KPIs en tiempo real — artículos, eventos, fuentes activas, usuarios, coste IA
+- Logs en vivo con búsqueda y pausa
+- Exportar logs como archivo .txt
+- Audit log de acciones de administradores
+
+**Agentes:** Configuración y control de todos los agentes
+- Toggle activar/desactivar cada agente sin reiniciar el servidor
+- Cambiar intervalo de ejecución en minutos y guardar (hot-patch en memoria)
+- Botón "Ejecutar ahora" para forzar ciclo inmediato
+- Countdown de próxima ejecución en tiempo real
+
+**Qué hace cada agente (intervalos configurables desde GodMode):**
+| Agente | Intervalo por defecto | Función |
 |---|---|---|
 | NewsScannerAgent | Cada hora | Descarga artículos de todas las fuentes RSS activas |
-| EventDetectorAgent | Cada 2h | Clasifica artículos sin clasificar en eventos usando IA |
+| EventDetectorAgent | Cada 2h | **2 fases:** reclasifica artículos a sección correcta, luego agrupa en eventos |
 | AlertGeneratorAgent | Cada 15min | Crea alertas para eventos Critical/High nuevos |
 | NotificationDispatcherAgent | Cada 5min | Envía notificaciones a los canales de usuarios |
 | ArticleSummarizerAgent | Cada 45min | Genera resúmenes IA y extrae keywords de artículos nuevos |
 | DigestSenderAgent | Cada hora | Envía emails de digest periódico a usuarios que lo tienen activado |
+| SourceDiscoveryAgent | Cada 6h | Descubre nuevas fuentes RSS usando IA |
+
+**Fuentes:** Tabla de salud de todas las fuentes (reliability %, última escaneo, errores)
+
+**Sistema:**
+- Métricas de proceso: RAM, uptime, threads, GC, CPU%
+- Tabla de proveedores IA configurados con estado activo/default
+- Historial de costes IA por día
 
 ### Agentes (`/admin/agents`)
 
@@ -181,10 +201,21 @@ Gestión de las categorías temáticas:
 ### Fuentes RSS (`/admin/sources`)
 
 Gestión de las fuentes de noticias:
-- Añadir nuevas fuentes RSS
+- Añadir nuevas fuentes RSS con sección, credibilidad y etiquetas
 - Ver estado (última vez escaneada, errores, artículos procesados)
-- Activar/desactivar fuentes
+- Activar/desactivar fuentes individuales
 - Ver errores de las fuentes que fallan
+
+**Filtros:**
+- Por texto (nombre o URL)
+- Por sección (dropdown con las 19 secciones)
+- Por salud: OK / Con errores / Nunca escaneada
+
+**Operaciones por lotes** (actúan sobre los resultados filtrados):
+- **Activar todas** — activa todas las fuentes visibles en el filtro actual
+- **Desactivar todas** — desactiva todas las visibles
+- **Resetear errores** — limpia el contador de errores de todas las visibles
+- **Eliminar filtradas** — elimina permanentemente todas las visibles (pide confirmación)
 
 ### Usuarios (`/admin/users`)
 
@@ -379,6 +410,13 @@ Requiere cuenta Twilio + sandbox o número verificado. Sin esto el servicio arra
 
 ### Vista Universo — Módulos del usuario
 Cuando un usuario logueado abre la vista Universo (`/` → botón Universo), los planetas que coinciden con las keywords de sus módulos activos aparecen con un **anillo verde** pulsante. El callout al hacer hover muestra la etiqueta "tu módulo".
+
+### Selector de tema
+En la parte superior derecha de la portada hay un pequeño orbe luminoso con un anillo orbital discontinuo animado. Haz clic para desplegar el selector de tema con 8 opciones:
+- **Void** (azul oscuro), **Pulsar** (violeta), **Neptune** (cian), **Matrix** (verde terminal)
+- **Sol** (ámbar), **Neon** (rosa), **Cosmos** (índigo), **Nova** (rojo)
+
+El tema seleccionado se guarda en `localStorage` y se aplica automáticamente en la próxima visita.
 
 ---
 

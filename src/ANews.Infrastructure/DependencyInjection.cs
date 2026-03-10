@@ -38,6 +38,9 @@ public static class DependencyInjection
         // Security
         services.AddSingleton<ANews.Infrastructure.Security.KeyEncryptionService>();
 
+        // Agent Event Bus (replaces static events on BaseAgent)
+        services.AddSingleton<Agents.IAgentEventBus, Agents.AgentEventBus>();
+
         // AI Factory
         services.AddSingleton<AiProviderFactory>();
 
@@ -60,12 +63,14 @@ public static class DependencyInjection
         services.AddSingleton<NotificationDispatcherAgent>();
         services.AddSingleton<ArticleSummarizerAgent>();
         services.AddSingleton<DigestSenderAgent>();
+        services.AddSingleton<SourceDiscoveryAgent>();
         services.AddHostedService(sp => sp.GetRequiredService<NewsScannerAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<EventDetectorAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<AlertGeneratorAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcherAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<ArticleSummarizerAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<DigestSenderAgent>());
+        services.AddHostedService(sp => sp.GetRequiredService<SourceDiscoveryAgent>());
 
         return services;
     }

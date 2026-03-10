@@ -1,8 +1,8 @@
 # AgenteNews — Plan Maestro de Desarrollo
 
 ## Estado del Proyecto
-- **Última revisión:** 2026-03-08
-- **Fase actual:** Sprint 4 COMPLETADO
+- **Última revisión:** 2026-03-09
+- **Fase actual:** Sprint 6 COMPLETADO
 
 ---
 
@@ -179,6 +179,18 @@ public void TriggerNow()
   - Libera semáforo interno (_triggerNow)
   - El ciclo ExecuteAsync despierta inmediatamente
   - Si ya hay un ciclo en ejecución, encola uno más (máx 1)
+
+public void UpdateInterval(int minutes)
+  - Actualiza _interval en memoria SIN reiniciar el HostedService
+  - El nuevo intervalo aplica desde el próximo ciclo de espera
+
+public void SetEnabled(bool enabled)
+  - Si false: el agente hace await _triggerNow.WaitAsync() indefinido
+  - Si true: se reactiva en el siguiente ciclo
+
+protected abstract TimeSpan DefaultInterval
+  - Usado cuando no hay AgentConfig en DB para este agente
+  - Siempre renombrar de "Interval" a "DefaultInterval" en nuevos agentes
 ```
 
 ### DI Registration (Infrastructure/DependencyInjection.cs)
@@ -230,9 +242,10 @@ AiProviderFactory.GetDefaultProviderAsync() → lanza si no hay config activa
 
 ### Seed Data (contratos de unicidad)
 ```
-Secciones: upsert por Slug (no duplicar)
+Secciones: upsert por Slug con IgnoreQueryFilters() — actualiza nombre/color/icono si ya existe
 Fuentes RSS: upsert por Url (no duplicar)
 AI Config: crear solo si Count == 0 (placeholder inactivo)
+AgentConfig: 7 filas sembradas en migración (una por agente registrado)
 ```
 
 ### Patrón SignalR en Blazor Server
@@ -284,6 +297,21 @@ CORRECTO: Llamar SetupSignalRAsync() desde OnAfterRenderAsync(firstRender)
 **Motivo:** `JS.InvokeVoidAsync()` lanza `JSException` si el componente está siendo eliminado, el circuito está desconectado, o el JS target no existe. Sin try-catch, la excepción escapa al thread pool como unobserved y crashea el proceso.
 **Impacto:** Todo llamado a `JS.InvokeVoidAsync` y `JS.InvokeAsync` debe estar envuelto en try-catch.
 
+### ADR-011: EventDetector 2-Phase architecture
+**Motivo:** Con secciones generadas por la fuente (Reuters World = Geopolítica), artículos de crimen/salud/cultura acababan clasificados en secciones incorrectas. No había "Justicia & Crimen", así que violaciones aparecían en Ciberguerra.
+**Solución:** Fase 1 (Section Router) reasigna artículos a sección correcta por contenido, Fase 2 (Clusterer) agrupa dentro de la sección. El router tiene temperatura 0.0 y reglas explícitas.
+**Impacto:** EventDetector procesa más tokens por ciclo. Añadir OperationTag diferente por fase para desglose de costes.
+
+### ADR-012: AgentConfig en DB para intervalos hot-patchables
+**Motivo:** Cambiar el intervalo de un agente requería modificar código y redesplegar.
+**Solución:** `AgentConfig` en DB (unique index en AgentType). `BaseAgent` carga config en arranque, expone `UpdateInterval()` y `SetEnabled()`. GodMode persiste y aplica sin restart.
+**Impacto:** Todos los agentes deben usar `DefaultInterval` (no `Interval`) como fallback.
+
+### ADR-013: Razor switch expressions con patrones relacionales `< N`
+**Motivo:** El compilador Razor parsea `< 60` en switch expressions dentro de `@code {}` como etiqueta HTML de apertura → `RZ1006` + errores de tag sin cerrar.
+**Solución:** Usar if/else chains en lugar de switch con patrones relacionales en bloques `@code {}`.
+**Impacto:** Cualquier switch con `< N`, `> N`, `<= N` en .razor debe convertirse a if/else.
+
 ### ADR-007: OpenAI-compatible providers necesitan BaseAddress con /v1/ incluido
 **Motivo:** PostAsync con path absoluto "/v1/chat/completions" ignora el path del BaseAddress. Para Groq (base: https://api.groq.com/openai/v1), esto resulta en 404.
 **Impacto:** BaseAddress siempre termina en "/" y paths de endpoints son relativos ("chat/completions").
@@ -331,18 +359,18 @@ src/
 # Build y publicar
 dotnet publish src/ANews.Web/ANews.Web.csproj -c Release -o publish/
 
-# Subir a VM
-scp -i ssh-key-2026-01-16.key -r publish/. ubuntu@79.72.56.98:/opt/anews/
+# Subir a VM (ver VM_HOST y SSH key en GitHub Secrets o appsettings)
+scp -i $SSH_KEY -r publish/. $VM_USER@$VM_HOST:/opt/anews/
 
 # Reiniciar servicio
-ssh -i ssh-key-2026-01-16.key ubuntu@79.72.56.98 "sudo systemctl restart anews"
+ssh -i $SSH_KEY $VM_USER@$VM_HOST "sudo systemctl restart anews"
 
 # Ver logs
-ssh -i ssh-key-2026-01-16.key ubuntu@79.72.56.98 "sudo journalctl -u anews -f"
+ssh -i $SSH_KEY $VM_USER@$VM_HOST "sudo journalctl -u anews -f"
 ```
 
-**DB Producción:** `anews_prod`, usuario `anews`, contraseña en `/opt/anews/appsettings.Production.json`
-**Admin login:** `admin@anews.local` / `Admin@123456!`
+**DB Produccion:** `anews_prod`, usuario `anews`, contrasena en `/opt/anews/appsettings.Production.json`
+**Admin login:** Ver `appsettings.Production.json` en la VM (no almacenar credenciales en el repo)
 
 ---
 
@@ -390,11 +418,132 @@ _geoTerms: Dictionary<string, string[]> → expansión de términos por país
 MatchesGeoFilterFor(ev, geo) → bool
 ```
 
-### Pendiente (Sprint 6)
-- [ ] S6-01: Descubrimiento automático de fuentes al seleccionar workspace (trigger al seleccionar)
-- [ ] S6-02: Sección "España" formal en DB con fuentes RSS españolas preconfiguradas
-- [ ] S6-03: Prompt de agente con contexto geográfico cuando workspace ≠ Global
-- [ ] S6-04: Workspace multi-usuario (guardar en DB, no solo localStorage)
-- [ ] S6-05: Landing page standalone en / (con workspace picker, stats en vivo)
-- [ ] S6-06: NewsSource.Country field + migración → filtrado de fuentes por workspace
-- [ ] S6-07: Trigger automático de source discovery al activar nuevo workspace
+### Pendiente (Sprint 6) → COMPLETADO ver abajo
+
+---
+
+## Sprint 6 — Clasificación Inteligente + GodMode Total Control (2026-03-09)
+
+### Problema raíz resuelto
+El EventDetectorAgent asignaba artículos al evento "Unclassified" de la sección de la *fuente*, no al evento correcto por *contenido*. Una violación sexual de Reuters World (Geopolítica) acababa en Geopolítica. Con solo 8 secciones especializadas en seguridad, no había donde encajar crimen, salud, cultura, etc.
+
+### Taxonomía de secciones rediseñada (19 secciones)
+Inspirada en Reuters, BBC, AP, Al Jazeera. Upsert en Program.cs al arrancar:
+
+| Slug | Nombre | Descripción |
+|---|---|---|
+| mundo | Mundo | Noticias internacionales generales |
+| politica | Política | Gobiernos, elecciones, legislación |
+| economia | Economía | Mercados, finanzas, macro |
+| negocios | Negocios | Empresas, M&A, startup |
+| tecnologia | Tecnología | Tech, software, innovación |
+| ciencia | Ciencia | Investigación, espacio, descubrimientos |
+| salud | Salud | Medicina, pandemias, salud pública |
+| sociedad | Sociedad | Educación, migración, derechos humanos |
+| justicia | Justicia & Crimen | Tribunales, crimen organizado, violencia |
+| conflictos | Conflictos | Guerras, conflictos armados |
+| seguridad | Seguridad | Terrorismo, crimen organizado, mafias |
+| ciberseguridad | Ciberseguridad | Hackeos, ransomware, ciberataques |
+| medioambiente | Medio Ambiente | Clima, energía, catástrofes naturales |
+| cultura | Cultura & Arte | Arte, literatura, patrimonio |
+| deportes | Deportes | Deporte profesional, competiciones |
+| entretenimiento | Entretenimiento | Celebs, cine, música, farándula |
+| geopolitica | Geopolítica | Relaciones internacionales, diplomacia |
+| inteligencia | Inteligencia | Servicios secretos, espionaje |
+| nbq | NBQ & Armas | Armas biológicas, químicas, nucleares |
+
+### EventDetectorAgent — Arquitectura 2 fases
+
+**Fase 1 — Section Router** (`ReclassifyArticlesBySectionAsync`):
+- Procesa hasta 80 artículos pendientes por ciclo
+- Un call AI asigna cada artículo al slug correcto según título+descripción
+- Reglas explícitas en el prompt:
+  - Violencia sexual, asesinatos, corrupción, tribunales → `justicia`
+  - Hackeos, ransomware, ciberataques → `ciberseguridad`
+  - Celebrities, series, espectáculos → `entretenimiento`
+  - Terrorismo, crimen organizado → `seguridad`
+- Mueve el artículo al evento "Unclassified" de la sección correcta
+- `MaxTokens=1200, Temperature=0.0, OperationTag="section_routing"`
+
+**Fase 2 — Event Clusterer** (`ClusterArticlesWithAiAsync`):
+- Agrupa artículos por sección, luego llama AI por cada sección
+- Crea/actualiza eventos con título, descripción, prioridad, categorías
+- Contexto de sección en el prompt para guiar la clasificación intra-sección
+- `MaxTokens=4000, Temperature=0.1, OperationTag="event_detection"`
+
+### AgentConfig — Configuración hot-patch de agentes
+
+Nueva entidad en DB (`AgentConfig`):
+- `AgentType` (unique string), `IntervalMinutes`, `IsEnabled`, `MaxItemsPerCycle`, `Notes`
+- Migración: `20260309202951_AddAgentConfig`
+
+`BaseAgent` actualizado:
+- `protected abstract TimeSpan DefaultInterval` (fallback si no hay DB config)
+- `_interval` mutable + `UpdateInterval(int minutes)` — cambia intervalo sin reiniciar
+- `IsAgentEnabled` + `SetEnabled(bool)` — pausa/resume sin reiniciar
+- Carga config de DB al arrancar en `ExecuteAsync`
+
+### GodMode — Rediseño completo con sidebar
+
+Navegación: Dashboard | Agentes | Fuentes | Sistema
+
+**Panel Agentes:**
+- Tabla `AgentConfig` con toggle enabled + input intervalo por agente
+- `SaveAgentConfigsAsync()` persiste en DB y hot-patches los agentes en memoria
+- Trigger "Ejecutar ahora" + countdown de próxima ejecución (se actualiza solo)
+- Gráfico de costes IA redimensionado (`height=90`)
+
+**Panel Sistema:**
+- Métricas de proceso en vivo: RAM, uptime, threads, GC, CPU%
+- Tabla de proveedores IA con estado
+- Log search/pause/export
+- Audit log filtrado
+
+**Panel Fuentes:**
+- Tabla de salud de fuentes (reliability %, dot de estado ok/warn/fail)
+
+### SourcesManagement — Bulk operations + filtros
+
+Nuevos filtros:
+- Por sección (dropdown con todas las secciones)
+- Por salud (ok/error/nunca escaneada)
+
+Operaciones por lotes sobre los resultados filtrados:
+- **Activar todas** — enable todas las fuentes visibles
+- **Desactivar todas** — disable todas las visibles
+- **Resetear errores** — FailedScans=0, ErrorMessage=null en todas las visibles
+- **Eliminar filtradas** — borrado con confirmación de todas las visibles
+
+### Selector de tema — Rediseño orbital
+
+8 temas con nombre de planeta: Void, Pulsar, Neptune, Matrix, Sol, Neon, Cosmos, Nova
+- Trigger: pequeño orbe luminoso con anillo orbital discontinuo animado
+- Dropdown: grid 4 columnas con planet-orbit-ring en el activo
+- `color-mix()` para gradientes radiales dinámicos
+- `@keyframes planet-orbit-spin` para rotación del anillo
+
+### Entregado en Sprint 6
+
+| # | Feature | Estado |
+|---|---|---|
+| S6-01 | AgentConfig entity + migración BD (hot-patch sin reiniciar) | ✅ |
+| S6-02 | BaseAgent: DefaultInterval + UpdateInterval + SetEnabled | ✅ |
+| S6-03 | EventDetectorAgent: arquitectura 2 fases (Section Router + Clusterer) | ✅ |
+| S6-04 | Taxonomía 19 secciones (upsert en Program.cs) | ✅ |
+| S6-05 | GodMode: sidebar 4 secciones, CRUD AgentConfig hot-patch | ✅ |
+| S6-06 | GodMode: métricas proceso, audit log, log export, countdown próxima ejecución | ✅ |
+| S6-07 | SourcesManagement: filtro por sección y por salud | ✅ |
+| S6-08 | SourcesManagement: bulk enable/disable/reset-errors/delete filtradas | ✅ |
+| S6-09 | Selector de tema orbital (8 planetas con anillo animado) | ✅ |
+| S6-10 | Gráfico de costes redimensionado (height=90) | ✅ |
+| S6-11 | admin.js: downloadTextFile helper para exportar logs | ✅ |
+| S6-12 | Fix: FormatInterval usa if/else (no switch con `< N` en Razor) | ✅ |
+| S6-13 | Fix: AuditLog usa Timestamp/UserEmail/EntityType (nombres reales) | ✅ |
+
+### Pendiente (Sprint 7)
+- [ ] Reclasificación masiva de eventos antiguos (trigger "Reclasificar todo" en GodMode)
+- [ ] Fuentes RSS para nuevas secciones (Salud, Justicia, Deportes, Sociedad...)
+- [ ] Migración de artículos en secciones obsoletas (farandula→entretenimiento, social→sociedad)
+- [ ] S6-03 geo: Prompt de agente con contexto geográfico cuando workspace ≠ Global
+- [ ] S6-04 geo: Workspace multi-usuario (guardar en DB, no solo localStorage)
+- [ ] S6-06 geo: NewsSource.Country field + migración → filtrado de fuentes por workspace

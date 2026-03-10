@@ -13,34 +13,75 @@ public abstract class BaseAgent : BackgroundService
     private readonly SemaphoreSlim _triggerNow = new(0, 1);
     protected readonly IServiceProvider _services;
     protected readonly ILogger _logger;
+    private readonly IAgentEventBus _eventBus;
     protected abstract AgentType AgentType { get; }
     protected abstract string AgentName { get; }
-    protected abstract TimeSpan Interval { get; }
+    protected abstract TimeSpan DefaultInterval { get; }
+
+    private TimeSpan _interval;
+    private bool _isEnabled = true;
+
+    public TimeSpan CurrentInterval => _interval;
+    public bool IsAgentEnabled => _isEnabled;
+
+    public void UpdateInterval(int minutes)
+    {
+        _interval = TimeSpan.FromMinutes(minutes);
+        _logger.LogInformation("[{Agent}] Intervalo actualizado a {Interval}", AgentName, _interval);
+    }
+
+    public void SetEnabled(bool enabled)
+    {
+        _isEnabled = enabled;
+        _logger.LogInformation("[{Agent}] {State}", AgentName, enabled ? "Habilitado" : "Deshabilitado");
+    }
 
     protected BaseAgent(IServiceProvider services, ILogger logger)
     {
         _services = services;
         _logger = logger;
+        _eventBus = services.GetRequiredService<IAgentEventBus>();
     }
 
     public void TriggerNow()
     {
-        // Libera el semáforo solo si no hay ya uno pendiente (máx 1)
         if (_triggerNow.CurrentCount == 0)
             _triggerNow.Release();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("[{Agent}] Iniciado. Intervalo: {Interval}", AgentName, Interval);
+        // Load config from DB
+        _interval = DefaultInterval;
+        try
+        {
+            using var scope = _services.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var cfg = await ctx.AgentConfigs.FirstOrDefaultAsync(c => c.AgentType == AgentName, stoppingToken);
+            if (cfg != null)
+            {
+                _interval = TimeSpan.FromMinutes(cfg.IntervalMinutes);
+                _isEnabled = cfg.IsEnabled;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[{Agent}] No se pudo cargar config de DB, usando defaults", AgentName);
+        }
+
+        _logger.LogInformation("[{Agent}] Iniciado. Intervalo: {Interval}{Disabled}",
+            AgentName, _interval, _isEnabled ? "" : " [DESHABILITADO]");
+
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await RunCycleWithTrackingAsync(stoppingToken);
+            if (_isEnabled)
+                await RunCycleWithTrackingAsync(stoppingToken);
+
             try
             {
-                await _triggerNow.WaitAsync(Interval, stoppingToken);
+                await _triggerNow.WaitAsync(_interval, stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -81,12 +122,13 @@ public abstract class BaseAgent : BackgroundService
         {
             _logger.LogError(ex, "[{Agent}] Error en ciclo", AgentName);
             execution.Status = AgentStatus.Failed;
-            execution.Error = ex.Message;
+            execution.Error = $"{ex.GetType().Name}: {ex.Message}";
             execution.CompletedAt = DateTime.UtcNow;
         }
         finally
         {
             await ctx.SaveChangesAsync(ct);
+            _eventBus.EmitExecutionCompleted(AgentName, execution.Status.ToString());
         }
     }
 
@@ -104,9 +146,7 @@ public abstract class BaseAgent : BackgroundService
         });
         await ctx.SaveChangesAsync();
 
-        // Broadcast via SignalR (se suscribe desde el hub)
-        OnLogEmitted?.Invoke(execution.Id, level, message);
+        _eventBus.EmitLog(execution.Id, level, message);
     }
 
-    public static event Action<int, AgentLogLevel, string>? OnLogEmitted;
 }

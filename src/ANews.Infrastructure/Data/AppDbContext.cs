@@ -40,6 +40,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<Bookmark> Bookmarks => Set<Bookmark>();
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
+    public DbSet<WorkspaceZone> WorkspaceZones => Set<WorkspaceZone>();
+    public DbSet<AgentConfig> AgentConfigs => Set<AgentConfig>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -112,6 +114,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         builder.Entity<ApiToken>(e =>
         {
             e.HasIndex(t => t.TokenHash).IsUnique();
+        });
+
+        builder.Entity<WorkspaceZone>(e =>
+        {
+            e.Property(w => w.GeoTerms).HasColumnType("jsonb");
+        });
+
+        builder.Entity<AgentConfig>(e =>
+        {
+            e.HasIndex(a => a.AgentType).IsUnique();
         });
 
         // Global query filter for soft delete

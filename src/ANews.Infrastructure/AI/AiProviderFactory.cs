@@ -37,6 +37,16 @@ public class AiProviderFactory
         if (config == null)
             throw new InvalidOperationException("No hay proveedores de IA configurados y activos.");
 
+        // Budget enforcement: auto-disable provider if monthly budget exceeded
+        if (config.MonthlyBudgetLimit > 0 && config.TotalCostMonth >= config.MonthlyBudgetLimit)
+        {
+            _logger.LogWarning("Proveedor IA '{Name}' desactivado: presupuesto mensual agotado ({Cost:F2}/{Limit:F2})",
+                config.Name, config.TotalCostMonth, config.MonthlyBudgetLimit);
+            config.IsActive = false;
+            await ctx.SaveChangesAsync();
+            throw new InvalidOperationException($"Presupuesto mensual agotado para '{config.Name}' ({config.TotalCostMonth:F2}/{config.MonthlyBudgetLimit:F2})");
+        }
+
         return CreateProvider(config.Provider, _encryption.Decrypt(config.EncryptedApiKey), config.Model, config.BaseUrl);
     }
 

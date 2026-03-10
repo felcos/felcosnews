@@ -12,7 +12,7 @@ public class DigestSenderAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.DigestSender;
     protected override string AgentName => "DigestSenderAgent";
-    protected override TimeSpan Interval => TimeSpan.FromHours(1);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(1);
 
     public DigestSenderAgent(IServiceProvider services, ILogger<DigestSenderAgent> logger)
         : base(services, logger) { }

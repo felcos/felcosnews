@@ -11,7 +11,6 @@ namespace ANews.Web.Hubs;
 public class AgentMonitorHub : Hub
 {
     private readonly AppDbContext _ctx;
-    private static readonly Dictionary<string, string> _connections = new();
 
     public AgentMonitorHub(AppDbContext ctx) => _ctx = ctx;
 
@@ -58,19 +57,13 @@ public class AgentMonitorHub : Hub
             .ToListAsync();
     }
 
-    // Static broadcaster - called from BaseAgent when logs are emitted
-    public static IHubContext<AgentMonitorHub>? HubContext { get; set; }
-
-    public static void RegisterHubContext(IHubContext<AgentMonitorHub> ctx)
+    // Wire up the DI-based event bus to broadcast to SignalR clients
+    public static void RegisterHubContext(IHubContext<AgentMonitorHub> hubCtx, IAgentEventBus eventBus)
     {
-        HubContext = ctx;
-        BaseAgent.OnLogEmitted += async (executionId, level, message) =>
+        eventBus.OnLogEmitted += async (executionId, level, message) =>
         {
-            if (HubContext != null)
-            {
-                await HubContext.Clients.Group("admin-monitors").SendAsync("AgentLog",
-                    new { executionId, level = level.ToString(), message, timestamp = DateTime.UtcNow });
-            }
+            await hubCtx.Clients.Group("admin-monitors").SendAsync("AgentLog",
+                new { executionId, level = level.ToString(), message, timestamp = DateTime.UtcNow });
         };
     }
 }

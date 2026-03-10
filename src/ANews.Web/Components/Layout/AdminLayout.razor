@@ -16,7 +16,7 @@
 
         <nav class="sidebar-nav">
             <div class="nav-section-label">CONTROL</div>
-            <NavLink href="/admin" Match="NavLinkMatch.All" class="nav-item">
+            <NavLink href="/admin/godmode" class="nav-item">
                 <i class="fa fa-eye"></i> God Mode
             </NavLink>
             <NavLink href="/admin/agents" class="nav-item">
@@ -65,7 +65,7 @@
                 <i class="fa fa-bars"></i>
             </button>
             <div class="topbar-breadcrumb">
-                <a href="/admin" class="bc-link"><i class="fa fa-shield-alt"></i> Admin</a>
+                <a href="/admin/godmode" class="bc-link"><i class="fa fa-shield-alt"></i> Admin</a>
                 @if (CurrentPageName != "God Mode")
                 {
                     <span class="bc-sep"><i class="fa fa-chevron-right"></i></span>
@@ -101,7 +101,7 @@
             var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
             return path switch
             {
-                "/admin"          => "God Mode",
+                "/admin/godmode"  => "God Mode",
                 "/admin/agents"   => "Agentes",
                 "/admin/costs"    => "Costes IA",
                 "/admin/news"     => "Noticias",

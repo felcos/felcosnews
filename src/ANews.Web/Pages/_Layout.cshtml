@@ -17,7 +17,7 @@
         .news-map-tooltip .leaflet-tooltip { background: transparent; border: none; box-shadow: none; padding: 0; }
         .news-map-tooltip { background: transparent; border: none; }
     </style>
-    <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+    <component type="typeof(HeadOutlet)" render-mode="Server" />
 </head>
 <body>
     @RenderBody()
@@ -41,7 +41,17 @@
         };
     })();
     </script>
-    <script src="_framework/blazor.server.js"></script>
+    <script src="_framework/blazor.server.js" autostart="false"></script>
+    <script>
+    Blazor.start({
+        reconnectionHandler: {
+            onConnectionDown: function(options, error) {
+                console.warn('Blazor circuit lost, reloading...');
+                setTimeout(function() { location.reload(); }, 2000);
+            }
+        }
+    });
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="js/universe.js"></script>

@@ -1,3 +1,6 @@
+using System.Net.Http;
+using System.Text;
+using System.Text.RegularExpressions;
 using ANews.Domain.Entities;
 using ANews.Domain.Enums;
 using ANews.Infrastructure.AI;
@@ -13,7 +16,7 @@ public class NewsScannerAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.NewsScanner;
     protected override string AgentName => "NewsScannerAgent";
-    protected override TimeSpan Interval => TimeSpan.FromHours(1);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(1);
 
     public NewsScannerAgent(IServiceProvider services, ILogger<NewsScannerAgent> logger)
         : base(services, logger) { }
@@ -31,11 +34,13 @@ public class NewsScannerAgent : BaseAgent
 
         int totalNew = 0;
 
+        var httpFactory = services.GetRequiredService<IHttpClientFactory>();
+
         foreach (var source in sources)
         {
             try
             {
-                var newArticles = await ScanSourceAsync(ctx, source, ct);
+                var newArticles = await ScanSourceAsync(ctx, httpFactory, source, ct);
                 totalNew += newArticles;
                 source.LastScannedAt = DateTime.UtcNow;
                 source.SuccessfulScans++;
@@ -58,9 +63,30 @@ public class NewsScannerAgent : BaseAgent
         await LogAsync(ctx, execution, AgentLogLevel.Info, $"Scan completo: {totalNew} articulos nuevos de {sources.Count} fuentes");
     }
 
-    private async Task<int> ScanSourceAsync(AppDbContext ctx, NewsSource source, CancellationToken ct)
+    private async Task<int> ScanSourceAsync(AppDbContext ctx, IHttpClientFactory httpFactory, NewsSource source, CancellationToken ct)
     {
-        var feed = await FeedReader.ReadAsync(source.Url);
+        var http = httpFactory.CreateClient("rss");
+
+        var response = await http.GetAsync(source.Url, ct);
+        response.EnsureSuccessStatusCode();
+
+        // Read bytes and detect encoding from content-type or BOM
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        var charset = response.Content.Headers.ContentType?.CharSet;
+        Encoding encoding;
+        try { encoding = string.IsNullOrEmpty(charset) ? Encoding.UTF8 : Encoding.GetEncoding(charset); }
+        catch { encoding = Encoding.UTF8; }
+        var content = encoding.GetString(bytes);
+
+        // If content is HTML (not RSS), skip
+        if (content.TrimStart().StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+            content.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("La URL devuelve HTML, no RSS. Verifica la URL del feed.");
+
+        // Sanitize common XML issues before parsing
+        content = SanitizeXml(content);
+
+        var feed = FeedReader.ReadFromString(content);
         int newCount = 0;
 
         foreach (var item in feed.Items.Take(50))
@@ -121,10 +147,22 @@ public class NewsScannerAgent : BaseAgent
         return ev;
     }
 
+    private static string SanitizeXml(string xml)
+    {
+        // Remove undeclared namespace prefixes (common in some feeds like xlink)
+        xml = Regex.Replace(xml, @"\s+xlink:\w+=""[^""]*""", "");
+        xml = Regex.Replace(xml, @"\s+xlink:\w+='[^']*'", "");
+        // Replace unescaped & not followed by known entity or #
+        xml = Regex.Replace(xml, @"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)", "&amp;");
+        // Remove CDATA end sequences that appear outside CDATA
+        xml = xml.Replace("]]>", "");
+        return xml;
+    }
+
     private static string ComputeHash(string url)
     {
         var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(url));
-        return Convert.ToHexString(bytes)[..16];
+        return Convert.ToHexString(bytes);
     }
 
     private static string StripHtml(string html)

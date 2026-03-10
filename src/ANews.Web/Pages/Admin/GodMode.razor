@@ -1,4 +1,3 @@
-@page "/admin"
 @page "/admin/godmode"
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout AdminLayout
@@ -14,8 +13,10 @@
 @inject ANews.Infrastructure.Agents.NotificationDispatcherAgent NotificationDispatcherAgent
 @inject ANews.Infrastructure.Agents.ArticleSummarizerAgent ArticleSummarizerAgent
 @inject ANews.Infrastructure.Agents.DigestSenderAgent DigestSenderAgent
+@inject ANews.Infrastructure.Agents.SourceDiscoveryAgent SourceDiscoveryAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
+@using ANews.Domain.Entities
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.SignalR
 @using Microsoft.AspNetCore.SignalR.Client
@@ -38,7 +39,7 @@
             </div>
         </div>
         <div class="gm-header-actions">
-            <span class="gm-time">@DateTime.Now.ToString("HH:mm:ss")</span>
+            <span class="gm-time">@_now.ToString("HH:mm:ss")</span>
             <button class="btn-action" @onclick="RefreshAll" title="Actualizar todo">
                 <i class="fa fa-sync @(IsLoading ? "fa-spin" : "")"></i>
             </button>
@@ -47,37 +48,35 @@
 
     <!-- KPI Cards -->
     <div class="gm-kpis">
-        <div class="kpi-card @(Stats.AgentsRunningCount > 0 ? "kpi-active" : "")">
+        <div class="kpi-card @(Stats.AgentsRunningCount > 0 ? "kpi-active" : "") @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-robot kpi-icon"></i>
             <div class="kpi-value">@Stats.AgentsRunningCount</div>
             <div class="kpi-label">Agentes activos</div>
             @if (Stats.AgentsRunningCount > 0)
-            {
-                <div class="kpi-detail">@string.Join(", ", Stats.RunningAgentNames)</div>
-            }
+            { <div class="kpi-detail">@string.Join(", ", Stats.RunningAgentNames)</div> }
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-newspaper kpi-icon"></i>
             <div class="kpi-value">@Stats.ArticlesToday</div>
             <div class="kpi-label">Artículos hoy</div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-bolt kpi-icon"></i>
             <div class="kpi-value">@Stats.EventsToday</div>
             <div class="kpi-label">Eventos hoy</div>
         </div>
-        <div class="kpi-card @(Stats.CostToday > 5 ? "kpi-warn" : "")">
+        <div class="kpi-card @(Stats.CostToday > 5 ? "kpi-warn" : "") @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-dollar-sign kpi-icon"></i>
             <div class="kpi-value">$@Stats.CostToday.ToString("F4")</div>
             <div class="kpi-label">Coste hoy</div>
             <div class="kpi-detail">Mes: $@Stats.CostMonth.ToString("F2")</div>
         </div>
-        <div class="kpi-card @(Stats.PendingAlerts > 0 ? "kpi-alert" : "")">
+        <div class="kpi-card @(Stats.PendingAlerts > 0 ? "kpi-alert" : "") @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-bell kpi-icon"></i>
             <div class="kpi-value">@Stats.PendingAlerts</div>
             <div class="kpi-label">Alertas pendientes</div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-users kpi-icon"></i>
             <div class="kpi-value">@Stats.ActiveUsers</div>
             <div class="kpi-label">Usuarios activos</div>
@@ -85,184 +84,513 @@
         </div>
     </div>
 
-    <!-- Main Grid -->
-    <div class="gm-grid">
+    <!-- Body: Sidebar + Content -->
+    <div class="gm-body">
 
-        <!-- Agentes en tiempo real -->
-        <div class="gm-panel gm-panel-wide">
-            <div class="panel-header">
-                <i class="fa fa-terminal"></i>
-                <span>Monitor de Agentes — Logs en Tiempo Real</span>
-                <div class="panel-actions">
-                    <button class="btn-sm @(AgentFilter == "all" ? "active" : "")" @onclick="@(() => AgentFilter = "all")">Todos</button>
-                    <button class="btn-sm @(AgentFilter == "error" ? "active" : "")" @onclick="@(() => AgentFilter = "error")">Errores</button>
-                    <button class="btn-sm" @onclick="ClearLogs">Limpiar</button>
+        <!-- Sidebar nav -->
+        <nav class="gm-sidebar">
+            <button class="gm-nav-btn @(_section == "dashboard" ? "active" : "")" @onclick='@(()=>_section="dashboard")'>
+                <i class="fa fa-th-large"></i><span>Panel</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "agentes" ? "active" : "")" @onclick='@(()=>_section="agentes")'>
+                <i class="fa fa-robot"></i><span>Agentes</span>
+            </button>
+            <button class="gm-nav-btn @(_section == "fuentes" ? "active" : "")" @onclick='@(()=>_section="fuentes")'>
+                <i class="fa fa-rss"></i><span>Fuentes</span>
+            </button>
+            <div class="gm-nav-sep"></div>
+            <button class="gm-nav-btn @(_section == "sistema" ? "active" : "")" @onclick='@(()=>_section="sistema")'>
+                <i class="fa fa-cog"></i><span>Sistema</span>
+            </button>
+        </nav>
+
+        <!-- Main content area -->
+        <div class="gm-content">
+
+            <!-- ═══════ DASHBOARD section ═══════ -->
+            @if (_section == "dashboard")
+            {
+                <div class="gm-grid">
+
+                    <!-- Costes IA -->
+                    <div class="gm-panel">
+                        <div class="panel-header">
+                            <i class="fa fa-chart-pie"></i>
+                            <span>Costes de IA</span>
+                            <select class="select-sm" @onchange="ChangeCostPeriod">
+                                <option value="today">Hoy</option>
+                                <option value="week">7 días</option>
+                                <option value="month">Mes</option>
+                            </select>
+                        </div>
+                        <div class="cost-total">
+                            <span class="cost-amount">$@TotalCostSelected.ToString("F4")</span>
+                            <span class="cost-period">@CostPeriodLabel</span>
+                        </div>
+                        <canvas id="costChart" height="90"></canvas>
+                        <div class="provider-list">
+                            @foreach (var p in ProviderCosts)
+                            {
+                                <div class="provider-row">
+                                    <span class="provider-name">@p.Name</span>
+                                    <div class="provider-bar"><div class="bar-fill" style="width:@(p.Percent)%;background:@p.Color"></div></div>
+                                    <span class="provider-cost">$@p.Cost.ToString("F4")</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Health del sistema con métricas -->
+                    <div class="gm-panel">
+                        <div class="panel-header">
+                            <i class="fa fa-heartbeat"></i>
+                            <span>Sistema Health</span>
+                        </div>
+                        <div class="metrics-row">
+                            <div class="metric-box">
+                                <div class="metric-val" style="color:var(--accent)">@_memMb</div>
+                                <div class="metric-label">MB RAM</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-val" style="color:var(--accent-green)">@_uptime</div>
+                                <div class="metric-label">Uptime</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-val">@_threads</div>
+                                <div class="metric-label">Hilos</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-val" style="color:var(--accent-yellow)">@Stats.ArticlesToday</div>
+                                <div class="metric-label">Art/hoy</div>
+                            </div>
+                        </div>
+                        <div class="health-list">
+                            @foreach (var check in SystemHealth)
+                            {
+                                <div class="health-row">
+                                    <div class="health-indicator @(check.IsOk ? "ok" : "fail")"></div>
+                                    <span class="health-name">@check.Name</span>
+                                    <span class="health-value">@check.Value</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Alertas pendientes -->
+                    <div class="gm-panel">
+                        <div class="panel-header">
+                            <i class="fa fa-exclamation-triangle"></i>
+                            <span>Alertas Pendientes (@PendingAlerts.Count)</span>
+                        </div>
+                        <div class="alert-list">
+                            @foreach (var alert in PendingAlerts.Take(10))
+                            {
+                                <div class="alert-row severity-@alert.Severity.ToLower()">
+                                    <div class="alert-info">
+                                        <span class="alert-title">@alert.Title</span>
+                                        <span class="alert-time">@alert.CreatedAt.ToString("dd/MM HH:mm")</span>
+                                    </div>
+                                    <button class="btn-ack" @onclick="() => AcknowledgeAlertAsync(alert.Id)">
+                                        <i class="fa fa-check"></i>
+                                    </button>
+                                </div>
+                            }
+                            @if (!PendingAlerts.Any())
+                            { <div class="no-alerts"><i class="fa fa-shield-alt"></i> Sin alertas pendientes</div> }
+                        </div>
+                    </div>
+
+                    <!-- Acciones rápidas -->
+                    <div class="gm-panel">
+                        <div class="panel-header">
+                            <i class="fa fa-bolt"></i>
+                            <span>Acciones Rápidas</span>
+                        </div>
+                        <div class="agent-actions" style="flex-wrap:wrap">
+                            <button class="btn-trigger @(_geocoding ? "running" : "")"
+                                    @onclick="GeocodeEventsAsync" disabled="@_geocoding">
+                                <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
+                                @(_geocoding ? "Geocodificando..." : "Geocodificar eventos")
+                            </button>
+                            <button class="btn-trigger" @onclick='() => TriggerAgentAsync("EventDetectorAgent")'>
+                                <i class="fa fa-brain"></i> Reclasificar artículos
+                            </button>
+                            <button class="btn-trigger" @onclick='() => TriggerAgentAsync("NewsScannerAgent")'>
+                                <i class="fa fa-rss"></i> Escanear fuentes
+                            </button>
+                            @if (_geocodeResult != null)
+                            {
+                                <span style="font-size:12px;color:var(--accent-green);align-self:center">
+                                    <i class="fa fa-check-circle"></i> @_geocodeResult
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Últimas ejecuciones -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-history"></i>
+                            <span>Últimas Ejecuciones</span>
+                            <a href="/admin/agents" class="panel-link" @onclick:preventDefault @onclick='() => Nav.NavigateTo("/admin/agents", true)'>Ver todo</a>
+                        </div>
+                        <table class="gm-table">
+                            <thead><tr>
+                                <th>Agente</th><th>Inicio</th><th>Duración</th>
+                                <th>Items</th><th>Coste IA</th><th>Estado</th>
+                            </tr></thead>
+                            <tbody>
+                                @foreach (var exec in RecentExecutions)
+                                {
+                                    <tr @onclick="() => ShowExecutionLogs(exec.Id)" class="clickable-row">
+                                        <td>@exec.AgentName</td>
+                                        <td>@exec.StartedAt.ToString("dd/MM HH:mm:ss")</td>
+                                        <td>@FormatDuration(exec.DurationMs)</td>
+                                        <td>@exec.ItemsProcessed / @exec.ItemsCreated</td>
+                                        <td>$@exec.AiCost.ToString("F4")</td>
+                                        <td><span class="status-badge status-@exec.Status.ToLower()">@exec.Status</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
                 </div>
-            </div>
-            <div class="agent-log-feed" id="agent-log-feed">
-                @foreach (var log in FilteredLogs.TakeLast(200))
-                {
-                    <div class="log-entry log-@log.Level.ToLower()">
-                        <span class="log-time">@log.Time.ToString("HH:mm:ss")</span>
-                        <span class="log-badge badge-@log.Level.ToLower()">@log.Level</span>
-                        <span class="log-agent">[@log.AgentName]</span>
-                        <span class="log-msg">@log.Message</span>
-                    </div>
-                }
-                @if (!LiveLogs.Any())
-                {
-                    <div class="log-empty">
-                        <i class="fa fa-satellite-dish"></i>
-                        Esperando actividad de agentes...
-                    </div>
-                }
-            </div>
+            }
 
-            <!-- Acciones rápidas de agentes -->
-            <div class="agent-actions">
-                @foreach (var agent in AgentTriggers)
-                {
-                    <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
-                            @onclick="() => TriggerAgentAsync(agent.Name)"
-                            disabled="@agent.IsRunning">
-                        <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
-                        @agent.DisplayName
-                    </button>
-                }
-            </div>
-        </div>
+            <!-- ═══════ AGENTES section ═══════ -->
+            @if (_section == "agentes")
+            {
+                <div class="gm-grid">
 
-        <!-- Utilidades de mapa -->
-        <div class="gm-panel gm-panel-wide">
-            <div class="panel-header">
-                <i class="fa fa-map-marked-alt"></i>
-                <span>Utilidades de Mapa</span>
-            </div>
-            <div class="agent-actions">
-                <button class="btn-trigger @(_geocoding ? "running" : "")"
-                        @onclick="GeocodeEventsAsync" disabled="@_geocoding">
-                    <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
-                    @(_geocoding ? "Geocodificando..." : "Geocodificar eventos en mapa")
-                </button>
-                @if (_geocodeResult != null)
-                {
-                    <span style="font-size:12px;color:var(--accent-green);align-self:center">
-                        <i class="fa fa-check-circle"></i> @_geocodeResult
-                    </span>
-                }
-            </div>
-        </div>
-
-        <!-- Costes por proveedor -->
-        <div class="gm-panel">
-            <div class="panel-header">
-                <i class="fa fa-chart-pie"></i>
-                <span>Costes de IA</span>
-                <select class="select-sm" @onchange="ChangeCostPeriod">
-                    <option value="today">Hoy</option>
-                    <option value="week">7 días</option>
-                    <option value="month">Mes</option>
-                </select>
-            </div>
-            <div class="cost-total">
-                <span class="cost-amount">$@TotalCostSelected.ToString("F4")</span>
-                <span class="cost-period">@CostPeriodLabel</span>
-            </div>
-            <canvas id="costChart" height="180"></canvas>
-            <div class="provider-list">
-                @foreach (var p in ProviderCosts)
-                {
-                    <div class="provider-row">
-                        <span class="provider-name">@p.Name</span>
-                        <div class="provider-bar">
-                            <div class="bar-fill" style="width:@(p.Percent)%; background:@p.Color"></div>
+                    <!-- Monitor logs -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-terminal"></i>
+                            <span>Monitor en Tiempo Real</span>
+                            <div class="panel-actions">
+                                <div class="log-search">
+                                    <input @bind="_logSearch" @bind:event="oninput"
+                                           placeholder="Filtrar logs..." />
+                                </div>
+                                <button class="btn-sm @(AgentFilter == "all" ? "active" : "")" @onclick='@(()=>AgentFilter="all")'>Todos</button>
+                                <button class="btn-sm @(AgentFilter == "error" ? "active" : "")" @onclick='@(()=>AgentFilter="error")'>Errores</button>
+                                <button class="btn-pause @(_logsPaused ? "paused" : "")" @onclick="ToggleLogPause">
+                                    <i class="fa @(_logsPaused ? "fa-play" : "fa-pause")"></i>
+                                    @(_logsPaused ? "Reanudar" : "Pausar")
+                                </button>
+                                <button class="btn-export" @onclick="ExportLogsAsync" title="Exportar logs">
+                                    <i class="fa fa-download"></i>
+                                </button>
+                                <button class="btn-sm" @onclick="ClearLogs">Limpiar</button>
+                            </div>
                         </div>
-                        <span class="provider-cost">$@p.Cost.ToString("F4")</span>
-                    </div>
-                }
-            </div>
-        </div>
-
-        <!-- Health del sistema -->
-        <div class="gm-panel">
-            <div class="panel-header">
-                <i class="fa fa-heartbeat"></i>
-                <span>Sistema Health</span>
-            </div>
-            <div class="health-list">
-                @foreach (var check in SystemHealth)
-                {
-                    <div class="health-row">
-                        <div class="health-indicator @(check.IsOk ? "ok" : "fail")"></div>
-                        <span class="health-name">@check.Name</span>
-                        <span class="health-value">@check.Value</span>
-                    </div>
-                }
-            </div>
-        </div>
-
-        <!-- Alertas críticas pendientes -->
-        <div class="gm-panel">
-            <div class="panel-header">
-                <i class="fa fa-exclamation-triangle"></i>
-                <span>Alertas Pendientes (@PendingAlerts.Count)</span>
-            </div>
-            <div class="alert-list">
-                @foreach (var alert in PendingAlerts.Take(10))
-                {
-                    <div class="alert-row severity-@alert.Severity.ToLower()">
-                        <div class="alert-info">
-                            <span class="alert-title">@alert.Title</span>
-                            <span class="alert-time">@alert.CreatedAt.ToString("dd/MM HH:mm")</span>
+                        <div class="agent-log-feed" id="agent-log-feed">
+                            @foreach (var log in FilteredLogs.TakeLast(200))
+                            {
+                                <div class="log-entry log-@log.Level.ToLower()">
+                                    <span class="log-time">@log.Time.ToString("HH:mm:ss")</span>
+                                    <span class="log-badge badge-@log.Level.ToLower()">@log.Level</span>
+                                    <span class="log-agent">[@log.AgentName]</span>
+                                    <span class="log-msg">@log.Message</span>
+                                </div>
+                            }
+                            @if (!FilteredLogs.Any())
+                            {
+                                <div class="log-empty">
+                                    <i class="fa fa-satellite-dish"></i>
+                                    @(_logsPaused ? "Logs pausados" : "Esperando actividad de agentes...")
+                                </div>
+                            }
                         </div>
-                        <button class="btn-ack" @onclick="() => AcknowledgeAlertAsync(alert.Id)">
-                            <i class="fa fa-check"></i>
-                        </button>
+                        <div class="agent-actions">
+                            @foreach (var agent in AgentTriggers)
+                            {
+                                <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
+                                        @onclick="() => TriggerAgentAsync(agent.Name)"
+                                        disabled="@agent.IsRunning">
+                                    <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
+                                    @agent.DisplayName
+                                    @if (!agent.IsRunning && agent.NextRunIn > 0)
+                                    {
+                                        <span class="next-run-badge">en @agent.NextRunIn&#x2009;m</span>
+                                    }
+                                </button>
+                            }
+                        </div>
                     </div>
-                }
-                @if (!PendingAlerts.Any())
-                {
-                    <div class="no-alerts"><i class="fa fa-shield-check"></i> Sin alertas pendientes</div>
-                }
-            </div>
-        </div>
 
-        <!-- Últimas ejecuciones -->
-        <div class="gm-panel gm-panel-wide">
-            <div class="panel-header">
-                <i class="fa fa-history"></i>
-                <span>Últimas Ejecuciones de Agentes</span>
-                <a href="/admin/agents" class="panel-link">Ver todo</a>
-            </div>
-            <table class="gm-table">
-                <thead>
-                    <tr>
-                        <th>Agente</th>
-                        <th>Inicio</th>
-                        <th>Duración</th>
-                        <th>Items</th>
-                        <th>Coste IA</th>
-                        <th>Estado</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var exec in RecentExecutions)
-                    {
-                        <tr @onclick="() => ShowExecutionLogs(exec.Id)" class="clickable-row">
-                            <td>@exec.AgentName</td>
-                            <td>@exec.StartedAt.ToString("dd/MM HH:mm:ss")</td>
-                            <td>@FormatDuration(exec.DurationMs)</td>
-                            <td>@exec.ItemsProcessed / @exec.ItemsCreated</td>
-                            <td>$@exec.AiCost.ToString("F4")</td>
-                            <td><span class="status-badge status-@exec.Status.ToLower()">@exec.Status</span></td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+                    <!-- Configuración de intervalos -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-sliders-h"></i>
+                            <span>Configuración de Agentes</span>
+                            <div class="panel-actions">
+                                <button class="btn-sm" @onclick="SaveAgentConfigsAsync" disabled="@_savingConfigs">
+                                    @if (_savingConfigs) { <i class="fa fa-spinner fa-spin"></i> }
+                                    Guardar cambios
+                                </button>
+                                @if (_configSaved)
+                                { <span style="color:var(--accent-green);font-size:12px"><i class="fa fa-check"></i> Guardado</span> }
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:44px 1fr 130px 130px;gap:0;padding:6px 16px;border-bottom:1px solid var(--admin-border)">
+                            <span></span>
+                            <span style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Agente</span>
+                            <span style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Intervalo</span>
+                            <span style="font-size:10px;text-transform:uppercase;color:var(--text-muted)">Máx. Items / ciclo</span>
+                        </div>
+                        <div class="agent-config-grid">
+                            @foreach (var cfg in _agentConfigs)
+                            {
+                                <div class="agent-cfg-row @(!cfg.IsEnabled ? "disabled-agent" : "")">
+                                    <label class="toggle-sw" title="@(cfg.IsEnabled ? "Habilitado" : "Deshabilitado")">
+                                        <input type="checkbox" @bind="cfg.IsEnabled" />
+                                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                    </label>
+                                    <span class="agent-cfg-name">@cfg.AgentType</span>
+                                    <div class="agent-cfg-interval">
+                                        <input type="number" @bind="cfg.IntervalMinutes" min="1" max="10080" />
+                                        <span class="cfg-unit">min <span style="color:var(--text-muted)">(@FormatInterval(cfg.IntervalMinutes))</span></span>
+                                    </div>
+                                    <div class="agent-cfg-maxtokens">
+                                        <input type="number" @bind="cfg.MaxItemsPerCycle" placeholder="—" min="1" max="10000" />
+                                        <span class="cfg-unit">items</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
 
-    </div>
+                </div>
+            }
+
+            <!-- ═══════ FUENTES section ═══════ -->
+            @if (_section == "fuentes")
+            {
+                <div class="gm-grid">
+
+                    <!-- Zonas de workspace -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-globe-europe"></i>
+                            <span>Zonas de Workspace</span>
+                            <small style="color:var(--text-muted);font-size:11px">Configuran el selector y la semilla de fuentes</small>
+                            <button class="btn-sm" style="margin-left:auto" @onclick="OpenAddZone">
+                                <i class="fa fa-plus"></i> Nueva zona
+                            </button>
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px">
+                            @foreach (var zone in _zones)
+                            {
+                                <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);font-size:13px">
+                                    <span style="font-size:16px">@zone.Flag</span>
+                                    <span style="font-weight:600">@zone.Name</span>
+                                    <span style="color:var(--text-muted);font-size:11px">(@zone.GeoTerms.Count términos)</span>
+                                    <button class="btn-icon" @onclick="@(() => OpenEditZone(zone))"><i class="fa fa-edit"></i></button>
+                                    <button class="btn-icon text-danger" @onclick="@(() => DeleteZoneAsync(zone))"><i class="fa fa-trash"></i></button>
+                                </div>
+                            }
+                            @if (!_zones.Any())
+                            { <span style="color:var(--text-muted);font-size:13px">Sin zonas configuradas</span> }
+                        </div>
+                    </div>
+
+                    <!-- Source health table -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-heartbeat"></i>
+                            <span>Salud de Fuentes</span>
+                            <span style="font-size:11px;color:var(--text-muted)">
+                                @_sources.Count(s => s.HealthStatus == "ok") OK ·
+                                <span style="color:var(--accent-yellow)">@_sources.Count(s => s.HealthStatus == "warn") degradadas</span> ·
+                                <span style="color:var(--accent-red)">@_sources.Count(s => s.HealthStatus == "fail") caídas</span>
+                            </span>
+                            <button class="btn-sm" style="margin-left:auto" @onclick="DisableFailedSourcesAsync">
+                                Deshabilitar caídas
+                            </button>
+                        </div>
+                        <div style="overflow-x:auto">
+                            <table class="source-health-table">
+                                <thead><tr>
+                                    <th></th><th>Fuente</th><th>Sección</th>
+                                    <th>OK / Fail</th><th>Fiabilidad</th><th>Último scan</th><th>Acciones</th>
+                                </tr></thead>
+                                <tbody>
+                                    @foreach (var src in _sources.OrderBy(s => s.HealthStatus == "ok" ? 2 : s.HealthStatus == "warn" ? 1 : 0))
+                                    {
+                                        <tr>
+                                            <td><span class="src-status-dot src-@src.HealthStatus"></span></td>
+                                            <td style="font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@src.Name</td>
+                                            <td style="color:var(--text-muted)">@src.SectionName</td>
+                                            <td>
+                                                <span style="color:var(--accent-green)">@src.SuccessfulScans</span>
+                                                /
+                                                <span style="color:var(--accent-red)">@src.FailedScans</span>
+                                            </td>
+                                            <td>
+                                                <span class="health-bar">
+                                                    <span class="health-bar-fill"
+                                                          style="width:@(src.ReliabilityPct)%;background:@(src.HealthStatus == "ok" ? "var(--accent-green)" : src.HealthStatus == "warn" ? "var(--accent-yellow)" : "var(--accent-red)")"></span>
+                                                </span>
+                                                <span style="font-size:11px;margin-left:4px">@src.ReliabilityPct%</span>
+                                            </td>
+                                            <td style="color:var(--text-muted);font-size:11px">
+                                                @(src.LastScannedAt.HasValue ? src.LastScannedAt.Value.ToString("dd/MM HH:mm") : "—")
+                                            </td>
+                                            <td>
+                                                <button class="btn-sm" @onclick="@(() => ToggleSourceAsync(src.Id, src.IsActive))"
+                                                        style="font-size:11px">
+                                                    @(src.IsActive ? "Deshab." : "Habilitar")
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Geocodificación -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-map-marked-alt"></i>
+                            <span>Geocodificación de Eventos</span>
+                        </div>
+                        <div class="agent-actions">
+                            <button class="btn-trigger @(_geocoding ? "running" : "")"
+                                    @onclick="GeocodeEventsAsync" disabled="@_geocoding">
+                                <i class="fa @(_geocoding ? "fa-spinner fa-spin" : "fa-map-marker-alt")"></i>
+                                @(_geocoding ? "Geocodificando..." : "Geocodificar eventos en mapa")
+                            </button>
+                            @if (_geocodeResult != null)
+                            {
+                                <span style="font-size:12px;color:var(--accent-green);align-self:center">
+                                    <i class="fa fa-check-circle"></i> @_geocodeResult
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                </div>
+            }
+
+            <!-- ═══════ SISTEMA section ═══════ -->
+            @if (_section == "sistema")
+            {
+                <div class="gm-grid">
+
+                    <!-- Proveedores IA -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-brain"></i>
+                            <span>Proveedores de IA</span>
+                            <a href="/admin/ai" class="panel-link" @onclick:preventDefault @onclick='() => Nav.NavigateTo("/admin/ai", true)'>Gestionar completo</a>
+                        </div>
+                        <table class="gm-table">
+                            <thead><tr>
+                                <th>Proveedor</th><th>Modelo</th><th>Coste hoy</th>
+                                <th>Coste mes</th><th>Max tokens</th><th>Estado</th>
+                            </tr></thead>
+                            <tbody>
+                                @foreach (var p in _aiProviders)
+                                {
+                                    <tr>
+                                        <td>
+                                            @p.Name
+                                            @if (p.IsDefault) { <span class="badge-default" style="margin-left:6px">default</span> }
+                                        </td>
+                                        <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">@p.Model</td>
+                                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostToday.ToString("F4")</td>
+                                        <td style="font-variant-numeric:tabular-nums">$@p.TotalCostMonth.ToString("F4")</td>
+                                        <td>@p.MaxTokens</td>
+                                        <td>
+                                            <span style="color:@(p.IsActive ? "var(--accent-green)" : "var(--text-muted)")">
+                                                @(p.IsActive ? "Activo" : "Inactivo")
+                                            </span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Audit log -->
+                    <div class="gm-panel gm-panel-wide">
+                        <div class="panel-header">
+                            <i class="fa fa-clipboard-list"></i>
+                            <span>Audit Log</span>
+                            <span style="font-size:11px;color:var(--text-muted)">Últimas 100 acciones de admin</span>
+                        </div>
+                        <div class="audit-list">
+                            @foreach (var entry in _auditLogs)
+                            {
+                                <div class="audit-row">
+                                    <span class="audit-time">@entry.CreatedAt.ToString("dd/MM HH:mm")</span>
+                                    <span class="audit-user">@entry.UserName</span>
+                                    <span class="audit-action">@entry.Action</span>
+                                    <span class="audit-entity">@entry.EntityName</span>
+                                </div>
+                            }
+                            @if (!_auditLogs.Any())
+                            { <div style="padding:20px;text-align:center;color:var(--text-muted)">Sin entradas de auditoría</div> }
+                        </div>
+                    </div>
+
+                </div>
+            }
+
+        </div><!-- /gm-content -->
+    </div><!-- /gm-body -->
 </div>
+
+<!-- Zone modal -->
+@if (_showZoneModal)
+{
+    <div class="modal-overlay" @onclick="CloseZoneModal">
+        <div class="modal-box" style="max-width:540px" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(_editingZone?.Id > 0 ? "Editar" : "Nueva") Zona de Workspace</h3>
+                <button @onclick="CloseZoneModal"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Emoji</label>
+                        <input class="form-control" @bind="_zoneForm.Flag" style="font-size:20px;text-align:center" maxlength="8"/>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Nombre *</label>
+                        <input class="form-control" @bind="_zoneForm.Name" placeholder="España, Brasil…" />
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Descripción</label>
+                    <input class="form-control" @bind="_zoneForm.Description" />
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">
+                        Términos geográficos <span style="color:var(--accent)">(coma separados)</span>
+                    </label>
+                    <textarea class="form-control" rows="3" @bind="_zoneForm.GeoTermsText"
+                              placeholder="Spain, España, Madrid, Barcelona…"></textarea>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Orden</label>
+                    <input type="number" class="form-control" @bind="_zoneForm.SortOrder" style="width:80px"/>
+                </div>
+                @if (!string.IsNullOrEmpty(_zoneError))
+                { <div class="alert alert-danger" style="padding:8px 12px;font-size:13px">@_zoneError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="CloseZoneModal">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveZoneAsync" disabled="@_savingZone">
+                    @if (_savingZone) { <i class="fa fa-spinner fa-spin"></i> } Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 <!-- Modal logs de ejecución -->
 @if (ShowLogsModal)
@@ -291,13 +619,28 @@
     private HubConnection? _adminHub;
     private HubConnection? _agentHub;
     private bool IsConnected => _adminHub?.State == HubConnectionState.Connected;
-    private bool IsLoading = false;
+    private bool IsLoading;
     private string AgentFilter = "all";
     private string CostPeriod = "today";
     private string CostPeriodLabel => CostPeriod switch { "week" => "7 días", "month" => "Mes", _ => "Hoy" };
-    private bool ShowLogsModal = false;
+    private bool ShowLogsModal;
     private int SelectedExecutionId;
+    private string _section = "dashboard";
+    private DateTime _now = DateTime.Now;
 
+    // KPI flash
+    private bool _kpiFlash;
+
+    // Logs
+    private string _logSearch = "";
+    private bool _logsPaused;
+
+    // Process metrics
+    private string _memMb = "—";
+    private string _uptime = "—";
+    private int _threads;
+
+    // Data
     private DashboardStats Stats = new();
     private List<LiveLogEntry> LiveLogs = [];
     private List<AlertItem> PendingAlerts = [];
@@ -306,41 +649,107 @@
     private List<HealthItem> SystemHealth = [];
     private List<AgentTriggerItem> AgentTriggers = [];
     private List<ExecutionLogItem> ExecutionLogs = [];
+    private List<WorkspaceZone> _zones = [];
+    private List<AgentConfig> _agentConfigs = [];
+    private List<SourceHealthItem> _sources = [];
+    private List<AiProviderConfig> _aiProviders = [];
+    private List<AuditEntry> _auditLogs = [];
     private decimal TotalCostSelected;
     private bool _geocoding;
     private string? _geocodeResult;
+    private bool _savingConfigs;
+    private bool _configSaved;
 
-    private IEnumerable<LiveLogEntry> FilteredLogs => AgentFilter == "error"
-        ? LiveLogs.Where(l => l.Level is "Error" or "Warning")
-        : LiveLogs;
+    // Zone modal
+    private bool _showZoneModal;
+    private bool _savingZone;
+    private string _zoneError = "";
+    private WorkspaceZone? _editingZone;
+    private ZoneForm _zoneForm = new();
+
+    // Auto-refresh timer
+    private System.Threading.Timer? _refreshTimer;
+    private CancellationTokenSource _cts = new();
+
+    private IEnumerable<LiveLogEntry> FilteredLogs
+    {
+        get
+        {
+            var q = AgentFilter == "error"
+                ? LiveLogs.Where(l => l.Level is "Error" or "Warning")
+                : LiveLogs.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(_logSearch))
+                q = q.Where(l => l.Message.Contains(_logSearch, StringComparison.OrdinalIgnoreCase)
+                               || l.AgentName.Contains(_logSearch, StringComparison.OrdinalIgnoreCase));
+            return q;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
         InitAgentTriggers();
-        await LoadInitialDataAsync();
-        await LoadSystemHealthAsync();
+        try
+        {
+            await LoadInitialDataAsync();
+            await LoadSystemHealthAsync();
+            await LoadZonesAsync();
+            await LoadAgentConfigsAsync();
+            await LoadSourcesAsync();
+            await LoadAiProvidersAsync();
+            await LoadAuditLogsAsync();
+        }
+        catch (Exception ex)
+        {
+            LiveLogs.Add(new("System", "Error", $"Error cargando datos: {ex.Message}", DateTime.Now));
+        }
     }
 
     private void InitAgentTriggers()
     {
         AgentTriggers =
         [
-            new("NewsScannerAgent", "Scanner RSS"),
-            new("EventDetectorAgent", "Detector Eventos"),
-            new("AlertGeneratorAgent", "Generador Alertas"),
-            new("NotificationDispatcherAgent", "Dispatcher Notif."),
-            new("ArticleSummarizerAgent", "Resumidor Artículos"),
-            new("DigestSenderAgent", "Digest Email")
+            new("NewsScannerAgent",             "Scanner RSS",          NewsScannerAgent),
+            new("EventDetectorAgent",           "Detector Eventos",     EventDetectorAgent),
+            new("AlertGeneratorAgent",          "Generador Alertas",    AlertGeneratorAgent),
+            new("NotificationDispatcherAgent",  "Dispatcher Notif.",    NotificationDispatcherAgent),
+            new("ArticleSummarizerAgent",       "Resumidor Artículos",  ArticleSummarizerAgent),
+            new("DigestSenderAgent",            "Digest Email",         DigestSenderAgent),
+            new("SourceDiscoveryAgent",         "Descubrir Fuentes",    SourceDiscoveryAgent),
         ];
     }
 
     private async Task LoadInitialDataAsync()
     {
         var today = DateTime.UtcNow.Date;
+        var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var articlesToday = await Ctx.NewsArticles.CountAsync(a => a.CreatedAt >= today);
+        var eventsToday   = await Ctx.NewsEvents.CountAsync(e => e.IsActive && e.CreatedAt >= today);
+        var totalUsers    = await Ctx.Users.CountAsync();
+        var activeUsers   = await Ctx.Users.CountAsync(u => u.LastLoginAt >= DateTime.UtcNow.AddDays(-30));
+        var pendingAlerts = await Ctx.AlertTriggers.CountAsync(a => !a.IsAcknowledged);
+        var costToday     = await Ctx.CostEntries.Where(c => c.Date >= today).SumAsync(c => (decimal?)c.Cost) ?? 0;
+        var costMonth     = await Ctx.CostEntries.Where(c => c.Date >= monthStart).SumAsync(c => (decimal?)c.Cost) ?? 0;
+
+        var runningAgents = await Ctx.AgentExecutions
+            .Where(e => e.StartedAt >= DateTime.UtcNow.AddMinutes(-10) && e.CompletedAt == null)
+            .Select(e => e.AgentName).ToListAsync();
+
+        Stats = new DashboardStats
+        {
+            ArticlesToday      = articlesToday,
+            EventsToday        = eventsToday,
+            TotalUsers         = totalUsers,
+            ActiveUsers        = activeUsers,
+            PendingAlerts      = pendingAlerts,
+            CostToday          = costToday,
+            CostMonth          = costMonth,
+            AgentsRunningCount = runningAgents.Count,
+            RunningAgentNames  = runningAgents
+        };
 
         RecentExecutions = await Ctx.AgentExecutions
-            .OrderByDescending(e => e.StartedAt)
-            .Take(10)
+            .OrderByDescending(e => e.StartedAt).Take(10)
             .Select(e => new ExecutionItem(
                 e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
                 e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
@@ -350,25 +759,39 @@
         PendingAlerts = await Ctx.AlertTriggers
             .Include(a => a.NewsEvent)
             .Where(a => !a.IsAcknowledged)
-            .OrderByDescending(a => a.Severity)
-            .ThenByDescending(a => a.CreatedAt)
-            .Take(20)
+            .OrderByDescending(a => a.Severity).ThenByDescending(a => a.CreatedAt).Take(20)
             .Select(a => new AlertItem(a.Id, a.Title, a.Severity.ToString(), a.CreatedAt))
             .ToListAsync();
 
         await LoadCostDataAsync();
+        UpdateNextRunCountdowns();
+    }
+
+    private void UpdateNextRunCountdowns()
+    {
+        // Match last execution per agent name and compute next run
+        foreach (var trigger in AgentTriggers)
+        {
+            var cfg = _agentConfigs.FirstOrDefault(c => c.AgentType == trigger.Name);
+            var lastRun = RecentExecutions.FirstOrDefault(e => e.AgentName == trigger.Name);
+            if (cfg == null || lastRun == null) { trigger.NextRunIn = 0; continue; }
+            var elapsed = (DateTime.UtcNow - lastRun.StartedAt).TotalMinutes;
+            var remaining = (int)Math.Max(0, cfg.IntervalMinutes - elapsed);
+            trigger.NextRunIn = remaining;
+        }
     }
 
     private async Task LoadCostDataAsync()
     {
         var cutoff = CostPeriod switch
         {
-            "week" => DateTime.UtcNow.AddDays(-7),
+            "week"  => DateTime.UtcNow.AddDays(-7),
             "month" => new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1),
-            _ => DateTime.UtcNow.Date
+            _       => DateTime.UtcNow.Date
         };
 
         var byProvider = await Ctx.CostEntries
+            .Include(c => c.Provider)
             .Where(c => c.Date >= cutoff)
             .GroupBy(c => c.Provider.Name)
             .Select(g => new { Name = g.Key, Cost = g.Sum(c => c.Cost) })
@@ -376,7 +799,6 @@
 
         TotalCostSelected = byProvider.Sum(p => p.Cost);
         var colors = new[] { "#4a90e2", "#00ff88", "#ff6600", "#ff0080", "#ffcc00" };
-
         ProviderCosts = byProvider.Select((p, i) => new ProviderCostItem(
             p.Name, p.Cost,
             TotalCostSelected > 0 ? (double)(p.Cost / TotalCostSelected * 100) : 0,
@@ -388,56 +810,88 @@
     {
         SystemHealth = [];
 
-        // DB connectivity
+        // Process metrics
         try
         {
-            await Ctx.Database.ExecuteSqlRawAsync("SELECT 1");
-            SystemHealth.Add(new("PostgreSQL", true, "Conectado"));
+            var proc = System.Diagnostics.Process.GetCurrentProcess();
+            _memMb = (proc.WorkingSet64 / 1024 / 1024).ToString();
+            _threads = proc.Threads.Count;
+            var uptimeMin = (int)(DateTime.UtcNow - proc.StartTime.ToUniversalTime()).TotalMinutes;
+            _uptime = uptimeMin < 60 ? $"{uptimeMin}m" : $"{uptimeMin/60}h{uptimeMin%60:00}";
         }
+        catch { _memMb = "—"; _uptime = "—"; }
+
+        try { await Ctx.Database.ExecuteSqlRawAsync("SELECT 1"); SystemHealth.Add(new("PostgreSQL", true, "Conectado")); }
         catch { SystemHealth.Add(new("PostgreSQL", false, "Error")); }
 
-        // Recent agent activity
-        var lastAgent = await Ctx.AgentExecutions
-            .OrderByDescending(e => e.StartedAt)
-            .FirstOrDefaultAsync();
-
+        var lastAgent = await Ctx.AgentExecutions.OrderByDescending(e => e.StartedAt).FirstOrDefaultAsync();
         if (lastAgent != null)
         {
             var ago = DateTime.UtcNow - lastAgent.StartedAt;
-            SystemHealth.Add(new("Ultimo agente", ago.TotalHours < 2, $"hace {(int)ago.TotalMinutes}min"));
+            SystemHealth.Add(new("Último agente", ago.TotalHours < 2, $"hace {(int)ago.TotalMinutes}min"));
         }
 
-        var failedToday = await Ctx.NewsSources
-            .CountAsync(s => s.IsActive && s.FailedScans > s.SuccessfulScans);
-        SystemHealth.Add(new("Fuentes con errores", failedToday == 0, failedToday == 0 ? "OK" : $"{failedToday} degradadas"));
+        var failedSrcs = await Ctx.NewsSources.CountAsync(s => s.IsActive && s.FailedScans > s.SuccessfulScans);
+        SystemHealth.Add(new("Fuentes degradadas", failedSrcs == 0, failedSrcs == 0 ? "OK" : $"{failedSrcs}"));
 
         var activeProviders = await Ctx.AiProviderConfigs.CountAsync(p => p.IsActive);
         SystemHealth.Add(new("Proveedores IA", activeProviders > 0, $"{activeProviders} activos"));
+    }
+
+    private async Task LoadAgentConfigsAsync()
+    {
+        _agentConfigs = await Ctx.AgentConfigs.OrderBy(c => c.AgentType).ToListAsync();
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        var srcs = await Ctx.NewsSources
+            .Include(s => s.Section)
+            .Where(s => !s.IsDeleted)
+            .OrderByDescending(s => s.FailedScans)
+            .Take(100)
+            .ToListAsync();
+
+        _sources = srcs.Select(s =>
+        {
+            var total = s.SuccessfulScans + s.FailedScans;
+            var pct = total > 0 ? (int)(s.SuccessfulScans * 100.0 / total) : 100;
+            var status = total == 0 ? "ok" : pct >= 70 ? "ok" : pct >= 40 ? "warn" : "fail";
+            return new SourceHealthItem(s.Id, s.Name, s.Section?.Name ?? "—", s.SuccessfulScans, s.FailedScans, pct, status, s.LastScannedAt, s.IsActive);
+        }).ToList();
+    }
+
+    private async Task LoadAiProvidersAsync()
+    {
+        _aiProviders = await Ctx.AiProviderConfigs.OrderByDescending(p => p.IsDefault).ToListAsync();
+    }
+
+    private async Task LoadAuditLogsAsync()
+    {
+        _auditLogs = await Ctx.AuditLogs
+            .OrderByDescending(l => l.Timestamp).Take(100)
+            .Select(l => new AuditEntry(l.Action, l.EntityType, l.Timestamp, l.UserEmail))
+            .ToListAsync();
     }
 
     private async Task SetupHubsAsync()
     {
         _adminHub = new HubConnectionBuilder()
             .WithUrl(Nav.ToAbsoluteUri("/adminhub"))
-            .WithAutomaticReconnect()
-            .Build();
+            .WithAutomaticReconnect().Build();
 
-        _adminHub.On<object>("DashboardStats", stats =>
-        {
-            InvokeAsync(StateHasChanged);
-        });
+        _adminHub.On<object>("DashboardStats", _ => InvokeAsync(StateHasChanged));
 
         _agentHub = new HubConnectionBuilder()
             .WithUrl(Nav.ToAbsoluteUri("/agenthub"))
-            .WithAutomaticReconnect()
-            .Build();
+            .WithAutomaticReconnect().Build();
 
         _agentHub.On<object>("AgentLog", async (logObj) =>
         {
+            if (_logsPaused) return;
             var json = System.Text.Json.JsonSerializer.Serialize(logObj);
             var log = System.Text.Json.JsonSerializer.Deserialize<AgentLogMessage>(json,
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
             if (log != null)
             {
                 LiveLogs.Add(new(log.AgentName ?? "Agent", log.Level ?? "Info", log.Message ?? "", DateTime.Now));
@@ -449,52 +903,50 @@
 
         try { await _adminHub.StartAsync(); } catch { }
         try { await _agentHub.StartAsync(); } catch { }
+
+        // Auto-refresh KPIs every 30s
+        _refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (_cts.IsCancellationRequested) return;
+            try
+            {
+                _now = DateTime.Now;
+                await LoadInitialDataAsync();
+                _kpiFlash = true;
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(500, _cts.Token);
+                _kpiFlash = false;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (ObjectDisposedException) { }
+            catch (OperationCanceledException) { }
+            catch { }
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
-    // Region overrides — same as map.js, prevents Nominatim from mapping regions to wrong countries
     private static readonly Dictionary<string, (double Lat, double Lng)> _regionCoords = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["middle east"]      = (29.5,  42.5),
-        ["near east"]        = (29.5,  42.5),
-        ["eastern europe"]   = (50.0,  30.0),
-        ["western europe"]   = (48.0,  10.0),
-        ["central europe"]   = (48.0,  16.0),
-        ["northern europe"]  = (60.0,  15.0),
-        ["southern europe"]  = (42.0,  14.0),
-        ["central asia"]     = (45.0,  65.0),
-        ["south asia"]       = (23.0,  77.0),
-        ["southeast asia"]   = (10.0, 108.0),
-        ["east asia"]        = (35.0, 115.0),
-        ["sub-saharan africa"] = (0.0, 20.0),
-        ["north africa"]     = (27.0,  17.0),
-        ["west africa"]      = (12.0,  -2.0),
-        ["east africa"]      = (0.0,   37.0),
-        ["latin america"]    = (-15.0, -60.0),
-        ["south america"]    = (-15.0, -55.0),
-        ["central america"]  = (12.0, -85.0),
-        ["caribbean"]        = (18.0, -66.0),
-        ["balkans"]          = (43.0,  20.0),
-        ["caucasus"]         = (42.0,  45.0),
-        ["horn of africa"]   = (8.0,   42.0),
-        ["persian gulf"]     = (26.0,  52.0),
-        ["gulf states"]      = (24.0,  51.0),
-        ["red sea"]          = (20.0,  38.0),
-        ["mediterranean"]    = (38.0,  18.0),
+        ["middle east"]     = (29.5,  42.5), ["eastern europe"]  = (50.0,  30.0),
+        ["western europe"]  = (48.0,  10.0), ["central europe"]  = (48.0,  16.0),
+        ["northern europe"] = (60.0,  15.0), ["southern europe"] = (42.0,  14.0),
+        ["central asia"]    = (45.0,  65.0), ["south asia"]      = (23.0,  77.0),
+        ["southeast asia"]  = (10.0, 108.0), ["east asia"]       = (35.0, 115.0),
+        ["sub-saharan africa"]=(0.0,  20.0), ["north africa"]    = (27.0,  17.0),
+        ["latin america"]   = (-15.0,-60.0), ["south america"]   = (-15.0,-55.0),
+        ["central america"] = (12.0, -85.0), ["caribbean"]       = (18.0, -66.0),
+        ["balkans"]         = (43.0,  20.0), ["caucasus"]        = (42.0,  45.0),
+        ["persian gulf"]    = (26.0,  52.0), ["mediterranean"]   = (38.0,  18.0),
     };
 
     private async Task GeocodeEventsAsync()
     {
-        _geocoding = true;
-        _geocodeResult = null;
-        StateHasChanged();
+        _geocoding = true; _geocodeResult = null;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            // All active events — reset coords to reprocess with correct region lookup
             var events = await Ctx.NewsEvents
                 .Where(e => e.IsActive && !e.IsDeleted)
-                .OrderByDescending(e => e.ImpactScore)
-                .Take(50)
-                .ToListAsync();
+                .OrderByDescending(e => e.ImpactScore).Take(50).ToListAsync();
 
             ANews.Domain.Interfaces.IAiProvider ai;
             try { ai = await AiFactory.GetDefaultProviderAsync(); }
@@ -505,31 +957,23 @@
 
             foreach (var ev in events)
             {
-                // Step 1: get location from AI if missing
                 if (string.IsNullOrEmpty(ev.Location))
                 {
                     var aiResp = await ai.CompleteAsync(new ANews.Domain.Interfaces.AiRequest
                     {
-                        SystemPrompt = "You are a geography expert. Reply ONLY with the most specific geographic location name in English (city, country, or region like 'Latin America', 'Middle East'). If truly global with no location, reply: null",
-                        UserPrompt = "What is the main geographic location of this news event?\nTitle: " + ev.Title + "\nDescription: " + (ev.Description ?? ""),
-                        MaxTokens = 20,
-                        Temperature = 0,
-                        OperationTag = "location_enrichment"
+                        SystemPrompt = "You are a geography expert. Reply ONLY with the most specific geographic location name in English. If truly global, reply: null",
+                        UserPrompt = "Location of this news event?\nTitle: " + ev.Title,
+                        MaxTokens = 20, Temperature = 0, OperationTag = "location_enrichment"
                     }, CancellationToken.None);
-
                     if (!aiResp.Success) continue;
                     var loc = aiResp.Content.Trim().Trim('"').Trim('.');
                     if (string.IsNullOrWhiteSpace(loc) || loc.Equals("null", StringComparison.OrdinalIgnoreCase)) continue;
                     ev.Location = loc;
                 }
 
-                // Step 2: geocode with region override first
                 var locKey = ev.Location!.Trim();
                 if (_regionCoords.TryGetValue(locKey, out var rc))
-                {
-                    ev.Latitude  = rc.Lat;
-                    ev.Longitude = rc.Lng;
-                }
+                { ev.Latitude = rc.Lat; ev.Longitude = rc.Lng; }
                 else
                 {
                     await Task.Delay(500);
@@ -543,10 +987,8 @@
                             if (doc.RootElement.GetArrayLength() > 0)
                             {
                                 var first = doc.RootElement[0];
-                                if (double.TryParse(first.GetProperty("lat").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lat))
-                                    ev.Latitude = lat;
-                                if (double.TryParse(first.GetProperty("lon").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon))
-                                    ev.Longitude = lon;
+                                if (double.TryParse(first.GetProperty("lat").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lat)) ev.Latitude = lat;
+                                if (double.TryParse(first.GetProperty("lon").GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon)) ev.Longitude = lon;
                             }
                         }
                     }
@@ -557,15 +999,15 @@
                 {
                     enriched++;
                     _geocodeResult = $"Procesando... {enriched} eventos";
-                    StateHasChanged();
+                    await InvokeAsync(StateHasChanged);
                 }
             }
 
             await Ctx.SaveChangesAsync();
-            _geocodeResult = $"Completado: {enriched} de {events.Count} eventos geocodificados";
+            _geocodeResult = $"Completado: {enriched} de {events.Count} geocodificados";
         }
         catch (Exception ex) { _geocodeResult = $"Error: {ex.Message}"; }
-        finally { _geocoding = false; StateHasChanged(); }
+        finally { _geocoding = false; await InvokeAsync(StateHasChanged); }
     }
 
     private async Task RefreshAll()
@@ -573,56 +1015,157 @@
         IsLoading = true;
         await LoadInitialDataAsync();
         await LoadSystemHealthAsync();
+        await LoadZonesAsync();
+        await LoadSourcesAsync();
+        await LoadAiProvidersAsync();
         IsLoading = false;
     }
 
+    // ── Agent config ─────────────────────────────────
+    private async Task SaveAgentConfigsAsync()
+    {
+        _savingConfigs = true;
+        try
+        {
+            foreach (var cfg in _agentConfigs)
+            {
+                Ctx.AgentConfigs.Update(cfg);
+                // Hot-patch running agents
+                var agent = cfg.AgentType switch
+                {
+                    "NewsScannerAgent"             => (ANews.Infrastructure.Agents.BaseAgent?)NewsScannerAgent,
+                    "EventDetectorAgent"           => EventDetectorAgent,
+                    "AlertGeneratorAgent"          => AlertGeneratorAgent,
+                    "NotificationDispatcherAgent"  => NotificationDispatcherAgent,
+                    "ArticleSummarizerAgent"       => ArticleSummarizerAgent,
+                    "DigestSenderAgent"            => DigestSenderAgent,
+                    "SourceDiscoveryAgent"         => SourceDiscoveryAgent,
+                    _                              => null
+                };
+                agent?.UpdateInterval(cfg.IntervalMinutes);
+                agent?.SetEnabled(cfg.IsEnabled);
+            }
+            await Ctx.SaveChangesAsync();
+            _configSaved = true;
+            _ = Task.Delay(2000).ContinueWith(_ => { _configSaved = false; InvokeAsync(StateHasChanged); });
+        }
+        finally { _savingConfigs = false; }
+    }
 
+    // ── Source health ─────────────────────────────────
+    private async Task ToggleSourceAsync(int id, bool currentlyActive)
+    {
+        var src = await Ctx.NewsSources.FindAsync(id);
+        if (src == null) return;
+        src.IsActive = !currentlyActive;
+        await Ctx.SaveChangesAsync();
+        await LoadSourcesAsync();
+    }
+
+    private async Task DisableFailedSourcesAsync()
+    {
+        var failed = await Ctx.NewsSources
+            .Where(s => s.IsActive && s.FailedScans > s.SuccessfulScans && s.SuccessfulScans < 3)
+            .ToListAsync();
+        foreach (var s in failed) s.IsActive = false;
+        await Ctx.SaveChangesAsync();
+        await LoadSourcesAsync();
+    }
+
+    // ── Zones ─────────────────────────────────────────
+    private async Task LoadZonesAsync()
+    {
+        _zones = await Ctx.WorkspaceZones.Where(z => !z.IsDeleted)
+            .OrderBy(z => z.SortOrder).ThenBy(z => z.Name).ToListAsync();
+    }
+
+    private void OpenAddZone()
+    {
+        _editingZone = null;
+        _zoneForm = new ZoneForm { SortOrder = _zones.Count > 0 ? _zones.Max(z => z.SortOrder) + 1 : 1 };
+        _zoneError = "";
+        _showZoneModal = true;
+    }
+
+    private void OpenEditZone(WorkspaceZone zone)
+    {
+        _editingZone = zone;
+        _zoneForm = new ZoneForm
+        {
+            Name = zone.Name, Flag = zone.Flag, Description = zone.Description,
+            GeoTermsText = string.Join(", ", zone.GeoTerms), SortOrder = zone.SortOrder
+        };
+        _zoneError = "";
+        _showZoneModal = true;
+    }
+
+    private void CloseZoneModal() => _showZoneModal = false;
+
+    private async Task SaveZoneAsync()
+    {
+        _zoneError = "";
+        if (string.IsNullOrWhiteSpace(_zoneForm.Name)) { _zoneError = "El nombre es obligatorio"; return; }
+        _savingZone = true;
+        try
+        {
+            var terms = _zoneForm.GeoTermsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(t => !string.IsNullOrEmpty(t)).ToList();
+
+            if (_editingZone?.Id > 0)
+            {
+                _editingZone.Name = _zoneForm.Name; _editingZone.Flag = _zoneForm.Flag;
+                _editingZone.Description = _zoneForm.Description; _editingZone.GeoTerms = terms;
+                _editingZone.SortOrder = _zoneForm.SortOrder;
+                Ctx.WorkspaceZones.Update(_editingZone);
+            }
+            else
+            {
+                Ctx.WorkspaceZones.Add(new WorkspaceZone
+                {
+                    Name = _zoneForm.Name, Flag = _zoneForm.Flag, Description = _zoneForm.Description,
+                    GeoTerms = terms, SortOrder = _zoneForm.SortOrder, IsActive = true
+                });
+            }
+            await Ctx.SaveChangesAsync();
+            await LoadZonesAsync();
+            _showZoneModal = false;
+        }
+        catch (Exception ex) { _zoneError = ex.Message; }
+        finally { _savingZone = false; }
+    }
+
+    private async Task DeleteZoneAsync(WorkspaceZone zone)
+    {
+        zone.IsDeleted = true;
+        Ctx.WorkspaceZones.Update(zone);
+        await Ctx.SaveChangesAsync();
+        _zones.Remove(zone);
+    }
+
+    // ── Agent triggers ───────────────────────────────
     private async Task TriggerAgentAsync(string agentName)
     {
         var trigger = AgentTriggers.FirstOrDefault(a => a.Name == agentName);
         if (trigger != null) trigger.IsRunning = true;
         StateHasChanged();
-
         try
         {
-            var triggered = agentName.ToLower() switch
-            {
-                "newsscanner" or "newsscanneragent"                         => TriggerDirect(NewsScannerAgent),
-                "eventdetector" or "eventdetectoragent"                     => TriggerDirect(EventDetectorAgent),
-                "alertgenerator" or "alertgeneratoragent"                   => TriggerDirect(AlertGeneratorAgent),
-                "notificationdispatcher" or "notificationdispatcheragent"   => TriggerDirect(NotificationDispatcherAgent),
-                "articlesummarizer" or "articlesummarizeragent"             => TriggerDirect(ArticleSummarizerAgent),
-                "digestsender" or "digestsenderagent"                       => TriggerDirect(DigestSenderAgent),
-                _ => false
-            };
-            var msg = triggered ? $"Agente {agentName} activado" : $"Tipo de agente desconocido: {agentName}";
-            LiveLogs.Add(new(agentName, triggered ? "Info" : "Error", msg, DateTime.Now));
-            await Task.Delay(500); // Pequeña espera para que el agente empiece
+            trigger?.Agent?.TriggerNow();
+            LiveLogs.Add(new(agentName, "Info", $"Agente {agentName} activado manualmente", DateTime.Now));
+            await Task.Delay(500);
         }
-        catch (Exception ex)
-        {
-            LiveLogs.Add(new(agentName, "Error", $"Error: {ex.Message}", DateTime.Now));
-        }
-        finally
-        {
-            if (trigger != null) trigger.IsRunning = false;
-            await InvokeAsync(StateHasChanged);
-        }
+        catch (Exception ex) { LiveLogs.Add(new(agentName, "Error", $"Error: {ex.Message}", DateTime.Now)); }
+        finally { if (trigger != null) trigger.IsRunning = false; await InvokeAsync(StateHasChanged); }
     }
 
-    private static bool TriggerDirect(ANews.Infrastructure.Agents.BaseAgent agent)
-    {
-        agent.TriggerNow();
-        return true;
-    }
-
+    // ── Alerts ───────────────────────────────────────
     private async Task AcknowledgeAlertAsync(int alertId)
     {
         var alert = await Ctx.AlertTriggers.FindAsync(alertId);
         if (alert != null)
         {
-            alert.IsAcknowledged = true;
-            alert.AcknowledgedAt = DateTime.UtcNow;
+            alert.IsAcknowledged = true; alert.AcknowledgedAt = DateTime.UtcNow;
             await Ctx.SaveChangesAsync();
             PendingAlerts.RemoveAll(a => a.Id == alertId);
             Stats = Stats with { PendingAlerts = Stats.PendingAlerts - 1 };
@@ -633,8 +1176,7 @@
     {
         SelectedExecutionId = executionId;
         ExecutionLogs = await Ctx.AgentLogs
-            .Where(l => l.AgentExecutionId == executionId)
-            .OrderBy(l => l.Timestamp)
+            .Where(l => l.AgentExecutionId == executionId).OrderBy(l => l.Timestamp)
             .Select(l => new ExecutionLogItem(l.Level.ToString(), l.Message, l.Timestamp))
             .ToListAsync();
         ShowLogsModal = true;
@@ -642,6 +1184,13 @@
 
     private void CloseLogsModal() => ShowLogsModal = false;
     private void ClearLogs() => LiveLogs.Clear();
+    private void ToggleLogPause() => _logsPaused = !_logsPaused;
+
+    private async Task ExportLogsAsync()
+    {
+        var text = string.Join("\n", FilteredLogs.Select(l => $"[{l.Time:HH:mm:ss}] [{l.Level}] [{l.AgentName}] {l.Message}"));
+        try { await JS.InvokeVoidAsync("downloadTextFile", $"godmode-logs-{DateTime.Now:yyyyMMdd-HHmm}.txt", text); } catch { }
+    }
 
     private async Task ChangeCostPeriod(ChangeEventArgs e)
     {
@@ -665,10 +1214,20 @@
         return $"{ms / 60000}m {(ms % 60000) / 1000}s";
     }
 
+    private static string FormatInterval(int minutes)
+    {
+        if (minutes < 60) return $"{minutes}m";
+        if (minutes < 1440) return $"{minutes / 60}h {minutes % 60}m";
+        return $"{minutes / 1440}d";
+    }
+
     public async ValueTask DisposeAsync()
     {
-        if (_adminHub != null) await _adminHub.DisposeAsync();
-        if (_agentHub != null) await _agentHub.DisposeAsync();
+        _cts.Cancel();
+        _refreshTimer?.Dispose();
+        if (_adminHub != null) try { await _adminHub.DisposeAsync(); } catch { }
+        if (_agentHub != null) try { await _agentHub.DisposeAsync(); } catch { }
+        _cts.Dispose();
     }
 
     // Data models
@@ -692,6 +1251,24 @@
     record ProviderCostItem(string Name, decimal Cost, double Percent, string Color);
     record HealthItem(string Name, bool IsOk, string Value);
     record ExecutionLogItem(string Level, string Message, DateTime Timestamp);
-    class AgentTriggerItem(string name, string displayName) { public string Name = name; public string DisplayName = displayName; public bool IsRunning; }
+    record SourceHealthItem(int Id, string Name, string SectionName, int SuccessfulScans, int FailedScans, int ReliabilityPct, string HealthStatus, DateTime? LastScannedAt, bool IsActive);
+    record AuditEntry(string Action, string EntityName, DateTime CreatedAt, string UserName);
+    class AgentTriggerItem(string name, string displayName, ANews.Infrastructure.Agents.BaseAgent? agent)
+    {
+        public string Name = name;
+        public string DisplayName = displayName;
+        public ANews.Infrastructure.Agents.BaseAgent? Agent = agent;
+        public bool IsRunning;
+        public int NextRunIn;
+    }
     record AgentLogMessage { public string? AgentName { get; init; } public string? Level { get; init; } public string? Message { get; init; } }
+
+    class ZoneForm
+    {
+        public string Name { get; set; } = "";
+        public string Flag { get; set; } = "🌍";
+        public string Description { get; set; } = "";
+        public string GeoTermsText { get; set; } = "";
+        public int SortOrder { get; set; } = 0;
+    }
 }
