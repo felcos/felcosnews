@@ -14,6 +14,8 @@
 @inject ANews.Infrastructure.Agents.ArticleSummarizerAgent ArticleSummarizerAgent
 @inject ANews.Infrastructure.Agents.DigestSenderAgent DigestSenderAgent
 @inject ANews.Infrastructure.Agents.SourceDiscoveryAgent SourceDiscoveryAgent
+@inject ANews.Infrastructure.Agents.ThreadWeaverAgent ThreadWeaverAgent
+@inject ANews.Infrastructure.Agents.BriefingGeneratorAgent BriefingGeneratorAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
 @using ANews.Domain.Entities
@@ -720,6 +722,8 @@
             new("ArticleSummarizerAgent",       "Resumidor Artículos",  ArticleSummarizerAgent),
             new("DigestSenderAgent",            "Digest Email",         DigestSenderAgent),
             new("SourceDiscoveryAgent",         "Descubrir Fuentes",    SourceDiscoveryAgent),
+            new("ThreadWeaverAgent",            "Tejer Hilos Narrat.",  ThreadWeaverAgent),
+            new("BriefingGeneratorAgent",       "Generar Briefings",    BriefingGeneratorAgent),
         ];
     }
 

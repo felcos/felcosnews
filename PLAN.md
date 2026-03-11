@@ -540,10 +540,91 @@ Operaciones por lotes sobre los resultados filtrados:
 | S6-12 | Fix: FormatInterval usa if/else (no switch con `< N` en Razor) | ✅ |
 | S6-13 | Fix: AuditLog usa Timestamp/UserEmail/EntityType (nombres reales) | ✅ |
 
-### Pendiente (Sprint 7)
+### Pendiente (legacy — reprioritizado)
 - [ ] Reclasificación masiva de eventos antiguos (trigger "Reclasificar todo" en GodMode)
 - [ ] Fuentes RSS para nuevas secciones (Salud, Justicia, Deportes, Sociedad...)
 - [ ] Migración de artículos en secciones obsoletas (farandula→entretenimiento, social→sociedad)
-- [ ] S6-03 geo: Prompt de agente con contexto geográfico cuando workspace ≠ Global
-- [ ] S6-04 geo: Workspace multi-usuario (guardar en DB, no solo localStorage)
-- [ ] S6-06 geo: NewsSource.Country field + migración → filtrado de fuentes por workspace
+
+---
+
+## Sprint 7 — GodMode Consolidation + Performance (2026-03-10) ✅ COMPLETADO
+
+| # | Feature | Estado |
+|---|---|---|
+| S7-01 | GodMode: 6 componentes admin integrados (GmNews, GmSections, GmUsers, GmAiProviders, GmCosts, GmAudit) | ✅ |
+| S7-02 | Quick action buttons con feedback visual (spinner + status) | ✅ |
+| S7-03 | ArticleSummarizerAgent: traducción automática multi-idioma a ES con tag [Traducido de XX] | ✅ |
+| S7-04 | EventDetectorAgent: lee contenido (título+resumen) para clasificación, no solo títulos | ✅ |
+| S7-05 | Costs chart reducido a 30% (max-height:100px) | ✅ |
+| S7-06 | Universe.js: collision avoidance, text inside planets, frustum culling, dynamic rings | ✅ |
+| S7-07 | Temporal date slider (1-30 días) para carga progresiva de eventos | ✅ |
+| S7-08 | Limpieza de caracteres raros en títulos/resúmenes | ✅ |
+
+---
+
+## Sprint 8 — Narrativas Vivas + Briefings Contextuales (2026-03-11)
+
+### Visión estratégica
+Transformar el producto de un **agregador RSS con IA** a una **agencia de noticias inteligente** que responde "¿Qué necesitas entender?" en lugar de solo "¿Qué ha pasado?".
+
+### Ejes de cambio
+1. **Narrativas Vivas (Story Threads)** — Eventos conectados en hilos narrativos continuos
+2. **Briefing Contextual** — "Por qué importa", "Antecedentes", "Qué vigilar" generados por IA
+3. **Morning Brief** — Briefing editorial diario automático
+4. **Inteligencia de Fuentes** — Bias, credibilidad, cross-reference, fact density
+5. **Distribución editorial** — Digest con morning brief integrado
+
+### Nuevas entidades
+- `StoryThread` — Hilo narrativo (título, resumen, actores, status, timeline)
+- `EventBriefing` — Briefing contextual cacheado por evento o hilo
+- `MorningBrief` — Briefing editorial diario (headline, top stories, deep dive, developing, surprise)
+
+### Campos añadidos
+- `NewsEvent.StoryThreadId` — Vinculación a hilo narrativo
+- `NewsEvent.CrossReferenceCount` — Nº artículos sobre el evento
+- `NewsEvent.SourceDiversity` — Nº fuentes independientes
+- `NewsSource.Bias` — Indicador de sesgo (Unknown/Left/Center/Right/State)
+- `NewsSource.FactDensityAvg` — Densidad media de hechos verificables
+- `NewsSource.SpeedScore` — Velocidad de reporte
+- `NewsSource.CorrectionCount` — Correcciones publicadas
+
+### Nuevos agentes
+- **ThreadWeaverAgent** (cada 3h) — Vincula eventos a hilos narrativos existentes o crea nuevos
+- **BriefingGeneratorAgent** (cada 4h) — Genera briefings contextuales + morning brief + resúmenes de hilo
+
+### Frontend
+- Morning Brief banner en portada (collapsable)
+- Story Threads bar (chips scrollables con status developing/active)
+- Briefing contextual en modal de evento (por qué importa, antecedentes, actores, qué vigilar)
+- Story Thread link en evento modal
+- Cross-reference badge en event cards (✓✓ N fuentes)
+- Source diversity en sidebar de evento
+- Página /story/{id} con timeline vertical, briefing cards, actores
+
+### Entregado
+
+| # | Feature | Estado |
+|---|---|---|
+| S8-01 | StoryThread entity + migración BD | ✅ |
+| S8-02 | EventBriefing entity + MorningBrief entity | ✅ |
+| S8-03 | NewsEvent: StoryThreadId, CrossReferenceCount, SourceDiversity | ✅ |
+| S8-04 | NewsSource: Bias, FactDensityAvg, SpeedScore, CorrectionCount | ✅ |
+| S8-05 | ThreadWeaverAgent: vinculación IA de eventos a hilos narrativos | ✅ |
+| S8-06 | BriefingGeneratorAgent: briefings contextuales + morning brief + thread summaries | ✅ |
+| S8-07 | Morning Brief banner en portada | ✅ |
+| S8-08 | Story Threads bar con chips scrollables | ✅ |
+| S8-09 | Briefing contextual en modal de evento | ✅ |
+| S8-10 | Cross-reference badge + source diversity | ✅ |
+| S8-11 | Página /story/{id} con timeline vertical | ✅ |
+| S8-12 | DigestSenderAgent: morning brief integrado en email | ✅ |
+| S8-13 | GodMode: nuevos agentes registrados (ThreadWeaver, BriefingGenerator) | ✅ |
+| S8-14 | Nuevos enums: StoryStatus, BiasIndicator, BriefingType, AgentType.ThreadWeaver/BriefingGenerator | ✅ |
+
+### Pendiente (Sprint 9+)
+- [ ] SourceAnalyzerAgent: análisis automático de sesgo/credibilidad por fuente
+- [ ] Reader Profile IA: perfiles semánticos de usuario (no keywords)
+- [ ] Serendipity engine: inclusión deliberada de historias fuera del perfil
+- [ ] Impact personalizado por usuario
+- [ ] Telegram como canal editorial (morning brief, breaking con contexto)
+- [ ] Widget embeddable JS
+- [ ] API pública con rate limit

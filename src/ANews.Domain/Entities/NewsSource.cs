@@ -17,6 +17,10 @@ public class NewsSource : BaseEntity
     public int FailedScans { get; set; } = 0;
     public string? LastError { get; set; }
     public string? CustomHeaders { get; set; }
+    public BiasIndicator Bias { get; set; } = BiasIndicator.Unknown;
+    public decimal FactDensityAvg { get; set; } = 0;
+    public int SpeedScore { get; set; } = 50;
+    public int CorrectionCount { get; set; } = 0;
 
     public NewsSection Section { get; set; } = null!;
     public ICollection<NewsArticle> Articles { get; set; } = [];

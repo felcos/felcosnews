@@ -79,9 +79,18 @@ public class DigestSenderAgent : BaseAgent
 
                 if (matched.Count == 0) continue;
 
+                // Try to include morning brief for daily digests
+                MorningBrief? morningBrief = null;
+                if (user.DigestFrequency == DigestionFrequency.Daily)
+                {
+                    morningBrief = await ctx.Set<MorningBrief>()
+                        .Where(m => m.BriefDate == now.Date)
+                        .FirstOrDefaultAsync(ct);
+                }
+
                 // Build and send digest email
                 var subject = BuildSubject(user.DigestFrequency, matched.Count);
-                var body = BuildHtmlBody(user.DisplayName, user.DigestFrequency, matched, windowStart.Value, now);
+                var body = BuildHtmlBody(user.DisplayName, user.DigestFrequency, matched, windowStart.Value, now, morningBrief);
 
                 await emailSender.SendRawEmailAsync(user.Email!, subject, body);
 
@@ -141,7 +150,7 @@ public class DigestSenderAgent : BaseAgent
     }
 
     private static string BuildHtmlBody(string displayName, DigestionFrequency freq,
-        List<NewsEvent> events, DateTime from, DateTime to)
+        List<NewsEvent> events, DateTime from, DateTime to, MorningBrief? morningBrief = null)
     {
         var period = freq switch
         {
@@ -184,6 +193,18 @@ public class DigestSenderAgent : BaseAgent
                     <p>Hola, {System.Net.WebUtility.HtmlEncode(displayName)}. Aquí tienes los eventos relevantes del {from:dd/MM} al {to:dd/MM/yyyy}.</p>
                 </div>
             """);
+
+        // Morning Brief editorial section
+        if (morningBrief != null)
+        {
+            sb.Append($"""
+                <div style="background:#0d1525;border:1px solid #1e2a3a;border-radius:8px;padding:20px;margin:16px 0 20px;">
+                    <div style="font-size:10px;font-weight:700;color:#4a90e2;letter-spacing:1px;margin-bottom:10px;">BRIEFING DEL DÍA</div>
+                    <div style="font-size:1.1em;color:#fff;font-weight:600;margin-bottom:14px;">{System.Net.WebUtility.HtmlEncode(morningBrief.Headline)}</div>
+                    <div style="font-size:0.88em;color:#9aaabb;line-height:1.6;">{System.Net.WebUtility.HtmlEncode(morningBrief.TopStories).Replace("\n", "<br/>")}</div>
+                </div>
+                """);
+        }
 
         foreach (var ev in events)
         {

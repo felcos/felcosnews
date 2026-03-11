@@ -48,7 +48,9 @@ public enum AgentType
     NotificationDispatcher,
     CostAggregator,
     ArticleSummarizer,
-    DigestSender
+    DigestSender,
+    ThreadWeaver,
+    BriefingGenerator
 }
 
 public enum AgentStatus
@@ -107,4 +109,31 @@ public enum DigestionFrequency
     Daily,
     Weekly,
     Monthly
+}
+
+public enum StoryStatus
+{
+    Developing,
+    Active,
+    Stale,
+    Resolved,
+    Archived
+}
+
+public enum BiasIndicator
+{
+    Unknown,
+    Left,
+    CenterLeft,
+    Center,
+    CenterRight,
+    Right,
+    State
+}
+
+public enum BriefingType
+{
+    EventContext,
+    MorningBrief,
+    WeeklyRecap
 }

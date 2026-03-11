@@ -20,10 +20,15 @@ public class NewsEvent : BaseEntity
     public EventTrend Trend { get; set; } = EventTrend.Stable;
     public int NewsSectionId { get; set; }
     public int? ParentEventId { get; set; }
+    public int? StoryThreadId { get; set; }
+    public int CrossReferenceCount { get; set; } = 0;
+    public int SourceDiversity { get; set; } = 0;
 
     public NewsSection Section { get; set; } = null!;
     public NewsEvent? ParentEvent { get; set; }
+    public StoryThread? StoryThread { get; set; }
     public ICollection<NewsArticle> Articles { get; set; } = [];
     public ICollection<NewsEvent> RelatedEvents { get; set; } = [];
     public ICollection<AlertTrigger> AlertTriggers { get; set; } = [];
+    public ICollection<EventBriefing> Briefings { get; set; } = [];
 }

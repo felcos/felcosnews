@@ -1,0 +1,140 @@
+@page "/story/{Id:int}"
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject NavigationManager Nav
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_thread?.Title ?? "Hilo Narrativo") - AgenteNews</PageTitle>
+
+<div class="public-layout">
+    <header class="site-header">
+        <div class="header-brand">
+            <a href="/" style="text-decoration:none;display:flex;align-items:center;gap:8px">
+                <i class="fa fa-satellite"></i>
+                <span class="brand-name">AGENTE<strong>NEWS</strong></span>
+            </a>
+        </div>
+        <div class="header-right">
+            <a href="/" class="btn-login"><i class="fa fa-arrow-left"></i> Volver</a>
+        </div>
+    </header>
+
+    @if (_thread == null)
+    {
+        <div class="empty-universe">
+            <i class="fa fa-spinner fa-spin"></i>
+            <p>Cargando hilo narrativo...</p>
+        </div>
+    }
+    else
+    {
+        <div class="story-page">
+            <div class="story-header">
+                <div class="story-status status-@_thread.Status.ToString().ToLower()">
+                    @_thread.Status
+                </div>
+                <h1>@_thread.Title</h1>
+                @if (!string.IsNullOrEmpty(_thread.Summary))
+                {
+                    <p class="story-summary">@_thread.Summary</p>
+                }
+                <div class="story-meta">
+                    <span><i class="fa fa-calendar"></i> @_thread.FirstEventDate.ToString("dd/MM/yyyy") — @_thread.LastEventDate.ToString("dd/MM/yyyy")</span>
+                    <span><i class="fa fa-layer-group"></i> @_events.Count eventos</span>
+                    <span><i class="fa fa-newspaper"></i> @_thread.TotalArticles artículos</span>
+                    @if (_thread.PrimarySection != null)
+                    {
+                        <span style="color:@(_thread.PrimarySection.Color)"><i class="fa @(_thread.PrimarySection.IconClass)"></i> @_thread.PrimarySection.Name</span>
+                    }
+                </div>
+                @if (_thread.KeyActors.Any())
+                {
+                    <div class="story-actors">
+                        <span class="story-actors-label"><i class="fa fa-users"></i> Actores:</span>
+                        @foreach (var actor in _thread.KeyActors)
+                        {
+                            <span class="story-actor-chip">@actor</span>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Briefing cards -->
+            <div class="story-briefing-grid">
+                @if (!string.IsNullOrEmpty(_thread.WhyItMatters))
+                {
+                    <div class="story-brief-card">
+                        <div class="sbc-icon"><i class="fa fa-exclamation-circle"></i></div>
+                        <div class="sbc-label">Por qué importa</div>
+                        <p>@_thread.WhyItMatters</p>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(_thread.WhatToWatch))
+                {
+                    <div class="story-brief-card">
+                        <div class="sbc-icon"><i class="fa fa-binoculars"></i></div>
+                        <div class="sbc-label">Qué vigilar</div>
+                        <p>@_thread.WhatToWatch</p>
+                    </div>
+                }
+            </div>
+
+            <!-- Timeline -->
+            <div class="story-timeline">
+                <h2><i class="fa fa-stream"></i> Línea Temporal</h2>
+                @foreach (var ev in _events)
+                {
+                    <div class="story-tl-node">
+                        <div class="story-tl-date">@ev.StartDate.ToString("dd MMM", new System.Globalization.CultureInfo("es-ES"))</div>
+                        <div class="story-tl-dot priority-dot-@ev.Priority.ToString().ToLower()"></div>
+                        <div class="story-tl-card" @onclick='() => Nav.NavigateTo($"/?eventId={ev.Id}")'>
+                            <div class="story-tl-header">
+                                <span class="em-priority priority-bg-@ev.Priority.ToString().ToLower()">@ev.Priority</span>
+                                <span class="story-tl-impact">@ev.ImpactScore.ToString("F0")</span>
+                            </div>
+                            <h3>@ev.Title</h3>
+                            @if (!string.IsNullOrEmpty(ev.Description))
+                            {
+                                <p>@Truncate(ev.Description, 200)</p>
+                            }
+                            <div class="story-tl-meta">
+                                <span><i class="fa fa-newspaper"></i> @ev.Articles.Count(a => !a.IsDeleted) artículos</span>
+                                <span><i class="fa fa-rss"></i> @ev.Articles.Where(a => !a.IsDeleted).Select(a => a.SourceName).Distinct().Count() fuentes</span>
+                                @if (!string.IsNullOrEmpty(ev.Location))
+                                {
+                                    <span><i class="fa fa-map-marker-alt"></i> @ev.Location</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private ANews.Domain.Entities.StoryThread? _thread;
+    private List<NewsEvent> _events = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _thread = await Ctx.StoryThreads
+            .Include(t => t.PrimarySection)
+            .FirstOrDefaultAsync(t => t.Id == Id);
+
+        if (_thread != null)
+        {
+            _events = await Ctx.NewsEvents
+                .Include(e => e.Articles)
+                .Where(e => e.StoryThreadId == Id && !e.IsDeleted)
+                .OrderByDescending(e => e.StartDate)
+                .ToListAsync();
+        }
+    }
+
+    private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "..." : s;
+}

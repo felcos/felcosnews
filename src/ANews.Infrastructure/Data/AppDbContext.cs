@@ -42,6 +42,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
     public DbSet<WorkspaceZone> WorkspaceZones => Set<WorkspaceZone>();
     public DbSet<AgentConfig> AgentConfigs => Set<AgentConfig>();
+    public DbSet<StoryThread> StoryThreads => Set<StoryThread>();
+    public DbSet<EventBriefing> EventBriefings => Set<EventBriefing>();
+    public DbSet<MorningBrief> MorningBriefs => Set<MorningBrief>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -124,6 +127,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         builder.Entity<AgentConfig>(e =>
         {
             e.HasIndex(a => a.AgentType).IsUnique();
+        });
+
+        builder.Entity<StoryThread>(e =>
+        {
+            e.Property(s => s.KeyActors).HasColumnType("jsonb");
+            e.Property(s => s.Tags).HasColumnType("jsonb");
+            e.HasIndex(s => s.Status);
+            e.HasIndex(s => s.LastEventDate);
+        });
+
+        builder.Entity<NewsEvent>(e2 =>
+        {
+            e2.HasOne(ev => ev.StoryThread)
+              .WithMany(st => st.Events)
+              .HasForeignKey(ev => ev.StoryThreadId)
+              .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<EventBriefing>(e =>
+        {
+            e.HasIndex(b => b.NewsEventId);
+            e.HasIndex(b => b.StoryThreadId);
+            e.HasIndex(b => b.Type);
+        });
+
+        builder.Entity<MorningBrief>(e =>
+        {
+            e.HasIndex(m => m.BriefDate).IsUnique();
+        });
+
+        builder.Entity<NewsSource>(e =>
+        {
+            e.Property(s => s.FactDensityAvg).HasPrecision(5, 2);
         });
 
         // Global query filter for soft delete

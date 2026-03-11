@@ -164,6 +164,63 @@
         </div>
     }
 
+    <!-- Morning Brief banner -->
+    @if (_morningBrief != null && !_briefDismissed)
+    {
+        <div class="morning-brief-banner">
+            <div class="mb-header">
+                <div class="mb-badge"><i class="fa fa-sun"></i> BRIEFING DEL DÍA</div>
+                <button class="mb-close" @onclick="() => _briefDismissed = true"><i class="fa fa-times"></i></button>
+            </div>
+            <h3 class="mb-headline">@_morningBrief.Headline</h3>
+            <div class="mb-sections">
+                <div class="mb-section">
+                    <div class="mb-section-title"><i class="fa fa-bolt"></i> Lo que debes saber</div>
+                    <div class="mb-section-text">@((MarkupString)FormatBriefText(_morningBrief.TopStories))</div>
+                </div>
+                @if (!string.IsNullOrEmpty(_morningBrief.DeepDive))
+                {
+                    <div class="mb-section">
+                        <div class="mb-section-title"><i class="fa fa-microscope"></i> Para entender a fondo</div>
+                        <div class="mb-section-text">@((MarkupString)FormatBriefText(_morningBrief.DeepDive))</div>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(_morningBrief.Developing))
+                {
+                    <div class="mb-section">
+                        <div class="mb-section-title"><i class="fa fa-eye"></i> En desarrollo</div>
+                        <div class="mb-section-text">@((MarkupString)FormatBriefText(_morningBrief.Developing))</div>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(_morningBrief.Surprise))
+                {
+                    <div class="mb-section">
+                        <div class="mb-section-title"><i class="fa fa-star"></i> Sorpresa del día</div>
+                        <div class="mb-section-text">@((MarkupString)FormatBriefText(_morningBrief.Surprise))</div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Active Story Threads -->
+    @if (_storyThreads.Any())
+    {
+        <div class="story-threads-bar">
+            <div class="st-label"><i class="fa fa-stream"></i> HILOS NARRATIVOS</div>
+            <div class="st-scroll">
+                @foreach (var thread in _storyThreads)
+                {
+                    <a href="/story/@thread.Id" class="st-chip status-@thread.Status.ToLower()">
+                        <span class="st-events">@thread.EventCount</span>
+                        <span class="st-title">@thread.Title</span>
+                        @if (thread.Status == "Developing") { <span class="st-pulse"></span> }
+                    </a>
+                }
+            </div>
+        </div>
+    }
+
     <!-- Stats bar + search -->
     <div class="stats-bar">
         <div class="stat-item">
@@ -256,6 +313,18 @@
                         <p class="event-desc">@Truncate(ev.Description ?? "", 120)</p>
                         <div class="event-footer">
                             <span class="event-articles">@ev.ArticleCount art.</span>
+                            @if (ev.SourceDiversity >= 3)
+                            {
+                                <span class="event-xref" title="@ev.SourceDiversity fuentes independientes">
+                                    <i class="fa fa-check-double"></i> @ev.SourceDiversity
+                                </span>
+                            }
+                            @if (ev.StoryThreadId.HasValue)
+                            {
+                                <a href="/story/@ev.StoryThreadId" class="event-thread-link" title="Hilo narrativo" @onclick:stopPropagation @onclick:preventDefault>
+                                    <i class="fa fa-stream"></i>
+                                </a>
+                            }
                             <span class="event-trend trend-@ev.Trend.ToLower()">@TrendIcon(ev.Trend) @ev.Trend</span>
                             <span class="event-date">@ev.StartDate.ToString("dd/MM HH:mm")</span>
                         </div>
@@ -329,6 +398,53 @@
                         <div class="em-tags">
                             @foreach (var tag in SelectedEvent.Tags) { <span class="em-tag">#@tag</span> }
                         </div>
+                    }
+
+                    @* Contextual Briefing *@
+                    @if (_eventBriefing != null)
+                    {
+                        <div class="em-briefing">
+                            <div class="em-briefing-header"><i class="fa fa-brain"></i> ANÁLISIS CONTEXTUAL</div>
+                            @if (!string.IsNullOrEmpty(_eventBriefing.WhyItMatters))
+                            {
+                                <div class="em-briefing-item">
+                                    <div class="em-briefing-label"><i class="fa fa-exclamation-circle"></i> Por qué importa</div>
+                                    <p>@_eventBriefing.WhyItMatters</p>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(_eventBriefing.Background))
+                            {
+                                <div class="em-briefing-item">
+                                    <div class="em-briefing-label"><i class="fa fa-history"></i> Antecedentes</div>
+                                    <p>@_eventBriefing.Background</p>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(_eventBriefing.KeyActors))
+                            {
+                                <div class="em-briefing-item">
+                                    <div class="em-briefing-label"><i class="fa fa-users"></i> Actores clave</div>
+                                    <p>@_eventBriefing.KeyActors</p>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(_eventBriefing.WhatToWatch))
+                            {
+                                <div class="em-briefing-item">
+                                    <div class="em-briefing-label"><i class="fa fa-binoculars"></i> Qué vigilar</div>
+                                    <p>@_eventBriefing.WhatToWatch</p>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @* Story Thread link *@
+                    @if (_selectedEventThread != null)
+                    {
+                        <a href="/story/@_selectedEventThread.Id" class="em-thread-link">
+                            <i class="fa fa-stream"></i>
+                            <span>Parte de: <strong>@_selectedEventThread.Title</strong></span>
+                            <span class="em-thread-count">@_selectedEventThread.EventCount eventos en este hilo</span>
+                            <i class="fa fa-chevron-right"></i>
+                        </a>
                     }
 
                     <div class="em-timeline-header">
@@ -433,6 +549,13 @@
                         <div class="em-stat-row"><span>Tendencia</span><strong>@SelectedEvent.Trend</strong></div>
                         <div class="em-stat-row"><span>Artículos</span><strong>@SelectedEventArticles.Count</strong></div>
                         <div class="em-stat-row"><span>Fuentes</span><strong>@SelectedEventArticles.Select(a => a.SourceName).Distinct().Count()</strong></div>
+                        @if (SelectedEvent.SourceDiversity >= 3)
+                        {
+                            <div class="em-stat-row em-xref-row">
+                                <span><i class="fa fa-check-double" style="color:var(--accent-green)"></i> Verificado</span>
+                                <strong>@SelectedEvent.SourceDiversity fuentes</strong>
+                            </div>
+                        }
                         @if (SelectedEventArticles.Any())
                         {
                             <div class="em-stat-row"><span>Primer art.</span><strong>@SelectedEventArticles.Min(a => a.PublishedAt).ToString("dd/MM")</strong></div>
@@ -645,6 +768,13 @@
     private DateTime? _selectedEventEnd;
     private bool _selectedEventIsActive = true;
 
+    // Morning Brief + Story Threads
+    private MorningBrief? _morningBrief;
+    private bool _briefDismissed = false;
+    private List<StoryThreadItem> _storyThreads = [];
+    private EventBriefing? _eventBriefing;
+    private ANews.Domain.Entities.StoryThread? _selectedEventThread;
+
     protected override async Task OnInitializedAsync()
     {
         Sections = await Ctx.NewsSections
@@ -659,6 +789,22 @@
             .ToListAsync();
 
         await LoadEventsAsync();
+
+        // Load morning brief for today
+        var today = DateTime.UtcNow.Date;
+        _morningBrief = await Ctx.MorningBriefs
+            .Where(m => m.BriefDate == today)
+            .FirstOrDefaultAsync();
+
+        // Load active story threads
+        _storyThreads = await Ctx.StoryThreads
+            .Where(t => t.Status == ANews.Domain.Enums.StoryStatus.Developing
+                     || t.Status == ANews.Domain.Enums.StoryStatus.Active)
+            .OrderByDescending(t => t.MaxImpactScore)
+            .Take(10)
+            .Select(t => new StoryThreadItem(t.Id, t.Title, t.Status.ToString(), t.EventCount, t.MaxImpactScore))
+            .ToListAsync();
+
         IsLoading = false;
     }
 
@@ -683,7 +829,8 @@
                     .Take(6)
                     .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
                     .ToArray(),
-                e.Latitude, e.Longitude, e.Location))
+                e.Latitude, e.Longitude, e.Location,
+                e.StoryThreadId, e.SourceDiversity))
             .ToListAsync();
 
         // When a workspace is active, also load geo-specific events that may not be in top 200
@@ -713,7 +860,8 @@
                         .Take(6)
                         .Select(a => new MoonArticle(a.Id, a.Title, a.SourceName))
                         .ToArray(),
-                    e.Latitude, e.Longitude, e.Location))
+                    e.Latitude, e.Longitude, e.Location,
+                    e.StoryThreadId, e.SourceDiversity))
                 .ToListAsync();
 
             Events = globalTop.Concat(geoEvents).ToList();
@@ -984,6 +1132,17 @@
             .Take(5)
             .Select(e => new RelatedEventItem(e.Id, e.Title, e.Priority.ToString()))
             .ToListAsync();
+
+        // Load contextual briefing
+        _eventBriefing = await Ctx.EventBriefings
+            .Where(b => b.NewsEventId == ev.Id && b.Type == ANews.Domain.Enums.BriefingType.EventContext)
+            .OrderByDescending(b => b.GeneratedAt)
+            .FirstOrDefaultAsync();
+
+        // Load story thread if linked
+        _selectedEventThread = evDb?.StoryThreadId != null
+            ? await Ctx.StoryThreads.FindAsync(evDb.StoryThreadId)
+            : null;
     }
 
     private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); }
@@ -1040,9 +1199,21 @@
     record EventItem(int Id, string Title, string? Description, string Priority,
         decimal ImpactScore, string Trend, string[] Tags, string SectionName, string SectionSlug,
         DateTime StartDate, int ArticleCount, MoonArticle[] Articles,
-        double? Latitude, double? Longitude, string? Location);
+        double? Latitude, double? Longitude, string? Location,
+        int? StoryThreadId = null, int SourceDiversity = 0);
     record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
     record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt);
     record RelatedEventItem(int Id, string Title, string Priority);
+    record StoryThreadItem(int Id, string Title, string Status, int EventCount, decimal MaxImpactScore);
+
+    private static string FormatBriefText(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return System.Net.WebUtility.HtmlEncode(text)
+            .Replace("\\n\\n", "<br/><br/>")
+            .Replace("\\n", "<br/>")
+            .Replace("\n\n", "<br/><br/>")
+            .Replace("\n", "<br/>");
+    }
 }
