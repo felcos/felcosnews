@@ -147,25 +147,24 @@
             <!-- ═══════ DASHBOARD section ═══════ -->
             @if (_section == "dashboard")
             {
-                <div class="gm-grid">
+                <div class="gm-dash-grid">
 
-                    <!-- Costes IA -->
+                    <!-- Costes IA (compacto) -->
                     <div class="gm-panel">
                         <div class="panel-header">
-                            <i class="fa fa-chart-pie"></i>
-                            <span>Costes de IA</span>
+                            <i class="fa fa-dollar-sign"></i>
+                            <span>Costes IA</span>
                             <select class="select-sm" @onchange="ChangeCostPeriod">
                                 <option value="today">Hoy</option>
-                                <option value="week">7 días</option>
+                                <option value="week">7d</option>
                                 <option value="month">Mes</option>
                             </select>
                         </div>
-                        <div class="cost-total">
-                            <span class="cost-amount">$@TotalCostSelected.ToString("F4")</span>
-                            <span class="cost-period">@CostPeriodLabel</span>
+                        <div class="cost-total" style="padding:8px 16px">
+                            <span class="cost-amount" style="font-size:22px">$@TotalCostSelected.ToString("F4")</span>
+                            <span class="cost-period" style="font-size:10px">@CostPeriodLabel</span>
                         </div>
-                        <canvas id="costChart" height="90"></canvas>
-                        <div class="provider-list">
+                        <div class="provider-list" style="padding:4px 16px 8px;max-height:120px;overflow-y:auto">
                             @foreach (var p in ProviderCosts)
                             {
                                 <div class="provider-row">

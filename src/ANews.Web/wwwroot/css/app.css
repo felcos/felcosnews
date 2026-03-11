@@ -826,6 +826,11 @@ textarea.form-input { resize: vertical; font-family: inherit; }
   grid-template-rows: auto;
   gap: 16px;
 }
+.gm-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
 .gm-panel {
   background: var(--admin-card); border: 1px solid var(--admin-border);
   border-radius: var(--radius-lg); overflow: hidden;
@@ -1216,6 +1221,7 @@ textarea.form-input { resize: vertical; font-family: inherit; }
    ============================================ */
 @media (max-width: 768px) {
   .gm-grid { grid-template-columns: 1fr; }
+  .gm-dash-grid { grid-template-columns: 1fr; }
   .gm-kpis { grid-template-columns: repeat(2, 1fr); }
   .gm-panel-wide { grid-column: 1; }
   .form-grid { grid-template-columns: 1fr; }
