@@ -132,6 +132,9 @@
             <button class="gm-nav-btn @(_section == "actividad" ? "active" : "")" @onclick='@(()=>SetSection("actividad"))'>
                 <i class="fa fa-chart-bar"></i><span>Actividad</span>
             </button>
+            <button class="gm-nav-btn @(_section == "planes" ? "active" : "")" @onclick='@(()=>SetSection("planes"))'>
+                <i class="fa fa-credit-card"></i><span>Planes</span>
+            </button>
             <div class="gm-nav-sep"></div>
             <a href="/" class="gm-nav-btn" style="margin-top:auto">
                 <i class="fa fa-globe"></i><span>Ver web</span>
@@ -573,6 +576,12 @@
             @if (_section == "actividad")
             {
                 <ANews.Web.Components.Admin.GmActivity />
+            }
+
+            <!-- ═══════ PLANES section ═══════ -->
+            @if (_section == "planes")
+            {
+                <ANews.Web.Components.Admin.GmPlans />
             }
 
         </div><!-- /gm-content -->

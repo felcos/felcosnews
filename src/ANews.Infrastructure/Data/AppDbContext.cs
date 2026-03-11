@@ -18,6 +18,8 @@ public class ApplicationUser : IdentityUser<int>
     public DigestionFrequency DigestFrequency { get; set; } = DigestionFrequency.Daily;
     public DateTime? LastDigestSentAt { get; set; }
     public string? ApiTokenPrefix { get; set; }
+    public ANews.Domain.Enums.PlanTier PlanTier { get; set; } = ANews.Domain.Enums.PlanTier.Free;
+    public int? SubscriptionPlanId { get; set; }
 }
 
 public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>, int>
@@ -48,6 +50,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<ReaderProfile> ReaderProfiles => Set<ReaderProfile>();
     public DbSet<UserActivity> UserActivities => Set<UserActivity>();
     public DbSet<SectionQuota> SectionQuotas => Set<SectionQuota>();
+    public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -182,6 +185,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         builder.Entity<SectionQuota>(e =>
         {
             e.HasIndex(q => new { q.UserId, q.NewsSectionId }).IsUnique();
+        });
+
+        builder.Entity<SubscriptionPlan>(e =>
+        {
+            e.Property(p => p.MonthlyPrice).HasPrecision(10, 2);
+            e.Property(p => p.SectionLimits).HasColumnType("jsonb");
+            e.Property(p => p.Features).HasColumnType("jsonb");
+            e.HasIndex(p => p.Tier);
         });
 
         // Global query filter for soft delete

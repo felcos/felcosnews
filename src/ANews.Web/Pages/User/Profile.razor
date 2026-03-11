@@ -1,12 +1,16 @@
 @page "/user/profile"
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
 @using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
 @inject ANews.Web.Services.ToastService Toast
+@inject AppDbContext Ctx
 
 <PageTitle>Mi Perfil — AgenteNews</PageTitle>
 
@@ -111,6 +115,98 @@
                 </button>
             </div>
 
+            <!-- Plan y consumo -->
+            <div class="profile-card">
+                <h3><i class="fa fa-credit-card"></i> Mi plan</h3>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+                    <span class="plan-tier-badge plan-tier-@_user.PlanTier.ToString().ToLower()">@_user.PlanTier</span>
+                    @if (_currentPlan != null)
+                    {
+                        <span style="color:var(--text-secondary);font-size:13px">@_currentPlan.Name</span>
+                        @if (_currentPlan.MonthlyPrice > 0)
+                        {
+                            <span style="color:var(--accent);font-size:13px;font-weight:600">$@_currentPlan.MonthlyPrice.ToString("F2")/mes</span>
+                        }
+                    }
+                </div>
+                @if (_quotas.Any())
+                {
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Consumo mensual por seccion</div>
+                    @foreach (var q in _quotas)
+                    {
+                        var pct = q.MaxReadsPerMonth > 0 ? Math.Min(100, (int)(q.CurrentReads * 100.0 / q.MaxReadsPerMonth)) : 0;
+                        var isUnlimited = q.MaxReadsPerMonth < 0;
+                        var isWarning = !isUnlimited && pct >= 80;
+                        var isExceeded = !isUnlimited && q.CurrentReads >= q.MaxReadsPerMonth;
+                        <div style="margin-bottom:8px">
+                            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
+                                <span style="font-weight:500">@(q.Section?.Name ?? "Seccion")</span>
+                                <span style="color:@(isExceeded ? "var(--accent-red)" : isWarning ? "var(--accent-yellow)" : "var(--text-muted)")">
+                                    @q.CurrentReads / @(isUnlimited ? "ilimitado" : q.MaxReadsPerMonth.ToString())
+                                </span>
+                            </div>
+                            @if (!isUnlimited)
+                            {
+                                <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+                                    <div style="width:@(pct)%;height:100%;border-radius:2px;background:@(isExceeded ? "var(--accent-red)" : isWarning ? "var(--accent-yellow)" : "var(--accent)")"></div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div style="color:var(--text-muted);font-size:13px"><i class="fa fa-infinity"></i> Sin limites de lectura</div>
+                }
+            </div>
+
+            <!-- Perfil de lectura -->
+            @if (_readerProfile != null)
+            {
+                <div class="profile-card">
+                    <h3><i class="fa fa-brain"></i> Mi perfil de lectura</h3>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+                        <div style="text-align:center">
+                            <div style="font-size:20px;font-weight:700;color:var(--accent)">@_readerProfile.ArticlesRead</div>
+                            <div style="font-size:10px;color:var(--text-muted)">Articulos leidos</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-size:20px;font-weight:700">@_readerProfile.EventsOpened</div>
+                            <div style="font-size:10px;color:var(--text-muted)">Eventos vistos</div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_readerProfile.PreferredDepth))
+                        {
+                            <div style="text-align:center">
+                                <div style="font-size:16px;font-weight:600;color:var(--accent-green)">@_readerProfile.PreferredDepth</div>
+                                <div style="font-size:10px;color:var(--text-muted)">Profundidad</div>
+                            </div>
+                        }
+                    </div>
+                    @if (_readerProfile.TopInterests.Any())
+                    {
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Tus intereses principales</div>
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">
+                            @foreach (var interest in _readerProfile.TopInterests)
+                            {
+                                <span style="padding:2px 8px;background:rgba(74,144,226,0.1);border:1px solid rgba(74,144,226,0.2);border-radius:4px;font-size:11px;color:var(--accent)">@interest</span>
+                            }
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(_readerProfile.SemanticProfile))
+                    {
+                        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;background:rgba(255,255,255,0.02);padding:10px;border-radius:var(--radius);border:1px solid var(--border)">
+                            @_readerProfile.SemanticProfile
+                        </div>
+                    }
+                    @if (_readerProfile.LastAnalyzedAt.HasValue)
+                    {
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:8px">
+                            Ultimo analisis: @_readerProfile.LastAnalyzedAt.Value.ToString("dd/MM/yyyy HH:mm")
+                        </div>
+                    }
+                </div>
+            }
+
         </div>
     }
 </div>
@@ -132,6 +228,10 @@
     private ANews.Domain.Enums.DigestionFrequency _digestFrequency;
     private bool _savingPrefs;
 
+    private List<SectionQuota> _quotas = [];
+    private ReaderProfile? _readerProfile;
+    private SubscriptionPlan? _currentPlan;
+
     protected override async Task OnInitializedAsync()
     {
         var auth = await AuthState.GetAuthenticationStateAsync();
@@ -144,6 +244,13 @@
             _displayName = _user.DisplayName;
             _receiveDigest = _user.ReceiveDigest;
             _digestFrequency = _user.DigestFrequency;
+
+            _quotas = await Ctx.SectionQuotas.Include(q => q.Section)
+                .Where(q => q.UserId == _user.Id).ToListAsync();
+            _readerProfile = await Ctx.ReaderProfiles
+                .FirstOrDefaultAsync(r => r.UserId == _user.Id);
+            if (_user.SubscriptionPlanId.HasValue)
+                _currentPlan = await Ctx.SubscriptionPlans.FindAsync(_user.SubscriptionPlanId);
         }
         _loading = false;
     }

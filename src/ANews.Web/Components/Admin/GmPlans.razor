@@ -1,0 +1,402 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-credit-card"></i>
+            <span>Planes de suscripcion</span>
+            <div class="panel-actions">
+                <span style="font-size:11px;color:var(--text-muted)">@_plans.Count planes</span>
+                <button class="btn-sm" style="background:var(--accent);color:#fff" @onclick="ShowAdd">
+                    <i class="fa fa-plus"></i> Nuevo plan
+                </button>
+            </div>
+        </div>
+        <table class="gm-table">
+            <thead><tr>
+                <th style="width:30px">ID</th>
+                <th>Nombre</th>
+                <th>Tier</th>
+                <th>Precio</th>
+                <th>Limite default</th>
+                <th>Features</th>
+                <th>Usuarios</th>
+                <th>Activo</th>
+                <th style="width:80px">Acciones</th>
+            </tr></thead>
+            <tbody>
+                @foreach (var p in _plans)
+                {
+                    <tr style="@(!p.IsActive ? "opacity:0.5" : "")">
+                        <td style="color:var(--text-muted)">#@p.Id</td>
+                        <td><strong>@p.Name</strong></td>
+                        <td><span class="priority-badge" style="font-size:10px">@p.Tier</span></td>
+                        <td>@(p.MonthlyPrice == 0 ? "Gratis" : $"${p.MonthlyPrice:F2}/mes")</td>
+                        <td style="font-size:11px">@(p.DefaultMaxReads == -1 ? "Ilimitado" : p.DefaultMaxReads.ToString())</td>
+                        <td style="font-size:11px">@p.FeaturesCount</td>
+                        <td>@p.UserCount</td>
+                        <td>
+                            <span style="color:@(p.IsActive ? "var(--accent-green)" : "var(--text-muted)");font-size:11px">
+                                @(p.IsActive ? "Activo" : "Inactivo")
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn-icon" @onclick="() => ShowEdit(p.Id)" title="Editar"><i class="fa fa-edit"></i></button>
+                            <button class="btn-icon text-danger" @onclick="() => DeleteAsync(p.Id)" title="Eliminar"><i class="fa fa-trash"></i></button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @* Assign plan to user *@
+        <div style="padding:16px;border-top:1px solid var(--border)">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-muted)">
+                <i class="fa fa-user-tag"></i> Asignar plan a usuario
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <select class="form-control" style="max-width:260px;height:30px;font-size:12px" @bind="_assignUserId">
+                    <option value="0">-- Seleccionar usuario --</option>
+                    @foreach (var u in _userList)
+                    { <option value="@u.Id">@u.Email</option> }
+                </select>
+                <select class="form-control" style="max-width:200px;height:30px;font-size:12px" @bind="_assignPlanId">
+                    <option value="0">-- Seleccionar plan --</option>
+                    @foreach (var p in _plans.Where(x => x.IsActive))
+                    { <option value="@p.Id">@p.Name (@p.Tier)</option> }
+                </select>
+                <button class="btn-sm" style="background:var(--accent);color:#fff" @onclick="AssignPlanAsync">
+                    <i class="fa fa-check"></i> Asignar
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(_assignMsg))
+            { <div style="font-size:11px;margin-top:4px;color:var(--accent-green)">@_assignMsg</div> }
+            @if (!string.IsNullOrEmpty(_assignError))
+            { <div style="font-size:11px;margin-top:4px;color:var(--accent-red)">@_assignError</div> }
+        </div>
+    </div>
+
+    <div class="gm-panel">
+        <div class="panel-header">
+            <i class="fa fa-chart-pie"></i>
+            <span>Usuarios por tier</span>
+        </div>
+        <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+            @foreach (var tier in Enum.GetValues<PlanTier>())
+            {
+                var count = _tierCounts.GetValueOrDefault(tier, 0);
+                var color = tier switch
+                {
+                    PlanTier.Free => "var(--text-muted)",
+                    PlanTier.Basic => "var(--accent)",
+                    PlanTier.Pro => "var(--accent-green)",
+                    PlanTier.Unlimited => "#e6a817",
+                    _ => "var(--text-muted)"
+                };
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-size:12px">@tier</span>
+                    <span style="font-size:18px;font-weight:700;color:@color">@count</span>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (_showModal)
+{
+    <div class="modal-overlay" @onclick="() => _showModal = false">
+        <div class="modal-box" style="max-width:560px" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(_editingId == 0 ? "Nuevo plan" : "Editar plan")</h3>
+                <button @onclick="() => _showModal = false"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Nombre *</label>
+                        <input class="form-control" @bind="_form.Name" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Tier</label>
+                        <select class="form-control" @bind="_form.Tier">
+                            @foreach (var t in Enum.GetValues<PlanTier>())
+                            { <option value="@t">@t</option> }
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Descripcion</label>
+                    <textarea class="form-control" @bind="_form.Description" rows="2"></textarea>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Precio mensual</label>
+                        <input type="number" class="form-control" @bind="_form.MonthlyPrice" step="0.01" min="0" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Limite default (-1=ilim.)</label>
+                        <input type="number" class="form-control" @bind="_form.DefaultMaxReads" min="-1" />
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted)">Orden</label>
+                        <input type="number" class="form-control" @bind="_form.SortOrder" min="0" />
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Features (una por linea)</label>
+                    <textarea class="form-control" @bind="_form.FeaturesText" rows="3" placeholder="Alertas en tiempo real&#10;Digest diario&#10;API access"></textarea>
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Limites por seccion</label>
+                    <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
+                        <table style="width:100%;font-size:11px">
+                            <thead><tr>
+                                <th style="text-align:left;padding:2px 6px">Seccion</th>
+                                <th style="text-align:left;padding:2px 6px;width:100px">Max lecturas</th>
+                            </tr></thead>
+                            <tbody>
+                                @foreach (var sl in _form.SectionLimits)
+                                {
+                                    <tr>
+                                        <td style="padding:2px 6px">@sl.Name <span style="color:var(--text-muted)">/@sl.Slug</span></td>
+                                        <td style="padding:2px 6px">
+                                            <input type="number" class="form-control" style="height:24px;font-size:11px"
+                                                   value="@sl.MaxReads" @onchange="e => sl.MaxReads = int.TryParse(e.Value?.ToString(), out var v) ? v : -1" min="-1" />
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <span style="font-size:10px;color:var(--text-muted)">-1 = ilimitado (no se guardara en limites)</span>
+                </div>
+                <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" @bind="_form.IsActive" /> Activo
+                </label>
+                @if (!string.IsNullOrEmpty(_formError))
+                { <div style="color:var(--accent-red);font-size:12px">@_formError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showModal = false">Cancelar</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">Guardar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PlanRow> _plans = [];
+    private Dictionary<PlanTier, int> _tierCounts = new();
+    private List<UserOption> _userList = [];
+    private bool _showModal;
+    private int _editingId;
+    private string? _formError;
+    private PlanForm _form = new();
+
+    private int _assignUserId;
+    private int _assignPlanId;
+    private string? _assignMsg;
+    private string? _assignError;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var plans = await Ctx.SubscriptionPlans
+            .Where(p => !p.IsDeleted)
+            .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
+            .ToListAsync();
+
+        var userCounts = await Ctx.Users
+            .Where(u => u.SubscriptionPlanId != null)
+            .GroupBy(u => u.SubscriptionPlanId)
+            .Select(g => new { PlanId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.PlanId!.Value, x => x.Count);
+
+        _plans = plans.Select(p => new PlanRow(
+            p.Id, p.Name, p.Tier, p.MonthlyPrice,
+            p.DefaultMaxReadsPerMonth, p.Features.Length,
+            userCounts.GetValueOrDefault(p.Id, 0), p.IsActive
+        )).ToList();
+
+        _tierCounts = await Ctx.Users
+            .GroupBy(u => u.PlanTier)
+            .Select(g => new { Tier = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Tier, x => x.Count);
+
+        _userList = await Ctx.Users
+            .Where(u => u.IsActive)
+            .OrderBy(u => u.Email)
+            .Select(u => new UserOption(u.Id, u.Email ?? ""))
+            .ToListAsync();
+    }
+
+    private async Task ShowAdd()
+    {
+        _form = new PlanForm { IsActive = true, DefaultMaxReads = -1 };
+        await LoadSectionLimits(new Dictionary<string, int>());
+        _editingId = 0; _formError = null; _showModal = true;
+    }
+
+    private async Task ShowEdit(int id)
+    {
+        var p = await Ctx.SubscriptionPlans.FindAsync(id);
+        if (p == null) return;
+        _form = new PlanForm
+        {
+            Name = p.Name,
+            Description = p.Description,
+            Tier = p.Tier,
+            MonthlyPrice = p.MonthlyPrice,
+            DefaultMaxReads = p.DefaultMaxReadsPerMonth,
+            FeaturesText = string.Join("\n", p.Features),
+            IsActive = p.IsActive,
+            SortOrder = p.SortOrder
+        };
+        await LoadSectionLimits(p.SectionLimits);
+        _editingId = id; _formError = null; _showModal = true;
+    }
+
+    private async Task LoadSectionLimits(Dictionary<string, int> existing)
+    {
+        var sections = await Ctx.NewsSections
+            .Where(s => !s.IsDeleted)
+            .OrderBy(s => s.Name)
+            .Select(s => new { s.Name, s.Slug })
+            .ToListAsync();
+
+        _form.SectionLimits = sections.Select(s => new SectionLimitRow
+        {
+            Name = s.Name,
+            Slug = s.Slug,
+            MaxReads = existing.GetValueOrDefault(s.Slug, -1)
+        }).ToList();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Name))
+        { _formError = "Nombre obligatorio"; return; }
+
+        var features = (_form.FeaturesText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(f => f.Trim()).Where(f => !string.IsNullOrEmpty(f)).ToArray();
+
+        var sectionLimits = _form.SectionLimits
+            .Where(sl => sl.MaxReads != -1)
+            .ToDictionary(sl => sl.Slug, sl => sl.MaxReads);
+
+        if (_editingId == 0)
+        {
+            Ctx.SubscriptionPlans.Add(new SubscriptionPlan
+            {
+                Name = _form.Name,
+                Description = _form.Description,
+                Tier = _form.Tier,
+                MonthlyPrice = _form.MonthlyPrice,
+                DefaultMaxReadsPerMonth = _form.DefaultMaxReads,
+                Features = features,
+                SectionLimits = sectionLimits,
+                IsActive = _form.IsActive,
+                SortOrder = _form.SortOrder
+            });
+        }
+        else
+        {
+            var p = await Ctx.SubscriptionPlans.FindAsync(_editingId);
+            if (p != null)
+            {
+                p.Name = _form.Name;
+                p.Description = _form.Description;
+                p.Tier = _form.Tier;
+                p.MonthlyPrice = _form.MonthlyPrice;
+                p.DefaultMaxReadsPerMonth = _form.DefaultMaxReads;
+                p.Features = features;
+                p.SectionLimits = sectionLimits;
+                p.IsActive = _form.IsActive;
+                p.SortOrder = _form.SortOrder;
+            }
+        }
+        await Ctx.SaveChangesAsync();
+        await LoadAsync();
+        _showModal = false;
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este plan?")) return;
+        var p = await Ctx.SubscriptionPlans.FindAsync(id);
+        if (p != null) { p.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    private async Task AssignPlanAsync()
+    {
+        _assignMsg = null; _assignError = null;
+        if (_assignUserId == 0 || _assignPlanId == 0)
+        { _assignError = "Selecciona usuario y plan"; return; }
+
+        var user = await Ctx.Users.FindAsync(_assignUserId);
+        var plan = await Ctx.SubscriptionPlans.FindAsync(_assignPlanId);
+        if (user == null || plan == null)
+        { _assignError = "Usuario o plan no encontrado"; return; }
+
+        user.PlanTier = plan.Tier;
+        user.SubscriptionPlanId = plan.Id;
+
+        // Remove existing quotas for user
+        var existing = await Ctx.SectionQuotas.Where(q => q.UserId == user.Id).ToListAsync();
+        Ctx.SectionQuotas.RemoveRange(existing);
+
+        // Create new quotas from plan section limits
+        var sections = await Ctx.NewsSections.Where(s => !s.IsDeleted).ToListAsync();
+        var periodStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        foreach (var section in sections)
+        {
+            var maxReads = plan.SectionLimits.GetValueOrDefault(section.Slug, plan.DefaultMaxReadsPerMonth);
+            Ctx.SectionQuotas.Add(new SectionQuota
+            {
+                UserId = user.Id,
+                NewsSectionId = section.Id,
+                MaxReadsPerMonth = maxReads,
+                CurrentReads = 0,
+                PeriodStart = periodStart,
+                PlanTier = plan.Tier
+            });
+        }
+
+        await Ctx.SaveChangesAsync();
+        await LoadAsync();
+        _assignMsg = $"Plan '{plan.Name}' asignado a {user.Email}";
+        _assignUserId = 0; _assignPlanId = 0;
+    }
+
+    record PlanRow(int Id, string Name, PlanTier Tier, decimal MonthlyPrice,
+        int DefaultMaxReads, int FeaturesCount, int UserCount, bool IsActive);
+
+    record UserOption(int Id, string Email);
+
+    class SectionLimitRow
+    {
+        public string Name { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public int MaxReads { get; set; } = -1;
+    }
+
+    class PlanForm
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public PlanTier Tier { get; set; } = PlanTier.Free;
+        public decimal MonthlyPrice { get; set; }
+        public int DefaultMaxReads { get; set; } = -1;
+        public string? FeaturesText { get; set; }
+        public List<SectionLimitRow> SectionLimits { get; set; } = [];
+        public bool IsActive { get; set; } = true;
+        public int SortOrder { get; set; }
+    }
+}

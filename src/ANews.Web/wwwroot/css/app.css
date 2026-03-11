@@ -1433,6 +1433,12 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .profile-card { background: var(--admin-card); border: 1px solid var(--admin-border); border-radius: var(--radius); padding: 24px; }
 .profile-card h3 { margin: 0 0 20px; font-size: 14px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 8px; }
 
+.plan-tier-badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.plan-tier-badge.plan-tier-free { background: rgba(128,128,128,0.15); color: #aaa; }
+.plan-tier-badge.plan-tier-basic { background: rgba(74,144,226,0.15); color: var(--accent); }
+.plan-tier-badge.plan-tier-pro { background: rgba(168,85,247,0.15); color: #a855f7; }
+.plan-tier-badge.plan-tier-unlimited { background: rgba(245,158,11,0.15); color: #f59e0b; }
+
 /* ============================================
    AGENTS MONITOR
    ============================================ */

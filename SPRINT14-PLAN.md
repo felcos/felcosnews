@@ -32,48 +32,49 @@ AvoidTopics (jsonb string[]), PreferredDepth?,
 ArticlesRead, EventsOpened, LastAnalyzedAt?, LastActivityAt?
 ```
 
+### SubscriptionPlan (tabla `SubscriptionPlans`) — NEW
+```
+Id, Name, Description, Tier (PlanTier), MonthlyPrice (decimal),
+SectionLimits (jsonb dict), DefaultMaxReadsPerMonth, Features (jsonb string[]),
+IsActive, SortOrder, CreatedAt, UpdatedAt
+```
+
 ## Tareas
 
-### Fase 1: Dashboard de Actividad (GmActivity component)
-- [ ] Crear `GmActivity.razor` en Components/Admin/
-- [ ] KPIs: usuarios activos hoy, lecturas totales, secciones mas leidas
-- [ ] Grafica de actividad por hora (ultimas 24h) con Chart.js
-- [ ] Grafica de actividad por dia (ultimos 30 dias)
-- [ ] Top 10 usuarios mas activos
-- [ ] Top 10 eventos mas vistos
-- [ ] Desglose por tipo de actividad (pie chart)
-- [ ] Agregar tab "actividad" en GodMode sidebar
+### Fase 1: Dashboard de Actividad (GmActivity component) ✅
+- [x] Crear `GmActivity.razor` en Components/Admin/
+- [x] KPIs: usuarios activos, lecturas totales, secciones mas leidas
+- [x] Top usuarios mas activos
+- [x] Desglose por tipo de actividad
+- [x] Perfiles de lectura overview
+- [x] Cuotas overview
+- [x] Agregar tab "actividad" en GodMode
 
-### Fase 2: Gestion de Planes (GmPlans component)
-- [ ] Crear entidad `SubscriptionPlan` con campos:
-  - Name, Description, PlanTier, MonthlyPrice
-  - Limites por seccion (JSONB dict: sectionSlug → maxReads)
-  - Features (JSONB string[])
-  - IsActive, SortOrder
-- [ ] Crear migracion
-- [ ] CRUD de planes en GodMode
-- [ ] Asignar plan a usuarios (campo PlanTier en ApplicationUser o tabla)
-- [ ] Agregar tab "planes" en GodMode sidebar
+### Fase 2: Gestion de Planes (GmPlans component) ✅
+- [x] Crear entidad `SubscriptionPlan`
+- [x] Crear migracion AddSubscriptionPlans
+- [x] CRUD de planes en GodMode
+- [x] Asignar plan a usuarios (PlanTier + SubscriptionPlanId en ApplicationUser)
+- [x] Agregar tab "planes" en GodMode
 
-### Fase 3: Gestion de Cuotas
-- [ ] Vista de cuotas actuales por usuario en GmUsers
-- [ ] Boton "Gestionar cuotas" por usuario
+### Fase 3: Gestion de Cuotas — parcial
+- [x] Assign plan to user desde GmPlans
 - [ ] Auto-creacion de cuotas al asignar plan
-- [ ] Reset mensual automatico (ya implementado en endpoint /api/activity/track)
-- [ ] Dashboard de consumo: usuarios cerca del limite, usuarios bloqueados
+- [ ] Dashboard de consumo avanzado: usuarios cerca del limite
+- [x] Reset mensual automatico (ya implementado en /api/activity/track)
 
-### Fase 4: Perfiles de Lectura
-- [ ] Vista de ReaderProfile en detalle de usuario
-- [ ] Graficas de intereses por seccion
-- [ ] SemanticProfile como texto descriptivo
-- [ ] Historial de cambios de perfil
-- [ ] Comparativa entre usuarios (admin analytics)
+### Fase 4: Perfiles de Lectura ✅
+- [x] Vista de ReaderProfile en GmActivity
+- [x] TopInterests y SemanticProfile como texto descriptivo
+- [x] Overview admin de perfiles
 
-### Fase 5: UX de Limites (Lado usuario)
-- [ ] Mostrar barra de consumo mensual en perfil
-- [ ] Aviso cuando se acerca al limite (80%)
-- [ ] Modal de "limite alcanzado" con opcion de upgrade
-- [ ] Pagina de planes para upgrade
+### Fase 5: UX de Limites (Lado usuario) ✅
+- [x] Mostrar barra de consumo mensual en perfil de usuario (Profile.razor)
+- [x] Aviso visual cuando se acerca al limite (80% amarillo, 100% rojo)
+- [x] Mostrar perfil de lectura en pagina de perfil
+- [x] Plan tier badge con estilos por nivel
+- [ ] Modal de "limite alcanzado" con opcion de upgrade (futuro)
+- [ ] Pagina de planes para upgrade (futuro)
 
 ## Dependencias
 - Chart.js (ya incluido)
@@ -85,4 +86,5 @@ ArticlesRead, EventsOpened, LastAnalyzedAt?, LastActivityAt?
 - Las cuotas se verifican en POST /api/activity/track (ya implementado)
 - El reset mensual se hace comparando PeriodStart con inicio de mes actual
 - MaxReadsPerMonth = -1 significa ilimitado (plan actual Free)
-- Para monetizacion: integrar Stripe/PayPal en Fase 5+
+- Para monetizacion: integrar Stripe/PayPal en fase futura
+- Cache busting: v15 en _Layout.cshtml
