@@ -176,7 +176,17 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 app.UseHttpsRedirection();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // Versioned assets (?v=X) get long cache; others get no-cache
+        if (ctx.Context.Request.Query.ContainsKey("v"))
+            ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        else
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    }
+});
 
 // Swagger
 app.UseSwagger();
