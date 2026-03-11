@@ -129,6 +129,9 @@
             <button class="gm-nav-btn @(_section == "auditoria" ? "active" : "")" @onclick='@(()=>SetSection("auditoria"))'>
                 <i class="fa fa-shield-alt"></i><span>Auditoría</span>
             </button>
+            <button class="gm-nav-btn @(_section == "actividad" ? "active" : "")" @onclick='@(()=>SetSection("actividad"))'>
+                <i class="fa fa-chart-bar"></i><span>Actividad</span>
+            </button>
             <div class="gm-nav-sep"></div>
             <a href="/" class="gm-nav-btn" style="margin-top:auto">
                 <i class="fa fa-globe"></i><span>Ver web</span>
@@ -565,6 +568,12 @@
             @if (_section == "auditoria")
             {
                 <ANews.Web.Components.Admin.GmAudit />
+            }
+
+            <!-- ═══════ ACTIVIDAD section ═══════ -->
+            @if (_section == "actividad")
+            {
+                <ANews.Web.Components.Admin.GmActivity />
             }
 
         </div><!-- /gm-content -->

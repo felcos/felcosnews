@@ -1,0 +1,401 @@
+@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IJSRuntime JS
+@using ANews.Domain.Entities
+@using ANews.Domain.Enums
+@using ANews.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+
+<div class="gm-grid">
+    <!-- KPI Row -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-chart-line"></i>
+            <span>Actividad de Usuarios</span>
+            <div class="panel-actions">
+                <select class="form-control" style="width:auto;height:28px;font-size:11px" @bind="_period" @bind:after="LoadData">
+                    <option value="7">7 dias</option>
+                    <option value="30">30 dias</option>
+                    <option value="90">90 dias</option>
+                </select>
+                <button class="btn-sm" @onclick="LoadData"><i class="fa fa-sync"></i></button>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;padding:12px 16px;flex-wrap:wrap">
+            <div style="text-align:center">
+                <div style="font-size:20px;font-weight:700;color:var(--accent)">@_activeToday</div>
+                <div style="font-size:10px;color:var(--text-muted)">Usuarios activos hoy</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:20px;font-weight:700">@_activitiesToday</div>
+                <div style="font-size:10px;color:var(--text-muted)">Actividades hoy</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600">@_activitiesWeek</div>
+                <div style="font-size:10px;color:var(--text-muted)">Esta semana</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600">@_activitiesMonth</div>
+                <div style="font-size:10px;color:var(--text-muted)">Este mes</div>
+            </div>
+            <div style="text-align:center">
+                <div style="font-size:16px;font-weight:600;color:var(--accent-green)">@_profilesAnalyzed</div>
+                <div style="font-size:10px;color:var(--text-muted)">Perfiles analizados</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity by type -->
+    <div class="gm-panel">
+        <div class="panel-header"><i class="fa fa-chart-bar"></i><span>Por Tipo de Actividad</span></div>
+        <div style="padding:8px 16px">
+            @foreach (var at in _byType)
+            {
+                var pct = _totalPeriod > 0 ? (double)at.Count / _totalPeriod * 100 : 0;
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
+                    <span style="min-width:130px;white-space:nowrap">@at.Type</span>
+                    <div style="flex:1;height:6px;background:var(--border);border-radius:3px">
+                        <div style="width:@pct.ToString("F0")%;height:100%;background:@GetTypeColor(at.Type);border-radius:3px"></div>
+                    </div>
+                    <span style="min-width:40px;text-align:right;font-variant-numeric:tabular-nums">@at.Count</span>
+                    <span style="color:var(--text-muted);min-width:40px;font-size:11px">@pct.ToString("F1")%</span>
+                </div>
+            }
+            @if (!_byType.Any())
+            { <div style="color:var(--text-muted);font-size:12px;padding:10px 0">Sin datos</div> }
+        </div>
+    </div>
+
+    <!-- Top sections -->
+    <div class="gm-panel">
+        <div class="panel-header"><i class="fa fa-layer-group"></i><span>Top Secciones</span></div>
+        <div style="padding:8px 16px">
+            @foreach (var s in _topSections)
+            {
+                var pct = _topSections.Any() && _topSections[0].Count > 0 ? (double)s.Count / _topSections[0].Count * 100 : 0;
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px">
+                    <span style="min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@s.Name</span>
+                    <div style="flex:1;height:6px;background:var(--border);border-radius:3px">
+                        <div style="width:@pct.ToString("F0")%;height:100%;background:var(--accent);border-radius:3px"></div>
+                    </div>
+                    <span style="min-width:40px;text-align:right;font-variant-numeric:tabular-nums">@s.Count</span>
+                </div>
+            }
+            @if (!_topSections.Any())
+            { <div style="color:var(--text-muted);font-size:12px;padding:10px 0">Sin datos</div> }
+        </div>
+    </div>
+
+    <!-- Top users -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-trophy"></i>
+            <span>Top Usuarios</span>
+            <span style="font-size:11px;color:var(--text-muted)">@_topUsers.Count usuarios</span>
+        </div>
+        <div style="max-height:400px;overflow-y:auto">
+            <table class="gm-table">
+                <thead><tr>
+                    <th>Usuario</th>
+                    <th>Email</th>
+                    <th>Actividades</th>
+                    <th>Arts. leidos</th>
+                    <th>Eventos</th>
+                    <th>Profundidad</th>
+                    <th>Ultimo activo</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var u in _topUsers.Skip((_userPage - 1) * UserPageSize).Take(UserPageSize))
+                    {
+                        <tr>
+                            <td><strong>@u.DisplayName</strong></td>
+                            <td style="font-size:11px">@u.Email</td>
+                            <td style="font-variant-numeric:tabular-nums">@u.Activities</td>
+                            <td style="font-variant-numeric:tabular-nums">@u.ArticlesRead</td>
+                            <td style="font-variant-numeric:tabular-nums">@u.EventsOpened</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@(u.PreferredDepth ?? "-")</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@(u.LastActive?.ToString("dd/MM HH:mm") ?? "N/A")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_topUsers.Count > UserPageSize)
+        {
+            <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+                <button class="btn-sm" @onclick="() => { if (_userPage > 1) _userPage--; }" disabled="@(_userPage <= 1)"><i class="fa fa-chevron-left"></i></button>
+                <span>@_userPage / @UserTotalPages</span>
+                <button class="btn-sm" @onclick="() => { if (_userPage < UserTotalPages) _userPage++; }" disabled="@(_userPage >= UserTotalPages)"><i class="fa fa-chevron-right"></i></button>
+            </div>
+        }
+    </div>
+
+    <!-- Reader Profiles -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-brain"></i>
+            <span>Perfiles de Lectura</span>
+            <span style="font-size:11px;color:var(--text-muted)">@_profiles.Count perfiles</span>
+        </div>
+        <div style="max-height:400px;overflow-y:auto">
+            <table class="gm-table">
+                <thead><tr>
+                    <th>Usuario</th>
+                    <th>Perfil Semantico</th>
+                    <th>Intereses</th>
+                    <th>Arts.</th>
+                    <th>Eventos</th>
+                    <th>Profundidad</th>
+                    <th>Analizado</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var p in _profiles.Skip((_profilePage - 1) * ProfilePageSize).Take(ProfilePageSize))
+                    {
+                        <tr>
+                            <td><strong>@p.DisplayName</strong></td>
+                            <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                                title="@p.SemanticProfile">@(Truncate(p.SemanticProfile, 60))</td>
+                            <td>
+                                @foreach (var tag in p.TopInterests.Take(4))
+                                {
+                                    <span style="display:inline-block;background:var(--border);color:var(--text);padding:1px 6px;border-radius:8px;font-size:10px;margin:1px 2px">@tag</span>
+                                }
+                                @if (p.TopInterests.Length > 4)
+                                { <span style="font-size:10px;color:var(--text-muted)">+@(p.TopInterests.Length - 4)</span> }
+                            </td>
+                            <td style="font-variant-numeric:tabular-nums">@p.ArticlesRead</td>
+                            <td style="font-variant-numeric:tabular-nums">@p.EventsOpened</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@(p.PreferredDepth ?? "-")</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@(p.LastAnalyzedAt?.ToString("dd/MM HH:mm") ?? "Nunca")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_profiles.Count > ProfilePageSize)
+        {
+            <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+                <button class="btn-sm" @onclick="() => { if (_profilePage > 1) _profilePage--; }" disabled="@(_profilePage <= 1)"><i class="fa fa-chevron-left"></i></button>
+                <span>@_profilePage / @ProfileTotalPages</span>
+                <button class="btn-sm" @onclick="() => { if (_profilePage < ProfileTotalPages) _profilePage++; }" disabled="@(_profilePage >= ProfileTotalPages)"><i class="fa fa-chevron-right"></i></button>
+            </div>
+        }
+    </div>
+
+    <!-- Quotas Overview -->
+    <div class="gm-panel gm-panel-wide">
+        <div class="panel-header">
+            <i class="fa fa-gauge-high"></i>
+            <span>Cuotas</span>
+            <span style="font-size:11px;color:var(--text-muted)">@_quotas.Count activas</span>
+        </div>
+        <div style="max-height:350px;overflow-y:auto">
+            <table class="gm-table">
+                <thead><tr>
+                    <th>Usuario</th>
+                    <th>Seccion</th>
+                    <th>Plan</th>
+                    <th>Lecturas</th>
+                    <th>Uso</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var q in _quotas)
+                    {
+                        var pct = q.MaxReads > 0 ? (double)q.CurrentReads / q.MaxReads * 100 : 0;
+                        var isHigh = pct > 90;
+                        <tr>
+                            <td><strong>@q.DisplayName</strong></td>
+                            <td style="font-size:11px">@q.SectionName</td>
+                            <td><span class="priority-badge" style="font-size:10px;@(q.Plan == "Unlimited" ? "color:var(--accent-green)" : "")">@q.Plan</span></td>
+                            <td style="font-size:11px;font-variant-numeric:tabular-nums">@q.CurrentReads / @(q.MaxReads < 0 ? "∞" : q.MaxReads.ToString())</td>
+                            <td style="min-width:120px">
+                                @if (q.MaxReads > 0)
+                                {
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div style="flex:1;height:6px;background:var(--border);border-radius:3px">
+                                            <div style="width:@Math.Min(pct, 100).ToString("F0")%;height:100%;background:@(isHigh ? "var(--accent-red)" : "var(--accent-green)");border-radius:3px"></div>
+                                        </div>
+                                        <span style="font-size:10px;font-variant-numeric:tabular-nums;color:@(isHigh ? "var(--accent-red)" : "var(--text-muted)")">@pct.ToString("F0")%</span>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span style="font-size:10px;color:var(--text-muted)">Sin limite</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (!_quotas.Any())
+        { <div style="color:var(--text-muted);font-size:12px;padding:10px 16px">Sin cuotas activas</div> }
+    </div>
+</div>
+
+@code {
+    private int _period = 30;
+
+    // KPIs
+    private int _activeToday, _activitiesToday, _activitiesWeek, _activitiesMonth, _profilesAnalyzed;
+
+    // Activity by type
+    private List<TypeStat> _byType = [];
+    private int _totalPeriod;
+
+    // Top sections
+    private List<SectionStat> _topSections = [];
+
+    // Top users
+    private List<TopUserRow> _topUsers = [];
+    private int _userPage = 1;
+    private const int UserPageSize = 15;
+    private int UserTotalPages => Math.Max(1, (int)Math.Ceiling(_topUsers.Count / (double)UserPageSize));
+
+    // Reader profiles
+    private List<ProfileRow> _profiles = [];
+    private int _profilePage = 1;
+    private const int ProfilePageSize = 15;
+    private int ProfileTotalPages => Math.Max(1, (int)Math.Ceiling(_profiles.Count / (double)ProfilePageSize));
+
+    // Quotas
+    private List<QuotaRow> _quotas = [];
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        _userPage = 1;
+        _profilePage = 1;
+
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+        var weekAgo = today.AddDays(-7);
+        var monthAgo = today.AddDays(-30);
+        var since = today.AddDays(-_period);
+
+        // KPIs — single pass queries
+        _activeToday = await Ctx.UserActivities
+            .Where(a => a.CreatedAt >= today)
+            .Select(a => a.UserId).Distinct().CountAsync();
+
+        _activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
+        _activitiesWeek = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= weekAgo);
+        _activitiesMonth = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= monthAgo);
+        _profilesAnalyzed = await Ctx.ReaderProfiles.CountAsync(p => p.LastAnalyzedAt != null);
+
+        // Activity by type for selected period
+        _byType = await Ctx.UserActivities
+            .Where(a => a.CreatedAt >= since)
+            .GroupBy(a => a.ActivityType)
+            .Select(g => new TypeStat(g.Key.ToString(), g.Count()))
+            .OrderByDescending(t => t.Count)
+            .ToListAsync();
+        _totalPeriod = _byType.Sum(t => t.Count);
+
+        // Top sections
+        _topSections = await Ctx.UserActivities
+            .Where(a => a.CreatedAt >= since && a.NewsSectionId != null)
+            .GroupBy(a => a.NewsSectionId!.Value)
+            .Select(g => new { SectionId = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
+            .Take(5)
+            .Join(Ctx.NewsSections, x => x.SectionId, s => s.Id, (x, s) => new SectionStat(s.Name, x.Count))
+            .ToListAsync();
+
+        // Top users — group activities, then join with users and profiles
+        var activityGroups = await Ctx.UserActivities
+            .Where(a => a.CreatedAt >= since)
+            .GroupBy(a => a.UserId)
+            .Select(g => new
+            {
+                UserId = g.Key,
+                Total = g.Count(),
+                Articles = g.Count(a => a.ActivityType == ActivityType.ArticleRead),
+                Events = g.Count(a => a.ActivityType == ActivityType.EventOpened),
+                LastActive = g.Max(a => a.CreatedAt)
+            })
+            .OrderByDescending(x => x.Total)
+            .Take(50)
+            .ToListAsync();
+
+        var userIds = activityGroups.Select(a => a.UserId).ToList();
+        var users = await Ctx.Users
+            .Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName, u.Email })
+            .ToDictionaryAsync(u => u.Id);
+        var profiles = await Ctx.ReaderProfiles
+            .Where(p => userIds.Contains(p.UserId))
+            .ToDictionaryAsync(p => p.UserId);
+
+        _topUsers = activityGroups.Select(a =>
+        {
+            users.TryGetValue(a.UserId, out var u);
+            profiles.TryGetValue(a.UserId, out var p);
+            return new TopUserRow(
+                u?.DisplayName ?? $"User#{a.UserId}",
+                u?.Email ?? "",
+                a.Total, a.Articles, a.Events,
+                p?.PreferredDepth,
+                a.LastActive);
+        }).ToList();
+
+        // Reader profiles
+        var allProfiles = await Ctx.ReaderProfiles.OrderByDescending(p => p.ArticlesRead).Take(100).ToListAsync();
+        var profileUserIds = allProfiles.Select(p => p.UserId).ToList();
+        var profileUsers = await Ctx.Users
+            .Where(u => profileUserIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName })
+            .ToDictionaryAsync(u => u.Id);
+
+        _profiles = allProfiles.Select(p =>
+        {
+            profileUsers.TryGetValue(p.UserId, out var u);
+            return new ProfileRow(
+                u?.DisplayName ?? $"User#{p.UserId}",
+                p.SemanticProfile,
+                p.TopInterests,
+                p.ArticlesRead, p.EventsOpened,
+                p.PreferredDepth,
+                p.LastAnalyzedAt);
+        }).ToList();
+
+        // Quotas
+        _quotas = await Ctx.SectionQuotas
+            .Include(q => q.Section)
+            .OrderByDescending(q => q.CurrentReads)
+            .Take(100)
+            .Select(q => new QuotaRow(
+                Ctx.Users.Where(u => u.Id == q.UserId).Select(u => u.DisplayName ?? "").FirstOrDefault() ?? $"User#{q.UserId}",
+                q.Section != null ? q.Section.Name : $"Section#{q.NewsSectionId}",
+                q.PlanTier.ToString(),
+                q.CurrentReads,
+                q.MaxReadsPerMonth))
+            .ToListAsync();
+
+        StateHasChanged();
+    }
+
+    private static string Truncate(string? s, int max) =>
+        string.IsNullOrEmpty(s) ? "-" : s.Length <= max ? s : s[..max] + "...";
+
+    private static string GetTypeColor(string type) => type switch
+    {
+        nameof(ActivityType.EventOpened) => "var(--accent)",
+        nameof(ActivityType.ArticleRead) => "var(--accent-green)",
+        nameof(ActivityType.ArticleExpanded) => "#4ecdc4",
+        nameof(ActivityType.SectionFiltered) => "#ff6b6b",
+        nameof(ActivityType.SearchPerformed) => "#ffd93d",
+        nameof(ActivityType.StoryThreadViewed) => "#6c5ce7",
+        nameof(ActivityType.BookmarkCreated) => "#fd79a8",
+        nameof(ActivityType.BriefingViewed) => "#00b894",
+        nameof(ActivityType.ExternalLinkClicked) => "#e17055",
+        nameof(ActivityType.MorningBriefViewed) => "#0984e3",
+        _ => "var(--accent)"
+    };
+
+    record TypeStat(string Type, int Count);
+    record SectionStat(string Name, int Count);
+    record TopUserRow(string DisplayName, string Email, int Activities, int ArticlesRead, int EventsOpened, string? PreferredDepth, DateTime? LastActive);
+    record ProfileRow(string DisplayName, string? SemanticProfile, string[] TopInterests, int ArticlesRead, int EventsOpened, string? PreferredDepth, DateTime? LastAnalyzedAt);
+    record QuotaRow(string DisplayName, string SectionName, string Plan, int CurrentReads, int MaxReads);
+}

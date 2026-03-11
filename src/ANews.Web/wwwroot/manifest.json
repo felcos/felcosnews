@@ -1,0 +1,16 @@
+{
+  "name": "AgenteNews",
+  "short_name": "AgenteNews",
+  "description": "Plataforma de noticias inteligente con agentes de IA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e17",
+  "theme_color": "#4a90e2",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

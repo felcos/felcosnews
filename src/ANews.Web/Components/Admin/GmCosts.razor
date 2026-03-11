@@ -97,29 +97,36 @@
             <span>Detalle</span>
             <span style="font-size:11px;color:var(--text-muted)">@_entries.Count registros</span>
         </div>
-        <table class="gm-table">
-            <thead><tr>
-                <th>Fecha</th>
-                <th>Proveedor</th>
-                <th>Operacion</th>
-                <th>Tokens in</th>
-                <th>Tokens out</th>
-                <th>Coste</th>
-            </tr></thead>
-            <tbody>
-                @foreach (var e in _entries.Take(100))
-                {
-                    <tr>
-                        <td style="font-size:11px;color:var(--text-muted)">@e.Date.ToString("dd/MM/yyyy")</td>
-                        <td style="font-size:11px">@e.Provider?.Name</td>
-                        <td style="font-size:11px;color:var(--text-muted)">@e.Operation</td>
-                        <td style="font-size:11px">@FormatTokens(e.InputTokens)</td>
-                        <td style="font-size:11px">@FormatTokens(e.OutputTokens)</td>
-                        <td style="font-size:11px;font-variant-numeric:tabular-nums">$@e.Cost.ToString("F6")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        <div style="max-height:300px;overflow-y:auto">
+            <table class="gm-table">
+                <thead><tr>
+                    <th>Fecha</th>
+                    <th>Proveedor</th>
+                    <th>Operacion</th>
+                    <th>Tokens in</th>
+                    <th>Tokens out</th>
+                    <th>Coste</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var e in _entries.Skip((_costPage - 1) * _costPageSize).Take(_costPageSize))
+                    {
+                        <tr>
+                            <td style="font-size:11px;color:var(--text-muted)">@e.Date.ToString("dd/MM/yyyy")</td>
+                            <td style="font-size:11px">@e.Provider?.Name</td>
+                            <td style="font-size:11px;color:var(--text-muted)">@e.Operation</td>
+                            <td style="font-size:11px">@FormatTokens(e.InputTokens)</td>
+                            <td style="font-size:11px">@FormatTokens(e.OutputTokens)</td>
+                            <td style="font-size:11px;font-variant-numeric:tabular-nums">$@e.Cost.ToString("F6")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div style="display:flex;justify-content:center;gap:12px;padding:10px;align-items:center;font-size:12px">
+            <button class="btn-sm" @onclick="() => { if (_costPage > 1) _costPage--; }" disabled="@(_costPage <= 1)"><i class="fa fa-chevron-left"></i></button>
+            <span>@_costPage / @CostTotalPages</span>
+            <button class="btn-sm" @onclick="() => { if (_costPage < CostTotalPages) _costPage++; }" disabled="@(_costPage >= CostTotalPages)"><i class="fa fa-chevron-right"></i></button>
+        </div>
     </div>
 </div>
 
@@ -128,6 +135,9 @@
     private decimal _totalCost, _todayCost;
     private long _totalInputTokens, _totalOutputTokens;
     private int _period = 30;
+    private int _costPage = 1;
+    private const int _costPageSize = 30;
+    private int CostTotalPages => Math.Max(1, (int)Math.Ceiling(_entries.Count / (double)_costPageSize));
 
     private record ProviderStat(string Provider, decimal Cost, int Count);
     private record AgentStat(string Agent, decimal Cost, int Count);

@@ -131,13 +131,15 @@
 
     private async Task LoadAsync()
     {
-        _sections = await Ctx.NewsSections
-            .Select(s => new SectionRow(
-                s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2",
-                s.IconClass ?? "fa-newspaper", s.Keywords.Count,
-                s.IsPublic, s.IsDefault, s.IsSystemSection,
-                s.Events.Count(e => e.IsActive), s.Sources.Count(src => src.IsActive)))
+        var raw = await Ctx.NewsSections
+            .Include(s => s.Events).Include(s => s.Sources)
             .ToListAsync();
+        _sections = raw.Select(s => new SectionRow(
+            s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2",
+            s.IconClass ?? "fa-newspaper", s.Keywords.Count,
+            s.IsPublic, s.IsDefault, s.IsSystemSection,
+            s.Events.Count(e => e.IsActive && !e.IsDeleted), s.Sources.Count(src => src.IsActive && !src.IsDeleted)))
+            .ToList();
     }
 
     private void ShowAdd()

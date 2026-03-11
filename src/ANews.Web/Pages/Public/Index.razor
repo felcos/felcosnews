@@ -1,5 +1,6 @@
 @page "/"
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 @inject AppDbContext Ctx
 @inject AuthenticationStateProvider AuthStateProvider
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
@@ -19,11 +20,11 @@
 
     <!-- Header -->
     <header class="site-header">
-        <div class="header-brand">
+        <a href="/" class="header-brand" style="text-decoration:none;color:inherit">
             <i class="fa fa-satellite"></i>
             <span class="brand-name">AGENTE<strong>NEWS</strong></span>
             <span class="brand-beta">BETA</span>
-        </div>
+        </a>
 
         <div class="header-right">
             <!-- Workspace indicator -->
@@ -52,6 +53,10 @@
                 <button class="view-btn @(ViewMode == "map" ? "active" : "")"
                         @onclick="@(() => SetViewMode("map"))" title="Vista mapa mundial">
                     <i class="fa fa-map-marked-alt"></i>
+                </button>
+                <button class="view-btn @(ViewMode == "threads" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("threads"))" title="Hilos narrativos">
+                    <i class="fa fa-project-diagram"></i>
                 </button>
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
@@ -299,6 +304,58 @@
                 <div id="map-view"></div>
             </div>
         }
+        else if (ViewMode == "threads")
+        {
+            <div class="threads-view">
+                @if (!_storyThreads.Any())
+                {
+                    <div class="threads-empty">
+                        <i class="fa fa-project-diagram" style="font-size:32px;opacity:0.3;margin-bottom:12px"></i>
+                        <p>No hay hilos narrativos activos</p>
+                    </div>
+                }
+                @foreach (var thread in _storyThreadsFull)
+                {
+                    <div class="thread-card" @onclick='() => Nav.NavigateTo($"/story/{thread.Id}")'>
+                        <div class="thread-card-header">
+                            <span class="thread-status thread-status-@thread.Status.ToLower()">@thread.Status</span>
+                            @if (thread.Section != null)
+                            {
+                                <span class="thread-section" style="color:@thread.SectionColor">@thread.Section</span>
+                            }
+                            <span class="thread-events-count"><i class="fa fa-calendar"></i> @thread.EventCount eventos</span>
+                            <span class="thread-articles-count"><i class="fa fa-file-alt"></i> @thread.TotalArticles art.</span>
+                        </div>
+                        <h3 class="thread-title">@thread.Title</h3>
+                        @if (!string.IsNullOrEmpty(thread.Summary))
+                        {
+                            <p class="thread-summary">@Truncate(thread.Summary, 200)</p>
+                        }
+                        @if (!string.IsNullOrEmpty(thread.WhyItMatters))
+                        {
+                            <div class="thread-whymatters">
+                                <i class="fa fa-exclamation-circle"></i> @Truncate(thread.WhyItMatters, 150)
+                            </div>
+                        }
+                        <div class="thread-footer">
+                            @if (thread.KeyActors.Any())
+                            {
+                                <div class="thread-actors">
+                                    @foreach (var actor in thread.KeyActors.Take(4))
+                                    {
+                                        <span class="thread-actor">@actor</span>
+                                    }
+                                </div>
+                            }
+                            <span class="thread-dates">
+                                @thread.FirstEventDate.ToString("dd/MM") — @thread.LastEventDate.ToString("dd/MM")
+                            </span>
+                            <span class="thread-impact priority-@thread.MaxPriority.ToLower()">@thread.MaxPriority</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
         else if (ViewMode == "grid")
         {
             <div class="events-grid">
@@ -377,7 +434,7 @@
 <!-- Event Detail Modal (unified chronology) -->
 @if (SelectedEvent != null)
 {
-    <div class="event-modal-overlay" @onclick="CloseEvent">
+    <div class="event-modal-overlay" @onclick="CloseEvent" @onkeydown="HandleModalKeydown" tabindex="0">
         <div class="event-modal event-modal-full" @onclick:stopPropagation>
             <div class="em-header priority-bg-@SelectedEvent.Priority.ToLower()">
                 <div class="em-badges">
@@ -389,7 +446,7 @@
                     }
                     <span class="em-trend-badge">@TrendIcon(SelectedEvent.Trend) @SelectedEvent.Trend</span>
                 </div>
-                <button class="em-close" @onclick="CloseEvent"><i class="fa fa-times"></i></button>
+                <button class="em-close" @onclick="CloseEvent" @onclick:stopPropagation><i class="fa fa-times"></i></button>
             </div>
 
             <div class="em-body-grid">
@@ -798,6 +855,7 @@
     private MorningBrief? _morningBrief;
     private bool _briefDismissed = false;
     private List<StoryThreadItem> _storyThreads = [];
+    private List<StoryThreadFull> _storyThreadsFull = [];
     private EventBriefing? _eventBriefing;
     private ANews.Domain.Entities.StoryThread? _selectedEventThread;
     private EventItem? _serendipityEvent;
@@ -838,7 +896,31 @@
             .Select(t => new StoryThreadItem(t.Id, t.Title, t.Status.ToString(), t.EventCount, t.MaxImpactScore))
             .ToListAsync();
 
+        _storyThreadsFull = await Ctx.StoryThreads
+            .Include(t => t.PrimarySection)
+            .Where(t => !t.IsDeleted)
+            .OrderByDescending(t => t.LastEventDate)
+            .Take(20)
+            .Select(t => new StoryThreadFull(t.Id, t.Title, t.Summary, t.WhyItMatters, t.WhatToWatch,
+                t.Status.ToString(), t.MaxPriority.ToString(), t.EventCount, t.TotalArticles,
+                t.PrimarySection != null ? t.PrimarySection.Name : null,
+                t.PrimarySection != null ? t.PrimarySection.Color : null,
+                t.KeyActors, t.FirstEventDate, t.LastEventDate))
+            .ToListAsync();
+
         IsLoading = false;
+    }
+
+    private int? _lastOpenedEventId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Handle eventId query parameter changes (internal Blazor navigation)
+        if (AutoOpenEventId.HasValue && AutoOpenEventId != _lastOpenedEventId && !IsLoading)
+        {
+            _lastOpenedEventId = AutoOpenEventId;
+            await OpenEventById(AutoOpenEventId.Value);
+        }
     }
 
     private async Task LoadEventsAsync()
@@ -1077,11 +1159,30 @@
     [JSInvokable]
     public async Task OpenEventById(int id)
     {
-        var ev = Events.FirstOrDefault(e => e.Id == id);
-        if (ev != null)
+        try
         {
-            await OpenEvent(ev);
-            await InvokeAsync(StateHasChanged);
+            var ev = Events.FirstOrDefault(e => e.Id == id);
+            if (ev == null)
+            {
+                // Event not in filtered list — load from DB
+                var dbEv = await Ctx.NewsEvents.Include(e => e.Section)
+                    .FirstOrDefaultAsync(e => e.Id == id && !e.IsDeleted);
+                if (dbEv != null)
+                    ev = new EventItem(dbEv.Id, dbEv.Title, dbEv.Description, dbEv.Priority.ToString(),
+                        dbEv.ImpactScore, dbEv.Trend.ToString(), dbEv.Tags.ToArray(),
+                        dbEv.Section?.Name ?? "", dbEv.Section?.Slug ?? "", dbEv.StartDate,
+                        0, [], dbEv.Latitude, dbEv.Longitude, dbEv.Location,
+                        dbEv.StoryThreadId, dbEv.SourceDiversity);
+            }
+            if (ev != null)
+            {
+                await OpenEvent(ev);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"OpenEventById error: {ex.Message}");
         }
     }
 
@@ -1187,7 +1288,12 @@
             : null;
     }
 
-    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); }
+    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); StateHasChanged(); }
+
+    private void HandleModalKeydown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") CloseEvent();
+    }
 
     private async Task GenerateEnSummaryAsync(ArticleItem art)
     {
@@ -1252,6 +1358,10 @@
         int SourceCredibility = 0, string? SourceBias = null);
     record RelatedEventItem(int Id, string Title, string Priority);
     record StoryThreadItem(int Id, string Title, string Status, int EventCount, decimal MaxImpactScore);
+    record StoryThreadFull(int Id, string Title, string? Summary, string? WhyItMatters, string? WhatToWatch,
+        string Status, string MaxPriority, int EventCount, int TotalArticles,
+        string? Section, string? SectionColor, string[] KeyActors,
+        DateTime FirstEventDate, DateTime LastEventDate);
 
     private void PickSerendipityEvent()
     {

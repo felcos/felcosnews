@@ -198,10 +198,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         return base.SaveChanges();
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    public override async Task<int> SaveChangesAsync(CancellationToken ct = default)
     {
         UpdateTimestamps();
-        return base.SaveChangesAsync(ct);
+        WriteAuditLogs();
+        return await base.SaveChangesAsync(ct);
     }
 
     private void UpdateTimestamps()
@@ -214,6 +215,60 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
             entry.Entity.UpdatedAt = DateTime.UtcNow;
             if (entry.State == EntityState.Added)
                 entry.Entity.CreatedAt = DateTime.UtcNow;
+        }
+    }
+
+    // Entity types to audit (admin-relevant, not high-volume)
+    private static readonly HashSet<string> _auditedTypes = [
+        nameof(NewsSection), nameof(NewsSource), nameof(AiProviderConfig),
+        nameof(WorkspaceZone), nameof(AgentConfig), nameof(SectionQuota)
+    ];
+
+    private void WriteAuditLogs()
+    {
+        var auditable = ChangeTracker.Entries<BaseEntity>()
+            .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted
+                && _auditedTypes.Contains(e.Entity.GetType().Name))
+            .ToList();
+
+        foreach (var entry in auditable)
+        {
+            var action = entry.State switch
+            {
+                EntityState.Added => "Create",
+                EntityState.Modified => "Update",
+                EntityState.Deleted => "Delete",
+                _ => "Unknown"
+            };
+
+            string? oldValues = null, newValues = null;
+            var entityType = entry.Entity.GetType().Name;
+
+            if (entry.State == EntityState.Modified)
+            {
+                var changed = entry.Properties.Where(p => p.IsModified).ToDictionary(p => p.Metadata.Name, p => p.CurrentValue?.ToString());
+                if (changed.Count == 0) continue;
+                newValues = System.Text.Json.JsonSerializer.Serialize(changed);
+                var original = entry.Properties.Where(p => p.IsModified).ToDictionary(p => p.Metadata.Name, p => p.OriginalValue?.ToString());
+                oldValues = System.Text.Json.JsonSerializer.Serialize(original);
+            }
+            else if (entry.State == EntityState.Added)
+            {
+                var vals = entry.Properties.Where(p => p.CurrentValue != null)
+                    .ToDictionary(p => p.Metadata.Name, p => p.CurrentValue?.ToString());
+                newValues = System.Text.Json.JsonSerializer.Serialize(vals);
+            }
+
+            AuditLogs.Add(new AuditLog
+            {
+                Action = action,
+                EntityType = entityType,
+                EntityId = entry.Entity.Id.ToString(),
+                UserEmail = "system",
+                OldValues = oldValues,
+                NewValues = newValues,
+                Timestamp = DateTime.UtcNow
+            });
         }
     }
 }
