@@ -17,9 +17,12 @@
 @inject ANews.Infrastructure.Agents.ThreadWeaverAgent ThreadWeaverAgent
 @inject ANews.Infrastructure.Agents.BriefingGeneratorAgent BriefingGeneratorAgent
 @inject ANews.Infrastructure.Agents.SourceAnalyzerAgent SourceAnalyzerAgent
+@inject ANews.Infrastructure.Agents.TelegramEditorialAgent TelegramEditorialAgent
+@inject ANews.Infrastructure.Agents.ReaderProfileAgent ReaderProfileAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
 @using ANews.Domain.Entities
+@using ANews.Domain.Enums
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.SignalR
 @using Microsoft.AspNetCore.SignalR.Client
@@ -85,6 +88,12 @@
             <div class="kpi-label">Usuarios activos</div>
             <div class="kpi-detail">Total: @Stats.TotalUsers</div>
         </div>
+        <div class="kpi-card @(_kpiFlash ? "kpi-refreshing" : "")">
+            <i class="fa fa-stream kpi-icon"></i>
+            <div class="kpi-value">@Stats.ActiveThreads</div>
+            <div class="kpi-label">Hilos narrativos</div>
+            <div class="kpi-detail">@Stats.ActivitiesToday actividades hoy</div>
+        </div>
     </div>
 
     <!-- Body: Sidebar + Content -->
@@ -124,7 +133,7 @@
             <a href="/" class="gm-nav-btn" style="margin-top:auto">
                 <i class="fa fa-globe"></i><span>Ver web</span>
             </a>
-            <a href="/logout" class="gm-nav-btn">
+            <a href="/account/logout" class="gm-nav-btn">
                 <i class="fa fa-sign-out-alt"></i><span>Salir</span>
             </a>
         </nav>
@@ -248,6 +257,16 @@
                                     disabled="@(AgentTriggers.FirstOrDefault(a => a.Name == "NewsScannerAgent")?.IsRunning == true)">
                                 <i class="fa @(AgentTriggers.FirstOrDefault(a => a.Name == "NewsScannerAgent")?.IsRunning == true ? "fa-spinner fa-spin" : "fa-rss")"></i>
                                 Escanear fuentes
+                            </button>
+                            <button class="btn-trigger @(_reclassifying ? "running" : "")"
+                                    @onclick="ReclassifyOldArticlesAsync" disabled="@_reclassifying">
+                                <i class="fa @(_reclassifying ? "fa-spinner fa-spin" : "fa-recycle")"></i>
+                                @(_reclassifying ? "Reclasificando..." : "Reclasificar antiguos")
+                            </button>
+                            <button class="btn-trigger @(_migratingSections ? "running" : "")"
+                                    @onclick="MigrateObsoleteSectionsAsync" disabled="@_migratingSections">
+                                <i class="fa @(_migratingSections ? "fa-spinner fa-spin" : "fa-exchange-alt")"></i>
+                                @(_migratingSections ? "Migrando..." : "Migrar secciones obsoletas")
                             </button>
                             @if (_geocodeResult != null)
                             {
@@ -666,6 +685,8 @@
     private decimal TotalCostSelected;
     private bool _geocoding;
     private string? _geocodeResult;
+    private bool _reclassifying;
+    private bool _migratingSections;
     private bool _savingConfigs;
     private bool _configSaved;
 
@@ -726,6 +747,8 @@
             new("ThreadWeaverAgent",            "Tejer Hilos Narrat.",  ThreadWeaverAgent),
             new("BriefingGeneratorAgent",       "Generar Briefings",    BriefingGeneratorAgent),
             new("SourceAnalyzerAgent",          "Analizar Fuentes",     SourceAnalyzerAgent),
+            new("TelegramEditorialAgent",       "Telegram Editorial",   TelegramEditorialAgent),
+            new("ReaderProfileAgent",            "Perfil Lector IA",     ReaderProfileAgent),
         ];
     }
 
@@ -746,6 +769,10 @@
             .Where(e => e.StartedAt >= DateTime.UtcNow.AddMinutes(-10) && e.CompletedAt == null)
             .Select(e => e.AgentName).ToListAsync();
 
+        var activeThreads = await Ctx.StoryThreads
+            .CountAsync(t => !t.IsDeleted && (t.Status == ANews.Domain.Enums.StoryStatus.Developing || t.Status == ANews.Domain.Enums.StoryStatus.Active));
+        var activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
+
         Stats = new DashboardStats
         {
             ArticlesToday      = articlesToday,
@@ -756,7 +783,9 @@
             CostToday          = costToday,
             CostMonth          = costMonth,
             AgentsRunningCount = runningAgents.Count,
-            RunningAgentNames  = runningAgents
+            RunningAgentNames  = runningAgents,
+            ActiveThreads      = activeThreads,
+            ActivitiesToday    = activitiesToday
         };
 
         RecentExecutions = await Ctx.AgentExecutions
@@ -1014,6 +1043,81 @@
         finally { _geocoding = false; await InvokeAsync(StateHasChanged); }
     }
 
+    private async Task ReclassifyOldArticlesAsync()
+    {
+        _reclassifying = true; _quickActionResult = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var ageCutoff = DateTime.UtcNow.AddDays(-30);
+            var articles = await Ctx.NewsArticles
+                .Include(a => a.Event)
+                .Where(a => !a.IsDeleted && a.CreatedAt < ageCutoff && a.Event.EventType == "Unclassified")
+                .OrderBy(a => a.CreatedAt).Take(100).ToListAsync();
+
+            if (articles.Count == 0) { _quickActionResult = "No hay artículos antiguos sin clasificar"; return; }
+
+            var today = DateTime.UtcNow.Date;
+            int queued = 0;
+            foreach (var group in articles.GroupBy(a => a.Event.NewsSectionId))
+            {
+                var unclEv = await Ctx.NewsEvents
+                    .FirstOrDefaultAsync(e => e.NewsSectionId == group.Key && e.EventType == "Unclassified" && e.StartDate >= today);
+                if (unclEv == null)
+                {
+                    unclEv = new NewsEvent { Title = "Artículos sin clasificar", EventType = "Unclassified",
+                        Priority = ANews.Domain.Enums.EventPriority.Low, NewsSectionId = group.Key,
+                        StartDate = DateTime.UtcNow, IsActive = false };
+                    Ctx.NewsEvents.Add(unclEv); await Ctx.SaveChangesAsync();
+                }
+                foreach (var art in group) { art.NewsEventId = unclEv.Id; art.CreatedAt = DateTime.UtcNow; queued++; }
+            }
+            await Ctx.SaveChangesAsync();
+            _quickActionResult = $"Encolados {queued} artículos para reclasificación";
+        }
+        catch (Exception ex) { _quickActionResult = $"Error: {ex.Message}"; }
+        finally { _reclassifying = false; await InvokeAsync(StateHasChanged); }
+    }
+
+    private async Task MigrateObsoleteSectionsAsync()
+    {
+        _migratingSections = true; _quickActionResult = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var redirects = new Dictionary<string, string>
+            {
+                ["social"] = "sociedad", ["farandula"] = "gente",
+                ["ciberguerra"] = "ciberseguridad", ["terrorismo"] = "seguridad",
+                ["tecnologia-dual"] = "seguridad"
+            };
+
+            var allSections = await Ctx.NewsSections.IgnoreQueryFilters().ToListAsync();
+            var bySlug = allSections.ToDictionary(s => s.Slug);
+            int migrated = 0;
+
+            foreach (var (oldSlug, newSlug) in redirects)
+            {
+                if (!bySlug.TryGetValue(oldSlug, out var oldSec)) continue;
+                if (!bySlug.TryGetValue(newSlug, out var newSec)) continue;
+
+                var events = await Ctx.NewsEvents.IgnoreQueryFilters()
+                    .Where(e => e.NewsSectionId == oldSec.Id).ToListAsync();
+                foreach (var ev in events) { ev.NewsSectionId = newSec.Id; migrated++; }
+
+                var sources = await Ctx.NewsSources.IgnoreQueryFilters()
+                    .Where(s => s.NewsSectionId == oldSec.Id).ToListAsync();
+                foreach (var src in sources) src.NewsSectionId = newSec.Id;
+
+                oldSec.IsDeleted = true;
+            }
+            await Ctx.SaveChangesAsync();
+            _quickActionResult = migrated > 0 ? $"Migrados {migrated} eventos de secciones obsoletas" : "No hay secciones obsoletas para migrar";
+        }
+        catch (Exception ex) { _quickActionResult = $"Error: {ex.Message}"; }
+        finally { _migratingSections = false; await InvokeAsync(StateHasChanged); }
+    }
+
     private async Task RefreshAll()
     {
         IsLoading = true;
@@ -1035,17 +1139,7 @@
             {
                 Ctx.AgentConfigs.Update(cfg);
                 // Hot-patch running agents
-                var agent = cfg.AgentType switch
-                {
-                    "NewsScannerAgent"             => (ANews.Infrastructure.Agents.BaseAgent?)NewsScannerAgent,
-                    "EventDetectorAgent"           => EventDetectorAgent,
-                    "AlertGeneratorAgent"          => AlertGeneratorAgent,
-                    "NotificationDispatcherAgent"  => NotificationDispatcherAgent,
-                    "ArticleSummarizerAgent"       => ArticleSummarizerAgent,
-                    "DigestSenderAgent"            => DigestSenderAgent,
-                    "SourceDiscoveryAgent"         => SourceDiscoveryAgent,
-                    _                              => null
-                };
+                var agent = AgentTriggers.FirstOrDefault(a => a.Name == cfg.AgentType)?.Agent;
                 agent?.UpdateInterval(cfg.IntervalMinutes);
                 agent?.SetEnabled(cfg.IsEnabled);
             }
@@ -1256,6 +1350,8 @@
         public decimal CostToday { get; init; }
         public decimal CostMonth { get; init; }
         public int PendingAlerts { get; init; }
+        public int ActiveThreads { get; init; }
+        public int ActivitiesToday { get; init; }
     }
 
     record LiveLogEntry(string AgentName, string Level, string Message, DateTime Time);

@@ -1,8 +1,10 @@
 @page "/story/{Id:int}"
 @inject ANews.Infrastructure.Data.AppDbContext Ctx
 @inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthStateProvider
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 
 <PageTitle>@(_thread?.Title ?? "Hilo Narrativo") - AgenteNews</PageTitle>
@@ -133,8 +135,35 @@
                 .Where(e => e.StoryThreadId == Id && !e.IsDeleted)
                 .OrderByDescending(e => e.StartDate)
                 .ToListAsync();
+
+            _ = TrackActivity(ActivityType.StoryThreadViewed, sectionId: _thread.PrimarySectionId, threadId: _thread.Id);
         }
     }
 
     private static string Truncate(string s, int max) => s.Length > max ? s[..max] + "..." : s;
+
+    private async Task TrackActivity(ActivityType type, int? sectionId = null, int? eventId = null, int? articleId = null, int? threadId = null, string? metadata = null)
+    {
+        try
+        {
+            var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
+            var userName = auth.User.Identity?.Name;
+            if (string.IsNullOrEmpty(userName)) return;
+            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            if (user == null) return;
+            Ctx.UserActivities.Add(new UserActivity
+            {
+                UserId = user.Id,
+                ActivityType = type,
+                NewsSectionId = sectionId,
+                NewsEventId = eventId,
+                NewsArticleId = articleId,
+                StoryThreadId = threadId,
+                Metadata = metadata
+            });
+            await Ctx.SaveChangesAsync();
+        }
+        catch { /* Never block UI */ }
+    }
 }

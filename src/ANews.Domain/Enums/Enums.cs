@@ -51,7 +51,9 @@ public enum AgentType
     DigestSender,
     ThreadWeaver,
     BriefingGenerator,
-    SourceAnalyzer
+    SourceAnalyzer,
+    TelegramEditorial,
+    ReaderProfileAnalyzer
 }
 
 public enum AgentStatus
@@ -137,4 +139,26 @@ public enum BriefingType
     EventContext,
     MorningBrief,
     WeeklyRecap
+}
+
+public enum ActivityType
+{
+    EventOpened,
+    ArticleRead,
+    ArticleExpanded,
+    SectionFiltered,
+    SearchPerformed,
+    StoryThreadViewed,
+    BookmarkCreated,
+    BriefingViewed,
+    ExternalLinkClicked,
+    MorningBriefViewed
+}
+
+public enum PlanTier
+{
+    Free,
+    Basic,
+    Pro,
+    Unlimited
 }

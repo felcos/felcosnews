@@ -620,11 +620,66 @@ Transformar el producto de un **agregador RSS con IA** a una **agencia de notici
 | S8-13 | GodMode: nuevos agentes registrados (ThreadWeaver, BriefingGenerator) | ✅ |
 | S8-14 | Nuevos enums: StoryStatus, BiasIndicator, BriefingType, AgentType.ThreadWeaver/BriefingGenerator | ✅ |
 
-### Pendiente (Sprint 9+)
-- [ ] SourceAnalyzerAgent: análisis automático de sesgo/credibilidad por fuente
-- [ ] Reader Profile IA: perfiles semánticos de usuario (no keywords)
-- [ ] Serendipity engine: inclusión deliberada de historias fuera del perfil
-- [ ] Impact personalizado por usuario
-- [ ] Telegram como canal editorial (morning brief, breaking con contexto)
-- [ ] Widget embeddable JS
-- [ ] API pública con rate limit
+---
+
+## Sprint 9-10 — Inteligencia de Fuentes + Motor Anti-Burbuja (2026-03-11) ✅ COMPLETADO
+
+| # | Feature | Estado |
+|---|---|---|
+| S9-01 | SourceAnalyzerAgent: speed scores, credibilidad, bias IA, fact density | ✅ |
+| S9-02 | Source trust badges en frontend (Alta/Media/Baja + indicador sesgo) | ✅ |
+| S9-03 | Serendipity engine: "Deberías saber" card fuera del perfil del usuario | ✅ |
+| S9-04 | ReaderProfile entity (perfil semántico de lectura) | ✅ |
+| S9-05 | NewsSource: Bias, FactDensityAvg, SpeedScore, CorrectionCount | ✅ |
+| S9-06 | EventDetector: CrossReferenceCount y SourceDiversity en creación de evento | ✅ |
+
+---
+
+## Sprint 11 — Distribución (2026-03-11) ✅ COMPLETADO
+
+| # | Feature | Estado |
+|---|---|---|
+| S11-01 | TelegramEditorialAgent: morning brief + breaking news a canal público | ✅ |
+| S11-02 | Widget embeddable JS (widget.js) con CSS scoped, dark mode, auto-refresh | ✅ |
+| S11-03 | Public API v1: /api/v1/events, /sections, /story-threads, /morning-brief, /events/{id}/briefing | ✅ |
+| S11-04 | Widget endpoint: /api/widget/events con timeAgo español y CORS abierto | ✅ |
+| S11-05 | Swagger/OpenAPI en /swagger | ✅ |
+| S11-06 | CORS "Widget" policy (AllowAnyOrigin) para embeds externos | ✅ |
+| S11-07 | GodMode: TelegramEditorialAgent trigger registrado | ✅ |
+| S11-08 | AdminApiEndpoints: trigger para todos los agentes Sprint 8-11 | ✅ |
+
+---
+
+## Sprint 12 — Activity Tracking + Quotas + Limpieza (2026-03-11) ✅ COMPLETADO
+
+### Sistema de tracking de actividad de usuario
+Cada interacción del usuario queda registrada en DB para:
+- Perfilado IA de gustos de lectura
+- Futuro modelo de pago por consumo con límites por sección
+
+| # | Feature | Estado |
+|---|---|---|
+| S12-01 | UserActivity entity (log granular: evento, artículo, sección, tipo) | ✅ |
+| S12-02 | SectionQuota entity (límites mensuales por sección + PlanTier) | ✅ |
+| S12-03 | ActivityType enum (10 tipos: EventOpened, ArticleRead, etc.) | ✅ |
+| S12-04 | PlanTier enum (Free, Basic, Pro, Unlimited) | ✅ |
+| S12-05 | POST /api/activity/track endpoint con quota check y 429 si excedida | ✅ |
+| S12-06 | Tracking en Index.razor: OpenEvent, SelectSection, ArticleExpanded, MorningBrief | ✅ |
+| S12-07 | Tracking en ArticlePage.razor: ArticleRead al cargar | ✅ |
+| S12-08 | Tracking en StoryView.razor: StoryThreadViewed al cargar | ✅ |
+| S12-09 | ReaderProfileAgent: análisis estadístico + IA de perfiles de lectura cada 6h | ✅ |
+| S12-10 | POST /api/admin/reclassify-old endpoint para reencolar artículos antiguos | ✅ |
+| S12-11 | Swagger/OpenAPI documentación interactiva en /swagger | ✅ |
+| S12-12 | Migración BD: AddActivityTrackingAndQuotas | ✅ |
+| S12-13 | GodMode: ReaderProfileAgent trigger registrado | ✅ |
+
+### Monetización futura (preparado, no activo)
+- SectionQuota permite definir planes: "Plan Basic: 10 lecturas/mes en Geopolítica, 20 en Sociedad"
+- MaxReadsPerMonth = -1 = ilimitado (default actual para todos)
+- Endpoint /api/activity/track retorna 429 con `quotaExceeded: true` cuando se supera el límite
+- PeriodStart se resetea mensualmente automáticamente
+
+### Pendiente (backlog)
+- [ ] RSS sources para secciones sin fuentes (usar SourceDiscoveryAgent desde admin UI)
+- [ ] Migración de artículos en secciones obsoletas (farandula→entretenimiento, social→sociedad)
+- [ ] Impact personalizado por usuario basado en ReaderProfile

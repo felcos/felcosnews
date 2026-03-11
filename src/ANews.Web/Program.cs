@@ -123,11 +123,27 @@ builder.Services.AddHttpClient("rss", c =>
 // Controllers (para API REST publica)
 builder.Services.AddControllers();
 
+// Swagger / OpenAPI
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(opts =>
+{
+    opts.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "AgenteNews Public API",
+        Version = "v1",
+        Description = "API pública de AgenteNews — eventos, secciones, hilos narrativos y briefings."
+    });
+});
+
 // CORS
 builder.Services.AddCors(opts =>
 {
     opts.AddPolicy("PublicApi", policy =>
         policy.WithOrigins(builder.Configuration["AppUrl"] ?? "*")
+              .AllowAnyMethod()
+              .AllowAnyHeader());
+    opts.AddPolicy("Widget", policy =>
+        policy.AllowAnyOrigin()
               .AllowAnyMethod()
               .AllowAnyHeader());
 });
@@ -161,6 +177,15 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 });
 app.UseHttpsRedirection();
 app.UseStaticFiles();
+
+// Swagger
+app.UseSwagger();
+app.UseSwaggerUI(opts =>
+{
+    opts.SwaggerEndpoint("/swagger/v1/swagger.json", "AgenteNews API v1");
+    opts.RoutePrefix = "swagger";
+});
+
 app.UseRouting();
 app.UseSerilogRequestLogging();
 app.UseCors("PublicApi");

@@ -10,6 +10,7 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.SignalR.Client
 @using Microsoft.EntityFrameworkCore
+@using ANews.Domain.Enums
 @implements IAsyncDisposable
 
 <PageTitle>AgenteNews — Noticias Inteligentes</PageTitle>
@@ -825,6 +826,9 @@
             .Where(m => m.BriefDate == today)
             .FirstOrDefaultAsync();
 
+        if (_morningBrief != null)
+            _ = TrackActivity(ActivityType.MorningBriefViewed);
+
         // Load active story threads
         _storyThreads = await Ctx.StoryThreads
             .Where(t => t.Status == ANews.Domain.Enums.StoryStatus.Developing
@@ -1110,6 +1114,9 @@
         }
         SelectedSection = slug;
 
+        var sectionId = Sections.FirstOrDefault(s => s.Slug == slug)?.Id;
+        _ = TrackActivity(ActivityType.SectionFiltered, sectionId: sectionId, metadata: slug);
+
         if (ViewMode == "universe")
         {
             // In universe mode, always show all events; use keywords for highlighting
@@ -1135,6 +1142,9 @@
         _expandedArticles.Clear();
         _articleSummariesEn.Clear();
         _generatingEnSummary.Clear();
+
+        var sectionId = Sections.FirstOrDefault(s => s.Slug == ev.SectionSlug)?.Id;
+        _ = TrackActivity(ActivityType.EventOpened, sectionId: sectionId, eventId: ev.Id);
 
         SelectedEventArticles = await Ctx.NewsArticles
             .Include(a => a.Source)
@@ -1210,7 +1220,10 @@
     private void ToggleArticlePreview(int id)
     {
         if (!_expandedArticles.Remove(id))
+        {
             _expandedArticles.Add(id);
+            _ = TrackActivity(ActivityType.ArticleExpanded, eventId: SelectedEvent?.Id, articleId: id);
+        }
     }
     private void DismissBanner() => CriticalAlerts.Clear();
 
@@ -1290,5 +1303,30 @@
             .Replace("\\n", "<br/>")
             .Replace("\n\n", "<br/><br/>")
             .Replace("\n", "<br/>");
+    }
+
+    private async Task TrackActivity(ActivityType type, int? sectionId = null, int? eventId = null, int? articleId = null, int? threadId = null, string? metadata = null)
+    {
+        try
+        {
+            var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
+            var userName = auth.User.Identity?.Name;
+            if (string.IsNullOrEmpty(userName)) return;
+            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            if (user == null) return;
+            Ctx.UserActivities.Add(new UserActivity
+            {
+                UserId = user.Id,
+                ActivityType = type,
+                NewsSectionId = sectionId,
+                NewsEventId = eventId,
+                NewsArticleId = articleId,
+                StoryThreadId = threadId,
+                Metadata = metadata
+            });
+            await Ctx.SaveChangesAsync();
+        }
+        catch { /* Never block UI */ }
     }
 }

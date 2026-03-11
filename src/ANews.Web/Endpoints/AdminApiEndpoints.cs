@@ -1,3 +1,4 @@
+using ANews.Domain.Entities;
 using ANews.Domain.Enums;
 using ANews.Domain.Interfaces;
 using ANews.Infrastructure.AI;
@@ -21,6 +22,11 @@ public static class AdminApiEndpoints
                 "notificationdispatcher" => TriggerAgent<NotificationDispatcherAgent>(sp),
                 "articlesummarizer" => TriggerAgent<ArticleSummarizerAgent>(sp),
                 "digestsender" => TriggerAgent<DigestSenderAgent>(sp),
+                "threadweaver" => TriggerAgent<ThreadWeaverAgent>(sp),
+                "briefinggenerator" => TriggerAgent<BriefingGeneratorAgent>(sp),
+                "sourceanalyzer" => TriggerAgent<SourceAnalyzerAgent>(sp),
+                "telegrameditor" => TriggerAgent<TelegramEditorialAgent>(sp),
+                "readerprofile" => TriggerAgent<ReaderProfileAgent>(sp),
                 _ => false
             };
             return triggered
@@ -133,6 +139,111 @@ public static class AdminApiEndpoints
 
             await ctx.SaveChangesAsync();
             return Results.Ok(new { message = $"Enriquecidos {enriched} de {events.Count} eventos con ubicacion", enriched });
+        }).RequireAuthorization("RequireAdmin");
+
+        app.MapPost("/api/admin/migrate-obsolete-sections", async (AppDbContext ctx, ILogger<Program> log) =>
+        {
+            var redirects = new Dictionary<string, string>
+            {
+                ["social"] = "sociedad",
+                ["farandula"] = "gente",
+                ["ciberguerra"] = "ciberseguridad",
+                ["terrorismo"] = "seguridad",
+                ["tecnologia-dual"] = "seguridad"
+            };
+
+            var allSections = await ctx.NewsSections.IgnoreQueryFilters().ToListAsync();
+            var sectionBySlug = allSections.ToDictionary(s => s.Slug);
+            int migrated = 0;
+
+            foreach (var (oldSlug, newSlug) in redirects)
+            {
+                if (!sectionBySlug.TryGetValue(oldSlug, out var oldSection)) continue;
+                if (!sectionBySlug.TryGetValue(newSlug, out var newSection)) continue;
+
+                var events = await ctx.NewsEvents.IgnoreQueryFilters()
+                    .Where(e => e.NewsSectionId == oldSection.Id)
+                    .ToListAsync();
+
+                foreach (var ev in events)
+                {
+                    ev.NewsSectionId = newSection.Id;
+                    migrated++;
+                }
+
+                var sources = await ctx.NewsSources.IgnoreQueryFilters()
+                    .Where(s => s.NewsSectionId == oldSection.Id)
+                    .ToListAsync();
+
+                foreach (var src in sources)
+                    src.NewsSectionId = newSection.Id;
+
+                // Soft-delete the obsolete section
+                oldSection.IsDeleted = true;
+            }
+
+            await ctx.SaveChangesAsync();
+            log.LogInformation("Migrated {Count} events from obsolete sections", migrated);
+            return Results.Ok(new { message = $"Migrados {migrated} eventos de secciones obsoletas", migrated });
+        }).RequireAuthorization("RequireAdmin");
+
+        app.MapPost("/api/admin/reclassify-old", async (AppDbContext ctx, ILogger<Program> log,
+            int? olderThanDays, int? batchSize) =>
+        {
+            var days = olderThanDays ?? 30;
+            var batch = Math.Clamp(batchSize ?? 100, 1, 500);
+            var ageCutoff = DateTime.UtcNow.AddDays(-days);
+
+            var articles = await ctx.NewsArticles
+                .Include(a => a.Event)
+                .Where(a => !a.IsDeleted
+                    && a.CreatedAt < ageCutoff
+                    && a.Event.EventType == "Unclassified")
+                .OrderBy(a => a.CreatedAt)
+                .Take(batch)
+                .ToListAsync();
+
+            if (articles.Count == 0)
+                return Results.Ok(new { message = "No hay artículos antiguos para reclasificar", queued = 0 });
+
+            var grouped = articles.GroupBy(a => a.Event.NewsSectionId);
+            int queued = 0;
+            var today = DateTime.UtcNow.Date;
+
+            foreach (var group in grouped)
+            {
+                var sectionId = group.Key;
+                var unclassifiedEvent = await ctx.NewsEvents
+                    .FirstOrDefaultAsync(e => e.NewsSectionId == sectionId
+                        && e.EventType == "Unclassified"
+                        && e.StartDate >= today);
+
+                if (unclassifiedEvent == null)
+                {
+                    unclassifiedEvent = new NewsEvent
+                    {
+                        Title = "Artículos sin clasificar",
+                        EventType = "Unclassified",
+                        Priority = ANews.Domain.Enums.EventPriority.Low,
+                        NewsSectionId = sectionId,
+                        StartDate = DateTime.UtcNow,
+                        IsActive = false
+                    };
+                    ctx.NewsEvents.Add(unclassifiedEvent);
+                    await ctx.SaveChangesAsync();
+                }
+
+                foreach (var article in group)
+                {
+                    article.NewsEventId = unclassifiedEvent.Id;
+                    article.CreatedAt = DateTime.UtcNow; // Reset so EventDetector 72h filter picks them up
+                    queued++;
+                }
+            }
+
+            await ctx.SaveChangesAsync();
+            log.LogInformation("Reclassify-old: encolados {Count} artículos > {Days} días", queued, days);
+            return Results.Ok(new { message = $"Encolados {queued} artículos para reclasificación", queued, olderThanDays = days, batchSize = batch });
         }).RequireAuthorization("RequireAdmin");
     }
 

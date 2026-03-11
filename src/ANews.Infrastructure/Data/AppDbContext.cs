@@ -46,6 +46,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<EventBriefing> EventBriefings => Set<EventBriefing>();
     public DbSet<MorningBrief> MorningBriefs => Set<MorningBrief>();
     public DbSet<ReaderProfile> ReaderProfiles => Set<ReaderProfile>();
+    public DbSet<UserActivity> UserActivities => Set<UserActivity>();
+    public DbSet<SectionQuota> SectionQuotas => Set<SectionQuota>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -168,6 +170,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
             e.HasIndex(r => r.UserId).IsUnique();
             e.Property(r => r.TopInterests).HasColumnType("jsonb");
             e.Property(r => r.AvoidTopics).HasColumnType("jsonb");
+        });
+
+        builder.Entity<UserActivity>(e =>
+        {
+            e.HasIndex(a => a.UserId);
+            e.HasIndex(a => new { a.UserId, a.CreatedAt });
+            e.HasIndex(a => a.CreatedAt);
+        });
+
+        builder.Entity<SectionQuota>(e =>
+        {
+            e.HasIndex(q => new { q.UserId, q.NewsSectionId }).IsUnique();
         });
 
         // Global query filter for soft delete
