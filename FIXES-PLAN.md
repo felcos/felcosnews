@@ -139,4 +139,4 @@
 | 10 | AI provider estilos | HECHO | 2026-03-11 |
 | 11 | Costes paginacion | HECHO | 2026-03-11 |
 | 12 | Auditoria vacia | HECHO | 2026-03-11 |
-| 13 | Activity admin | Planificado Sprint 14 | |
+| 13 | Activity admin | HECHO | 2026-03-11 |

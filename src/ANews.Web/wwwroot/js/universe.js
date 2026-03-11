@@ -1,5 +1,5 @@
 /* ============================================================
-   universe.js  v4 — Solar System Universe for AgenteNews
+   universe.js  v5 — Solar System Universe for AgenteNews
    Solar-system layout: sections = stars, events = planets
    Camera: smooth lerp pan/zoom, drag, double-click, pinch
    ============================================================ */
@@ -43,7 +43,7 @@
             this._hoveredMoon = null;
 
             // Background
-            this._stars = this._genStars(220);
+            this._stars = this._genStars(350);
             this._constellations = this._genConstellations();
             this._shootingStars = [];
             this._nextShoot = Date.now() + 5000;
@@ -275,6 +275,7 @@
 
             // Collision resolution — push overlapping planets apart
             this._resolveCollisions();
+            this._resolveMoonClearance();
 
             if (this._userKeywords.length > 0) {
                 this._applyKeywords();
@@ -305,16 +306,17 @@
         }
 
         _resolveCollisions() {
-            // Simple iterative collision resolution
-            const minGap = 8; // minimum px gap between planet edges
-            for (let iter = 0; iter < 5; iter++) {
+            // Robust iterative collision resolution with dynamic gap
+            for (let iter = 0; iter < 30; iter++) {
                 let moved = false;
                 for (let i = 0; i < this.nodes.length; i++) {
                     for (let j = i + 1; j < this.nodes.length; j++) {
                         const a = this.nodes[i], b = this.nodes[j];
                         const dx = b.x - a.x, dy = b.y - a.y;
                         const dist = Math.hypot(dx, dy);
-                        const minDist = a.radius + b.radius + minGap;
+                        // Dynamic gap: 20px if either is Critical, else 12px
+                        const gap = (a.event.priority === 'Critical' || b.event.priority === 'Critical') ? 20 : 12;
+                        const minDist = a.radius + b.radius + gap;
                         if (dist < minDist && dist > 0.1) {
                             const overlap = (minDist - dist) / 2;
                             const nx = dx / dist, ny = dy / dist;
@@ -327,6 +329,34 @@
                     }
                 }
                 if (!moved) break;
+            }
+        }
+
+        _resolveMoonClearance() {
+            // Ensure moons of each planet don't overlap with neighboring planets
+            for (const node of this.nodes) {
+                const moons = (node.event.articles || []).slice(0, 4);
+                if (moons.length === 0) continue;
+                // Max moon orbit radius
+                const maxMoonOrbit = node.radius * 1.9 + (Math.min(moons.length, 3)) * 12 + 3;
+
+                for (const other of this.nodes) {
+                    if (other === node || other.system !== node.system) continue;
+                    const dx = other.x - node.x;
+                    const dy = other.y - node.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = maxMoonOrbit + other.radius + 8;
+                    if (dist < minDist && dist > 0.1) {
+                        // Push node radially away from system center
+                        const sys = node.system;
+                        const sdx = node.x - sys.x;
+                        const sdy = node.y - sys.y;
+                        const sDist = Math.hypot(sdx, sdy) || 1;
+                        const push = (minDist - dist) * 0.6;
+                        node.x += (sdx / sDist) * push;
+                        node.y += (sdy / sDist) * push;
+                    }
+                }
             }
         }
 
@@ -357,7 +387,8 @@
                 r: Math.random() * 1.6 + 0.2,
                 brightness: 0.3 + Math.random() * 0.7,
                 twinkleSpeed: 0.5 + Math.random() * 2,
-                twinklePhase: Math.random() * Math.PI * 2
+                twinklePhase: Math.random() * Math.PI * 2,
+                layer: Math.floor(Math.random() * 3) // 0=far, 1=mid, 2=near
             }));
         }
 
@@ -831,12 +862,18 @@
         // ─────────────────────────────────────────────────────────
         _drawStarfield(ctx, ts) {
             const W = this.W, H = this.H;
+            const layerFactors = [0.02, 0.06, 0.12];
+            const camOffX = this.cam.x;
+            const camOffY = this.cam.y;
             for (const star of this._stars) {
                 const twinkle = 0.5 + 0.5 * Math.sin(ts * star.twinkleSpeed + star.twinklePhase);
                 const alpha = star.brightness * (0.4 + 0.6 * twinkle);
+                const factor = layerFactors[star.layer] || 0.02;
+                let sx = ((star.x * W - camOffX * factor) % W + W) % W;
+                let sy = ((star.y * H - camOffY * factor) % H + H) % H;
                 ctx.fillStyle = `rgba(255,255,255,${alpha})`;
                 ctx.beginPath();
-                ctx.arc(star.x * W, star.y * H, star.r, 0, Math.PI * 2);
+                ctx.arc(sx, sy, star.r, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -874,6 +911,26 @@
                     ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
                     ctx.fill();
                 }
+            }
+        }
+
+        _drawNebulae(ctx) {
+            const W = this.W, H = this.H;
+            const nebulae = [
+                { x: 0.2, y: 0.3, r: 200, color: [20, 40, 120, 0.06] },
+                { x: 0.7, y: 0.2, r: 180, color: [80, 20, 120, 0.05] },
+                { x: 0.5, y: 0.8, r: 220, color: [20, 80, 60, 0.05] }
+            ];
+            for (const n of nebulae) {
+                const nx = n.x * W, ny = n.y * H;
+                const grad = ctx.createRadialGradient(nx, ny, 0, nx, ny, n.r);
+                const [r, g, b, a] = n.color;
+                grad.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+                grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(nx, ny, n.r, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
@@ -940,6 +997,31 @@
             ctx.arc(sys.x, sys.y, rInner, 0, Math.PI * 2);
             ctx.fillStyle = gradInner;
             ctx.fill();
+            ctx.restore();
+
+            // Dotted galaxy border
+            let borderR = 200;
+            const sysNodes = this.nodes.filter(n => n.system === sys);
+            if (sysNodes.length > 0) {
+                borderR = 0;
+                for (const n of sysNodes) {
+                    const d = Math.hypot(n.x - sys.x, n.y - sys.y) + n.radius * 1.9 + 3 * 12 + n.radius;
+                    if (d > borderR) borderR = d;
+                }
+                borderR += 40;
+            }
+            ctx.save();
+            ctx.setLineDash([6, 4]);
+            ctx.globalAlpha = 0.45 + 0.1 * Math.sin(ts * 0.4 + sys.pulsePhase);
+            ctx.strokeStyle = sys.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.ellipse(sys.x, sys.y, borderR * 1.15, borderR * 0.82,
+                ts * 0.015 + sys.pulsePhase, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = `rgba(${rgb},0.03)`;
+            ctx.fill();
+            ctx.setLineDash([]);
             ctx.restore();
         }
 
@@ -1410,6 +1492,9 @@
             // 2. Starfield (screen space)
             this._drawStarfield(ctx, ts);
 
+            // 2b. Background nebulae (screen space)
+            this._drawNebulae(ctx);
+
             // 3. Constellations (screen space)
             this._drawConstellations(ctx, ts);
 
@@ -1455,7 +1540,7 @@
             const now = Date.now();
             if (now >= this._nextShoot) {
                 this._spawnShootingStar(W, H);
-                this._nextShoot = now + 18000 + Math.random() * 22000;
+                this._nextShoot = now + 8000 + Math.random() * 12000;
             }
             if (this._pendingShootCount > 0) {
                 this._spawnShootingStar(W, H);

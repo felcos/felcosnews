@@ -58,6 +58,10 @@
                         @onclick="@(() => SetViewMode("threads"))" title="Hilos narrativos">
                     <i class="fa fa-project-diagram"></i>
                 </button>
+                <button class="view-btn @(ViewMode == "universe3d" ? "active" : "")"
+                        @onclick="@(() => SetViewMode("universe3d"))" title="Vista universo 3D">
+                    <i class="fa fa-cube"></i>
+                </button>
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
 
@@ -296,6 +300,12 @@
                 <canvas id="universe-canvas"></canvas>
                 <!-- Tooltip overlay gestionado por JS -->
                 <div id="universe-tooltip" class="universe-tooltip" style="display:none"></div>
+            </div>
+        }
+        else if (ViewMode == "universe3d")
+        {
+            <div class="universe-container" id="universe3d-container">
+                <canvas id="universe3d-canvas"></canvas>
             </div>
         }
         else if (ViewMode == "map")
@@ -790,6 +800,8 @@
         try { await JS.InvokeVoidAsync("localStorage.setItem", "anews-workspace", name); } catch { }
         if (ViewMode == "universe")
             try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
+        else if (ViewMode == "universe3d")
+            try { await JS.InvokeVoidAsync("universe3d.updateData", FilteredEvents, Sections); } catch { }
         else if (ViewMode == "map")
             try { await JS.InvokeVoidAsync("newsMap.updateData", FilteredEvents); } catch { }
     }
@@ -1029,6 +1041,7 @@
     }
 
     private bool _pendingUniverseInit = false;
+    private bool _pendingUniverse3dInit = false;
     private bool _pendingMapInit = false;
 
     // ── Theme ──────────────────────────────────────────────
@@ -1102,6 +1115,11 @@
             await InitUniverseAsync();
             await LoadUserKeywordsAsync();
         }
+        if (_pendingUniverse3dInit)
+        {
+            _pendingUniverse3dInit = false;
+            await InitUniverse3dAsync();
+        }
         if (_pendingMapInit)
         {
             _pendingMapInit = false;
@@ -1149,6 +1167,13 @@
         catch { /* universe.js no disponible */ }
     }
 
+    private async Task InitUniverse3dAsync()
+    {
+        _dotnetRef ??= DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("universe3d.init", "universe3d-canvas", FilteredEvents, Sections, _dotnetRef); }
+        catch { /* universe3d.js or three.js not available */ }
+    }
+
     private async Task InitMapAsync()
     {
         _dotnetRef ??= DotNetObjectReference.Create(this);
@@ -1190,6 +1215,8 @@
     {
         if (mode != "universe")
             try { await JS.InvokeVoidAsync("universe.destroy"); } catch { }
+        if (mode != "universe3d")
+            try { await JS.InvokeVoidAsync("universe3d.destroy"); } catch { }
         if (mode != "map")
             try { await JS.InvokeVoidAsync("newsMap.destroy"); } catch { }
 
@@ -1197,6 +1224,11 @@
         if (mode == "universe")
         {
             _pendingUniverseInit = true;
+            StateHasChanged();
+        }
+        else if (mode == "universe3d")
+        {
+            _pendingUniverse3dInit = true;
             StateHasChanged();
         }
         else if (mode == "map")

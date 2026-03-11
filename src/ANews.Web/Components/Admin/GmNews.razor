@@ -40,7 +40,10 @@
                     { <option value="@p">@p</option> }
                 </select>
             }
-            <span style="font-size:11px;color:var(--text-muted);margin-left:auto">@_total registros</span>
+            <button class="btn-sm" style="margin-left:auto" @onclick="ExportCsvAsync" title="Exportar CSV">
+                <i class="fa fa-download"></i> CSV
+            </button>
+            <span style="font-size:11px;color:var(--text-muted)">@_total registros</span>
         </div>
 
         @if (_newsTab == "events")
@@ -302,6 +305,36 @@
         foreach (var e in list) e.IsDeleted = true;
         await Ctx.SaveChangesAsync();
         await LoadEventsAsync(); await LoadPurgeStats();
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        if (_newsTab == "events")
+        {
+            var q = Ctx.NewsEvents.Where(e => !e.IsDeleted);
+            if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(e => e.Title.Contains(_search));
+            if (_sectionFilter.HasValue) q = q.Where(e => e.NewsSectionId == _sectionFilter.Value);
+            if (!string.IsNullOrEmpty(_priorityFilter) && Enum.TryParse<EventPriority>(_priorityFilter, out var pri))
+                q = q.Where(e => e.Priority == pri);
+            var rows = await q.OrderByDescending(e => e.CreatedAt)
+                .Select(e => new { e.Id, e.Title, Priority = e.Priority.ToString(), e.ImpactScore, Section = e.Section.Name, Articles = e.Articles.Count(a => !a.IsDeleted), e.CreatedAt })
+                .ToListAsync();
+            var csv = "Id,Titulo,Prioridad,Impacto,Seccion,Articulos,Fecha\n" +
+                string.Join("\n", rows.Select(r => $"{r.Id},\"{r.Title.Replace("\"", "\"\"")}\",{r.Priority},{r.ImpactScore},{r.Section},{r.Articles},{r.CreatedAt:yyyy-MM-dd}"));
+            await JS.InvokeVoidAsync("downloadTextFile", $"eventos_{DateTime.UtcNow:yyyyMMdd}.csv", csv);
+        }
+        else
+        {
+            var q = Ctx.NewsArticles.Where(a => !a.IsDeleted);
+            if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(a => a.Title.Contains(_search));
+            if (_sectionFilter.HasValue) q = q.Where(a => a.Event.NewsSectionId == _sectionFilter.Value);
+            var rows = await q.OrderByDescending(a => a.PublishedAt)
+                .Select(a => new { a.Id, a.Title, a.SourceName, a.SourceUrl, a.Relevance, Type = a.ArticleType.ToString(), a.PublishedAt })
+                .ToListAsync();
+            var csv = "Id,Titulo,Fuente,URL,Relevancia,Tipo,Publicado\n" +
+                string.Join("\n", rows.Select(r => $"{r.Id},\"{r.Title.Replace("\"", "\"\"")}\",\"{r.SourceName}\",{r.SourceUrl},{r.Relevance},{r.Type},{r.PublishedAt:yyyy-MM-dd HH:mm}"));
+            await JS.InvokeVoidAsync("downloadTextFile", $"articulos_{DateTime.UtcNow:yyyyMMdd}.csv", csv);
+        }
     }
 
     record EventRow(int Id, string Title, string Priority, decimal ImpactScore, bool IsActive, string SectionName, int ArticleCount, DateTime CreatedAt);
