@@ -148,12 +148,23 @@ builder.Services.AddCors(opts =>
               .AllowAnyHeader());
 });
 
-// Rate limiting
+// Rate limiting — API key users get higher limits based on plan tier
 builder.Services.AddRateLimiter(opts =>
 {
-    opts.AddPolicy("api", context => RateLimitPartition.GetFixedWindowLimiter(
-        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions { Window = TimeSpan.FromMinutes(1), PermitLimit = 60 }));
+    opts.AddPolicy("api", context =>
+    {
+        var apiKey = context.Request.Headers["X-Api-Key"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            // API key users: partition by key, higher limits
+            return RateLimitPartition.GetFixedWindowLimiter(
+                $"apikey:{apiKey}",
+                _ => new FixedWindowRateLimiterOptions { Window = TimeSpan.FromMinutes(1), PermitLimit = 300 });
+        }
+        return RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { Window = TimeSpan.FromMinutes(1), PermitLimit = 60 });
+    });
     opts.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { Window = TimeSpan.FromMinutes(1), PermitLimit = 10 }));

@@ -85,29 +85,24 @@
             <!-- Timeline -->
             <div class="story-timeline">
                 <h2><i class="fa fa-stream"></i> Línea Temporal</h2>
-                @foreach (var ev in _events)
+                @foreach (var ev in _events.OrderBy(e => e.StartDate))
                 {
-                    <div class="story-tl-node">
-                        <div class="story-tl-date">@ev.StartDate.ToString("dd MMM", new System.Globalization.CultureInfo("es-ES"))</div>
-                        <div class="story-tl-dot priority-dot-@ev.Priority.ToString().ToLower()"></div>
-                        <div class="story-tl-card" @onclick='() => Nav.NavigateTo($"/?eventId={ev.Id}")'>
-                            <div class="story-tl-header">
-                                <span class="em-priority priority-bg-@ev.Priority.ToString().ToLower()">@ev.Priority</span>
-                                <span class="story-tl-impact">@ev.ImpactScore.ToString("F0")</span>
-                            </div>
-                            <h3>@ev.Title</h3>
+                    <div class="timeline-node @ev.Priority.ToString().ToLower()" @onclick='() => Nav.NavigateTo($"/?eventId={ev.Id}")' style="cursor:pointer">
+                        <div class="timeline-date">@ev.StartDate.ToString("dd MMM yyyy", new System.Globalization.CultureInfo("es-ES"))</div>
+                        <div class="timeline-title">@ev.Title</div>
+                        <div class="timeline-desc">
                             @if (!string.IsNullOrEmpty(ev.Description))
                             {
-                                <p>@Truncate(ev.Description, 200)</p>
+                                @Truncate(ev.Description, 180)
                             }
-                            <div class="story-tl-meta">
-                                <span><i class="fa fa-newspaper"></i> @ev.Articles.Count(a => !a.IsDeleted) artículos</span>
-                                <span><i class="fa fa-rss"></i> @ev.Articles.Where(a => !a.IsDeleted).Select(a => a.SourceName).Distinct().Count() fuentes</span>
-                                @if (!string.IsNullOrEmpty(ev.Location))
-                                {
-                                    <span><i class="fa fa-map-marker-alt"></i> @ev.Location</span>
-                                }
-                            </div>
+                        </div>
+                        <div class="story-tl-meta">
+                            <span class="em-priority priority-bg-@ev.Priority.ToString().ToLower()">@ev.Priority</span>
+                            <span><i class="fa fa-newspaper"></i> @ev.Articles.Count(a => !a.IsDeleted)</span>
+                            @if (!string.IsNullOrEmpty(ev.Location))
+                            {
+                                <span><i class="fa fa-map-marker-alt"></i> @ev.Location</span>
+                            }
                         </div>
                     </div>
                 }
@@ -133,7 +128,7 @@
             _events = await Ctx.NewsEvents
                 .Include(e => e.Articles)
                 .Where(e => e.StoryThreadId == Id && !e.IsDeleted)
-                .OrderByDescending(e => e.StartDate)
+                .OrderBy(e => e.StartDate)
                 .ToListAsync();
 
             _ = TrackActivity(ActivityType.StoryThreadViewed, sectionId: _thread.PrimarySectionId, threadId: _thread.Id);

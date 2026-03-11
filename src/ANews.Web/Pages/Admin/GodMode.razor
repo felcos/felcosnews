@@ -367,16 +367,34 @@
                         <div class="agent-actions">
                             @foreach (var agent in AgentTriggers)
                             {
-                                <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
-                                        @onclick="() => TriggerAgentAsync(agent.Name)"
-                                        disabled="@agent.IsRunning">
-                                    <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
-                                    @agent.DisplayName
-                                    @if (!agent.IsRunning && agent.NextRunIn > 0)
+                                var lastExec = _lastAgentExecs.GetValueOrDefault(agent.Name);
+                                <div class="agent-card-wrap">
+                                    <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
+                                            @onclick="() => TriggerAgentAsync(agent.Name)"
+                                            disabled="@agent.IsRunning">
+                                        <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
+                                        @agent.DisplayName
+                                        @if (!agent.IsRunning && agent.NextRunIn > 0)
+                                        {
+                                            <span class="next-run-badge">en @agent.NextRunIn&#x2009;m</span>
+                                        }
+                                    </button>
+                                    <div class="agent-progress">
+                                        <div class="agent-progress-bar @(agent.IsRunning ? "running" : "")"
+                                             style="width:@(agent.IsRunning ? "100%" : lastExec != null ? "100%" : "0%")"></div>
+                                    </div>
+                                    @if (lastExec != null && !agent.IsRunning)
                                     {
-                                        <span class="next-run-badge">en @agent.NextRunIn&#x2009;m</span>
+                                        <div style="display:flex;gap:8px;font-size:10px;color:var(--text-muted);padding:2px 4px;flex-wrap:wrap">
+                                            <span><i class="fa fa-cog"></i> @lastExec.ItemsProcessed items</span>
+                                            <span><i class="fa fa-clock"></i> @FormatDuration(lastExec.DurationMs)</span>
+                                            @if (lastExec.AiCost > 0)
+                                            {
+                                                <span><i class="fa fa-dollar-sign"></i> @lastExec.AiCost.ToString("F4")</span>
+                                            }
+                                        </div>
                                     }
-                                </button>
+                                </div>
                             }
                         </div>
                     </div>
@@ -659,6 +677,14 @@
     </div>
 }
 
+<style>
+    .agent-card-wrap { display: flex; flex-direction: column; }
+    .agent-progress { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+    .agent-progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+    .agent-progress-bar.running { background: linear-gradient(90deg, var(--accent), var(--accent-green), var(--accent)); background-size: 200% 100%; animation: agent-running 1.5s linear infinite; }
+    @@keyframes agent-running { 0% { background-position: 200% 0 } to { background-position: -200% 0 } }
+</style>
+
 @code {
     private HubConnection? _adminHub;
     private HubConnection? _agentHub;
@@ -694,6 +720,7 @@
     private List<ProviderCostItem> ProviderCosts = [];
     private List<HealthItem> SystemHealth = [];
     private List<AgentTriggerItem> AgentTriggers = [];
+    private Dictionary<string, ExecutionItem> _lastAgentExecs = new();
     private List<ExecutionLogItem> ExecutionLogs = [];
     private List<WorkspaceZone> _zones = [];
     private List<AgentConfig> _agentConfigs = [];
@@ -812,6 +839,19 @@
                 e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
                 e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error))
             .ToListAsync();
+
+        // Load last execution per agent for progress bars
+        var agentNames = AgentTriggers.Select(a => a.Name).ToList();
+        var lastExecs = await Ctx.AgentExecutions
+            .Where(e => agentNames.Contains(e.AgentName))
+            .GroupBy(e => e.AgentName)
+            .Select(g => g.OrderByDescending(e => e.StartedAt).First())
+            .Select(e => new ExecutionItem(
+                e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
+                e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
+                e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error))
+            .ToListAsync();
+        _lastAgentExecs = lastExecs.ToDictionary(e => e.AgentName);
 
         PendingAlerts = await Ctx.AlertTriggers
             .Include(a => a.NewsEvent)

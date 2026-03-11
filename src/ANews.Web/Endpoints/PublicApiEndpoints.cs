@@ -260,6 +260,62 @@ public static class PublicApiEndpoints
             });
         }).AllowAnonymous().RequireRateLimiting("api");
 
+        // ── Full-text Search ─────────────────────────────────────────────────
+
+        app.MapGet("/api/v1/search", async (string? q, int? limit, AppDbContext ctx) =>
+        {
+            if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
+                return Results.Json(new { events = Array.Empty<object>(), articles = Array.Empty<object>() });
+
+            var take = Math.Clamp(limit ?? 20, 1, 20);
+            var pattern = $"%{q.Trim()}%";
+            var halfTake = Math.Max(take / 2, 1);
+
+            var events = await ctx.NewsEvents
+                .Include(e => e.Section)
+                .Where(e => !e.IsDeleted && e.IsActive
+                    && (EF.Functions.ILike(e.Title, pattern)
+                        || EF.Functions.ILike(e.Description ?? "", pattern)))
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(halfTake)
+                .Select(e => new
+                {
+                    type = "event",
+                    e.Id,
+                    title = e.Title,
+                    description = e.Description != null
+                        ? (e.Description.Length > 120 ? e.Description.Substring(0, 120) + "…" : e.Description)
+                        : "",
+                    section = e.Section != null ? e.Section.Name : "",
+                    priority = e.Priority.ToString(),
+                    date = e.CreatedAt
+                })
+                .ToListAsync();
+
+            var articles = await ctx.NewsArticles
+                .Include(a => a.Event).ThenInclude(ev => ev.Section)
+                .Where(a => !a.IsDeleted
+                    && (EF.Functions.ILike(a.Title, pattern)
+                        || EF.Functions.ILike(a.Summary ?? "", pattern)))
+                .OrderByDescending(a => a.PublishedAt)
+                .Take(take - events.Count)
+                .Select(a => new
+                {
+                    type = "article",
+                    a.Id,
+                    title = a.Title,
+                    description = a.Summary != null
+                        ? (a.Summary.Length > 120 ? a.Summary.Substring(0, 120) + "…" : a.Summary)
+                        : "",
+                    section = a.Event != null && a.Event.Section != null ? a.Event.Section.Name : "",
+                    priority = a.Event != null ? a.Event.Priority.ToString() : "Medium",
+                    date = a.PublishedAt
+                })
+                .ToListAsync();
+
+            return Results.Json(new { events, articles });
+        }).AllowAnonymous().RequireRateLimiting("api");
+
         // ── Activity Tracking ────────────────────────────────────────────────
 
         app.MapPost("/api/activity/track", async (HttpContext http, AppDbContext ctx,

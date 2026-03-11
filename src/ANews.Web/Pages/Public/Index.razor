@@ -26,6 +26,36 @@
             <span class="brand-beta">BETA</span>
         </a>
 
+        <!-- Full-text search bar -->
+        <div class="search-bar-full" @onclick:stopPropagation>
+            <i class="fa fa-search"></i>
+            <input type="text" placeholder="Buscar eventos y artículos..."
+                   value="@_ftSearchQuery"
+                   @oninput="@(async (ChangeEventArgs e) => { _ftSearchQuery = e.Value?.ToString() ?? ""; await OnSearchInputChanged(); })"
+                   @onkeydown="OnSearchKeyDown"
+                   @onfocus="@(() => { if (_ftSearchResults.Any()) _showFtSearch = true; })" />
+            @if (!string.IsNullOrEmpty(_ftSearchQuery))
+            {
+                <button class="search-clear" @onclick="ClearFullSearch"><i class="fa fa-times"></i></button>
+            }
+            @if (_showFtSearch && _ftSearchResults.Any())
+            {
+                <div class="search-results">
+                    @foreach (var r in _ftSearchResults)
+                    {
+                        <div class="search-result-item" @onclick="@(() => OnSearchResultClick(r))">
+                            <i class="fa @(r.Type == "event" ? "fa-bolt" : "fa-newspaper")" style="opacity:.6;margin-right:8px"></i>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@r.Title</div>
+                                <div style="font-size:12px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@r.Description</div>
+                            </div>
+                            <span style="font-size:11px;opacity:.5;white-space:nowrap;margin-left:8px">@r.Section</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
         <div class="header-right">
             <!-- Workspace indicator -->
             <button class="ws-indicator" @onclick="@(() => _showWorkspacePicker = true)" title="Cambiar enfoque geográfico">
@@ -745,6 +775,36 @@
     </div>
 }
 
+<!-- Quota Limit Modal -->
+@if (_showQuotaModal)
+{
+    <div class="modal-overlay" @onclick="@(() => _showQuotaModal = false)">
+        <div class="modal-box" style="max-width:440px;text-align:center" @onclick:stopPropagation>
+            <div class="modal-header" style="justify-content:center;border:none;padding-bottom:0">
+                <i class="fa fa-lock" style="font-size:32px;color:var(--accent-orange)"></i>
+            </div>
+            <div class="modal-body" style="padding-top:8px">
+                <h3 style="margin-bottom:8px;font-size:18px;color:var(--text-primary)">Límite de lectura alcanzado</h3>
+                <p style="color:var(--text-secondary);margin-bottom:16px">
+                    Has alcanzado tu límite de lectura mensual para esta sección.
+                </p>
+                <span class="plan-tier-badge plan-tier-@_quotaPlanTier.ToLower()" style="margin-bottom:16px;display:inline-block">
+                    @_quotaPlanTier
+                </span>
+                <p style="color:var(--text-muted);font-size:13px;margin-top:12px">
+                    Mejora tu plan para seguir leyendo sin límites.
+                </p>
+            </div>
+            <div class="modal-footer" style="justify-content:center;border:none">
+                <a href="/planes" class="btn-primary" style="text-decoration:none">
+                    <i class="fa fa-rocket"></i> Ver planes
+                </a>
+                <button class="btn-secondary" @onclick="@(() => _showQuotaModal = false)">Cerrar</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "eventId")]
     private int? AutoOpenEventId { get; set; }
@@ -761,6 +821,94 @@
     private List<SectionItem> Sections = [];
     private List<EventItem> Events = [];
     private List<ModuleFilterItem> UserModules = [];
+
+    // ── Quota limit modal ──────────────────────────────────────────────
+    private bool _showQuotaModal = false;
+    private string _quotaPlanTier = "Free";
+
+    // ── Full-text search ──────────────────────────────────────────────
+    private string _ftSearchQuery = "";
+    private bool _showFtSearch = false;
+    private List<SearchResultItem> _ftSearchResults = [];
+    private System.Threading.Timer? _searchTimer;
+
+    private record SearchResultItem(string Type, int Id, string Title, string Description, string Section, string Priority, DateTime Date);
+
+    private async Task OnSearchInputChanged()
+    {
+        _searchTimer?.Dispose();
+        var query = _ftSearchQuery;
+        if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2)
+        {
+            _ftSearchResults.Clear();
+            _showFtSearch = false;
+            return;
+        }
+        _searchTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                try
+                {
+                    var pattern = $"%{query.Trim()}%";
+                    var events = await Ctx.NewsEvents
+                        .Include(e => e.Section)
+                        .Where(e => !e.IsDeleted && e.IsActive
+                            && (EF.Functions.ILike(e.Title, pattern)
+                                || EF.Functions.ILike(e.Description ?? "", pattern)))
+                        .OrderByDescending(e => e.CreatedAt)
+                        .Take(10)
+                        .Select(e => new SearchResultItem(
+                            "event", e.Id, e.Title,
+                            e.Description != null ? (e.Description.Length > 120 ? e.Description.Substring(0, 120) + "…" : e.Description) : "",
+                            e.Section != null ? e.Section.Name : "",
+                            e.Priority.ToString(), e.CreatedAt))
+                        .ToListAsync();
+
+                    var articles = await Ctx.NewsArticles
+                        .Include(a => a.Event).ThenInclude(ev => ev.Section)
+                        .Where(a => !a.IsDeleted
+                            && (EF.Functions.ILike(a.Title, pattern)
+                                || EF.Functions.ILike(a.Summary ?? "", pattern)))
+                        .OrderByDescending(a => a.PublishedAt)
+                        .Take(10)
+                        .Select(a => new SearchResultItem(
+                            "article", a.Id, a.Title,
+                            a.Summary != null ? (a.Summary.Length > 120 ? a.Summary.Substring(0, 120) + "…" : a.Summary) : "",
+                            a.Event != null && a.Event.Section != null ? a.Event.Section.Name : "",
+                            a.Event != null ? a.Event.Priority.ToString() : "Medium", a.PublishedAt))
+                        .ToListAsync();
+
+                    _ftSearchResults = events.Concat(articles).Take(20).ToList();
+                    _showFtSearch = _ftSearchResults.Any();
+                    StateHasChanged();
+                }
+                catch { /* search silently fails */ }
+            });
+        }, null, 300, Timeout.Infinite);
+    }
+
+    private void OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") { _showFtSearch = false; }
+    }
+
+    private async Task OnSearchResultClick(SearchResultItem r)
+    {
+        _showFtSearch = false;
+        if (r.Type == "event")
+            await OpenEventById(r.Id);
+        else
+            Nav.NavigateTo($"/article/{r.Id}");
+    }
+
+    private void ClearFullSearch()
+    {
+        _ftSearchQuery = "";
+        _ftSearchResults.Clear();
+        _showFtSearch = false;
+        _searchTimer?.Dispose();
+    }
 
     // ── Workspace (geo-focus) ──────────────────────────────────────────
     private bool _showWorkspacePicker = false;
@@ -1375,6 +1523,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        _searchTimer?.Dispose();
         if (_hub != null) await _hub.DisposeAsync();
     }
 
@@ -1457,6 +1606,27 @@
             if (string.IsNullOrEmpty(userName)) return;
             var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
             if (user == null) return;
+
+            // Check quota for content-consuming activities
+            if (sectionId.HasValue && (type == ActivityType.EventOpened || type == ActivityType.ArticleRead || type == ActivityType.ArticleExpanded))
+            {
+                var periodStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+                var quota = await Ctx.SectionQuotas.FirstOrDefaultAsync(q =>
+                    q.UserId == user.Id && q.NewsSectionId == sectionId.Value && q.PeriodStart == periodStart);
+                if (quota != null && quota.MaxReadsPerMonth >= 0 && quota.CurrentReads >= quota.MaxReadsPerMonth)
+                {
+                    _quotaPlanTier = quota.PlanTier.ToString();
+                    _showQuotaModal = true;
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+                if (quota != null)
+                {
+                    quota.CurrentReads++;
+                    Ctx.SectionQuotas.Update(quota);
+                }
+            }
+
             Ctx.UserActivities.Add(new UserActivity
             {
                 UserId = user.Id,

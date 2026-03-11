@@ -1874,6 +1874,16 @@ textarea.form-input { resize: vertical; font-family: inherit; }
   100% { background-position: -200% 0; }
 }
 
+/* Skeleton loaders */
+.skeleton { background: linear-gradient(90deg, var(--admin-card) 25%, rgba(255,255,255,0.06) 50%, var(--admin-card) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.5s infinite; border-radius: var(--radius); }
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0 } to { background-position: -200% 0 } }
+.skeleton-text { height: 14px; margin-bottom: 8px; }
+.skeleton-text.w-50 { width: 50%; }
+.skeleton-text.w-75 { width: 75%; }
+.skeleton-text.w-100 { width: 100%; }
+.skeleton-kpi { height: 80px; }
+.skeleton-row { height: 40px; margin-bottom: 4px; }
+
 /* ============================================
    EMPTY STATES (U-09)
    ============================================ */
@@ -2777,4 +2787,126 @@ input[type="number"].form-control { font-variant-numeric: tabular-nums; }
 }
 @media (max-width: 768px) {
   .threads-view { grid-template-columns: 1fr; }
+}
+
+/* Full-text search bar */
+.search-bar-full {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--admin-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 8px 16px;
+  transition: border-color 0.2s;
+}
+.search-bar-full:focus-within { border-color: var(--accent); }
+.search-bar-full input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text-primary); font-size: 14px;
+}
+.search-bar-full input::placeholder { color: var(--text-muted); }
+.search-bar-full i { color: var(--text-muted); font-size: 14px; }
+.search-results {
+  background: var(--admin-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); margin-top: 8px; overflow: hidden;
+}
+.search-result-item {
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background 0.15s;
+}
+.search-result-item:hover { background: rgba(74,144,226,0.08); }
+.search-result-item:last-child { border-bottom: none; }
+
+/* Pricing page */
+.pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+.pricing-card { background: var(--admin-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; text-align: center; transition: transform 0.2s, border-color 0.2s; position: relative; }
+.pricing-card:hover { transform: translateY(-4px); border-color: var(--accent); }
+.pricing-card.featured { border-color: var(--accent); box-shadow: 0 0 20px rgba(74,144,226,0.15); }
+.pricing-card .plan-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.pricing-card .plan-price { font-size: 32px; font-weight: 800; color: var(--accent); margin: 12px 0; }
+.pricing-card .plan-price small { font-size: 14px; font-weight: 400; color: var(--text-muted); }
+.pricing-card .plan-features { list-style: none; padding: 0; margin: 16px 0; text-align: left; }
+.pricing-card .plan-features li { padding: 6px 0; font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.pricing-card .plan-features li i { color: var(--accent-green); font-size: 12px; }
+.pricing-card .plan-cta { display: block; width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+.pricing-card .plan-cta:hover { opacity: 0.85; }
+.pricing-badge { position: absolute; top: -10px; right: 16px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 10px; text-transform: uppercase; }
+
+/* Story timeline */
+.story-timeline { position: relative; padding-left: 30px; }
+.story-timeline::before { content: ''; position: absolute; left: 10px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+.timeline-node { position: relative; margin-bottom: 20px; padding: 12px 16px; background: var(--admin-card); border: 1px solid var(--border); border-radius: var(--radius); transition: border-color 0.2s; cursor: pointer; }
+.timeline-node:hover { border-color: var(--accent); }
+.timeline-node::before { content: ''; position: absolute; left: -24px; top: 16px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-primary); }
+.timeline-node.critical::before { background: var(--accent-red); }
+.timeline-node.high::before { background: #ff6600; }
+.timeline-date { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+.timeline-title { font-size: 14px; font-weight: 600; }
+.timeline-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+
+/* GodMode responsive */
+@media (max-width: 900px) {
+  .gm-body { flex-direction: column; }
+  .gm-sidebar {
+    width: 100%; flex-direction: row; overflow-x: auto;
+    position: static; padding: 6px; gap: 2px;
+  }
+  .gm-nav-btn { width: 40px; height: 40px; flex-shrink: 0; }
+  .gm-nav-btn span { display: none; }
+  .gm-content { padding-left: 0; padding-top: 12px; }
+  .gm-grid { grid-template-columns: 1fr; }
+  .gm-dash-grid { grid-template-columns: 1fr; }
+  .gm-table { font-size: 11px; }
+  .gm-table th, .gm-table td { padding: 6px 8px; }
+  .god-mode { padding: 10px; }
+  .gm-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .gm-kpis { grid-template-columns: 1fr; }
+  .gm-nav-btn { width: 36px; height: 36px; }
+  .kpi-value { font-size: 22px; }
+}
+
+/* ============================================
+   PRICING / PLANES PAGE
+   ============================================ */
+.planes-page { min-height: 100vh; background: var(--space-black); color: var(--text-primary); }
+.planes-header { text-align: center; padding: 60px 20px 30px; }
+.planes-header h1 { font-size: 28px; margin-bottom: 8px; }
+.planes-header p { color: var(--text-secondary); font-size: 15px; }
+.planes-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px; max-width: 1100px; margin: 0 auto; padding: 0 20px 60px;
+}
+.plan-card {
+  background: var(--admin-card); border: 1px solid var(--admin-border);
+  border-radius: var(--radius-lg); padding: 28px 24px; display: flex;
+  flex-direction: column; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.plan-card:hover { border-color: var(--accent); box-shadow: var(--shadow-glow); }
+.plan-card.plan-featured { border-color: var(--accent); position: relative; }
+.plan-card.plan-featured::before {
+  content: 'Popular'; position: absolute; top: -10px; right: 16px;
+  background: var(--accent); color: white; font-size: 11px; font-weight: 700;
+  padding: 2px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: .04em;
+}
+.plan-card-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.plan-card-price { font-size: 32px; font-weight: 800; margin-bottom: 4px; }
+.plan-card-price span { font-size: 14px; font-weight: 400; color: var(--text-secondary); }
+.plan-card-limit { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+.plan-card-features { list-style: none; margin-bottom: 24px; flex: 1; }
+.plan-card-features li {
+  padding: 6px 0; font-size: 13px; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 8px;
+}
+.plan-card-features li i { color: var(--accent-green); font-size: 12px; }
+.plan-card .btn-plan {
+  display: block; text-align: center; padding: 10px 16px;
+  border-radius: var(--radius); font-size: 14px; font-weight: 600;
+  text-decoration: none; transition: all 0.2s; cursor: pointer; border: none;
+}
+.plan-card .btn-plan-primary { background: var(--accent); color: white; }
+.plan-card .btn-plan-primary:hover { background: #5aa0f0; }
+.plan-card .btn-plan-outline { background: transparent; border: 1px solid var(--border); color: var(--text-primary); }
+.plan-card .btn-plan-outline:hover { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 600px) {
+  .planes-grid { grid-template-columns: 1fr; }
+  .planes-header { padding: 40px 20px 20px; }
 }
