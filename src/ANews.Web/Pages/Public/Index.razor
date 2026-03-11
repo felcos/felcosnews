@@ -301,6 +301,21 @@
         else if (ViewMode == "grid")
         {
             <div class="events-grid">
+                @if (_serendipityEvent != null && SelectedSection == "all")
+                {
+                    <div class="event-card event-card-serendipity priority-@_serendipityEvent.Priority.ToLower()" @onclick="() => OpenEvent(_serendipityEvent)">
+                        <div class="event-card-header">
+                            <span class="serendipity-badge"><i class="fa fa-star"></i> Deberías saber</span>
+                            <span class="event-section">@_serendipityEvent.SectionName</span>
+                        </div>
+                        <h3 class="event-title">@_serendipityEvent.Title</h3>
+                        <p class="event-desc">@Truncate(_serendipityEvent.Description ?? "", 120)</p>
+                        <div class="event-footer">
+                            <span class="event-articles">@_serendipityEvent.ArticleCount art.</span>
+                            <span class="event-impact">@_serendipityEvent.ImpactScore.ToString("F0")</span>
+                        </div>
+                    </div>
+                }
                 @foreach (var ev in FilteredEvents)
                 {
                     <div class="event-card priority-@ev.Priority.ToLower()" @onclick="() => OpenEvent(ev)">
@@ -484,6 +499,16 @@
                                                     <div class="em-art-meta">
                                                         <i class="fa fa-rss-square" style="color:var(--accent);font-size:10px"></i>
                                                         <span>@art.SourceName</span>
+                                                        @if (art.SourceCredibility > 0)
+                                                        {
+                                                            <span class="src-trust src-trust-@GetTrustLevel(art.SourceCredibility)" title="Credibilidad: @art.SourceCredibility/100">
+                                                                @GetTrustLevel(art.SourceCredibility)
+                                                            </span>
+                                                        }
+                                                        @if (!string.IsNullOrEmpty(art.SourceBias) && art.SourceBias != "Unknown")
+                                                        {
+                                                            <span class="src-bias" title="Orientación editorial">@FormatBias(art.SourceBias)</span>
+                                                        }
                                                         <span>@art.PublishedAt.ToString("dd/MM/yyyy HH:mm")</span>
                                                     </div>
                                                     <div class="em-ai-label">
@@ -774,6 +799,7 @@
     private List<StoryThreadItem> _storyThreads = [];
     private EventBriefing? _eventBriefing;
     private ANews.Domain.Entities.StoryThread? _selectedEventThread;
+    private EventItem? _serendipityEvent;
 
     protected override async Task OnInitializedAsync()
     {
@@ -789,6 +815,9 @@
             .ToListAsync();
 
         await LoadEventsAsync();
+
+        // Serendipity: pick a high-impact event from a section the user doesn't follow
+        PickSerendipityEvent();
 
         // Load morning brief for today
         var today = DateTime.UtcNow.Date;
@@ -1108,10 +1137,13 @@
         _generatingEnSummary.Clear();
 
         SelectedEventArticles = await Ctx.NewsArticles
+            .Include(a => a.Source)
             .Where(a => a.NewsEventId == ev.Id && !a.IsDeleted)
             .OrderByDescending(a => a.PublishedAt)
             .Select(a => new ArticleItem(a.Id, a.Title, a.SourceName, a.SourceUrl,
-                a.Relevance, a.ArticleType.ToString(), a.Summary, a.PublishedAt))
+                a.Relevance, a.ArticleType.ToString(), a.Summary, a.PublishedAt,
+                a.Source != null ? a.Source.CredibilityScore : 0,
+                a.Source != null ? a.Source.Bias.ToString() : null))
             .ToListAsync();
 
         _articlesByDay = SelectedEventArticles
@@ -1203,9 +1235,52 @@
         int? StoryThreadId = null, int SourceDiversity = 0);
     record MoonArticle(int Id, string Title, string SourceName);
     record AlertItem(int Id, string Title);
-    record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt);
+    record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt,
+        int SourceCredibility = 0, string? SourceBias = null);
     record RelatedEventItem(int Id, string Title, string Priority);
     record StoryThreadItem(int Id, string Title, string Status, int EventCount, decimal MaxImpactScore);
+
+    private void PickSerendipityEvent()
+    {
+        if (!UserModules.Any() || Events.Count < 10) { _serendipityEvent = null; return; }
+
+        // Get sections the user follows via module keywords
+        var userKeywords = UserModules.SelectMany(m => m.Keywords).Select(k => k.ToLowerInvariant()).ToHashSet();
+
+        // Find high-impact events that DON'T match user keywords
+        var candidates = Events
+            .Where(e => e.ImpactScore >= 60 && !userKeywords.Any(kw =>
+                (e.Title?.ToLowerInvariant().Contains(kw) ?? false) ||
+                (e.Description?.ToLowerInvariant().Contains(kw) ?? false)))
+            .OrderByDescending(e => e.ImpactScore)
+            .Take(5)
+            .ToList();
+
+        // Pick a random one from top 5 so it changes each session
+        if (candidates.Count > 0)
+            _serendipityEvent = candidates[Random.Shared.Next(candidates.Count)];
+        else
+            _serendipityEvent = null;
+    }
+
+    private static string GetTrustLevel(int score) => score switch
+    {
+        >= 80 => "Alta",
+        >= 60 => "Media",
+        >= 40 => "Baja",
+        _ => "?"
+    };
+
+    private static string FormatBias(string bias) => bias switch
+    {
+        "Left" => "Izq",
+        "CenterLeft" => "C-Izq",
+        "Center" => "Centro",
+        "CenterRight" => "C-Der",
+        "Right" => "Der",
+        "State" => "Estatal",
+        _ => bias
+    };
 
     private static string FormatBriefText(string text)
     {

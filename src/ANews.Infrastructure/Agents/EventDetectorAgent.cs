@@ -527,6 +527,13 @@ public class EventDetectorAgent : BaseAgent
         foreach (var article in cluster.Articles)
             article.NewsEventId = newsEvent.Id;
 
+        // Update cross-reference and source diversity metrics
+        var allArticles = await ctx.NewsArticles
+            .Where(a => a.NewsEventId == newsEvent.Id && !a.IsDeleted)
+            .ToListAsync(ct);
+        newsEvent.CrossReferenceCount = allArticles.Count;
+        newsEvent.SourceDiversity = allArticles.Select(a => a.SourceName).Distinct().Count();
+
         await ctx.SaveChangesAsync(ct);
     }
 

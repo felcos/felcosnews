@@ -2560,3 +2560,39 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .story-tl-card p { margin: 0 0 8px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 .story-tl-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); }
 .story-tl-meta i { margin-right: 3px; }
+
+/* ============================================
+   SOURCE TRUST BADGES
+   ============================================ */
+.src-trust {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
+}
+.src-trust-Alta { background: rgba(0,255,136,0.15); color: var(--accent-green, #00ff88); }
+.src-trust-Media { background: rgba(74,144,226,0.15); color: var(--accent); }
+.src-trust-Baja { background: rgba(255,140,66,0.15); color: #ff8c42; }
+.src-trust-\? { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+/* Serendipity card */
+.event-card-serendipity {
+  border: 1px solid rgba(255,200,0,0.25) !important;
+  background: linear-gradient(135deg, rgba(255,200,0,0.06), rgba(255,140,66,0.04)) !important;
+}
+.serendipity-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffcc00;
+  letter-spacing: 0.5px;
+}
+.serendipity-badge i { margin-right: 3px; }
+
+.src-bias {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}

@@ -50,7 +50,8 @@ public enum AgentType
     ArticleSummarizer,
     DigestSender,
     ThreadWeaver,
-    BriefingGenerator
+    BriefingGenerator,
+    SourceAnalyzer
 }
 
 public enum AgentStatus

@@ -16,6 +16,7 @@
 @inject ANews.Infrastructure.Agents.SourceDiscoveryAgent SourceDiscoveryAgent
 @inject ANews.Infrastructure.Agents.ThreadWeaverAgent ThreadWeaverAgent
 @inject ANews.Infrastructure.Agents.BriefingGeneratorAgent BriefingGeneratorAgent
+@inject ANews.Infrastructure.Agents.SourceAnalyzerAgent SourceAnalyzerAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
 @using ANews.Domain.Entities
@@ -724,6 +725,7 @@
             new("SourceDiscoveryAgent",         "Descubrir Fuentes",    SourceDiscoveryAgent),
             new("ThreadWeaverAgent",            "Tejer Hilos Narrat.",  ThreadWeaverAgent),
             new("BriefingGeneratorAgent",       "Generar Briefings",    BriefingGeneratorAgent),
+            new("SourceAnalyzerAgent",          "Analizar Fuentes",     SourceAnalyzerAgent),
         ];
     }
 

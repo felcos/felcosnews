@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.AddSingleton<SourceDiscoveryAgent>();
         services.AddSingleton<ThreadWeaverAgent>();
         services.AddSingleton<BriefingGeneratorAgent>();
+        services.AddSingleton<SourceAnalyzerAgent>();
         services.AddHostedService(sp => sp.GetRequiredService<NewsScannerAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<EventDetectorAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<AlertGeneratorAgent>());
@@ -75,6 +76,7 @@ public static class DependencyInjection
         services.AddHostedService(sp => sp.GetRequiredService<SourceDiscoveryAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<ThreadWeaverAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<BriefingGeneratorAgent>());
+        services.AddHostedService(sp => sp.GetRequiredService<SourceAnalyzerAgent>());
 
         return services;
     }

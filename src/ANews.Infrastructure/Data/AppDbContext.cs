@@ -45,6 +45,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<StoryThread> StoryThreads => Set<StoryThread>();
     public DbSet<EventBriefing> EventBriefings => Set<EventBriefing>();
     public DbSet<MorningBrief> MorningBriefs => Set<MorningBrief>();
+    public DbSet<ReaderProfile> ReaderProfiles => Set<ReaderProfile>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -160,6 +161,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         builder.Entity<NewsSource>(e =>
         {
             e.Property(s => s.FactDensityAvg).HasPrecision(5, 2);
+        });
+
+        builder.Entity<ReaderProfile>(e =>
+        {
+            e.HasIndex(r => r.UserId).IsUnique();
+            e.Property(r => r.TopInterests).HasColumnType("jsonb");
+            e.Property(r => r.AvoidTopics).HasColumnType("jsonb");
         });
 
         // Global query filter for soft delete
