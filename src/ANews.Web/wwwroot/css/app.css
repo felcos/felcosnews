@@ -2399,65 +2399,31 @@ textarea.form-input { resize: vertical; font-family: inherit; }
    STORY THREADS BAR
    ============================================ */
 .story-threads-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  overflow: hidden;
+  display: flex; align-items: center; gap: 10px; padding: 6px 16px;
+  background: rgba(74,144,226,0.06); border-bottom: 1px solid rgba(74,144,226,0.15);
+  overflow-x: auto; scrollbar-width: thin;
 }
 .st-label {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 1px;
-  white-space: nowrap;
+  font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
 }
-.st-scroll {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  flex: 1;
-}
-.st-scroll::-webkit-scrollbar { height: 4px; }
-.st-scroll::-webkit-scrollbar-track { background: transparent; }
-.st-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
-.st-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+.st-scroll { display: flex; gap: 6px; overflow-x: auto; }
 .st-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 20px;
-  padding: 4px 12px 4px 8px;
-  font-size: 12px;
-  color: var(--text);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: all 0.2s;
+  display: flex; align-items: center; gap: 5px; padding: 3px 10px;
+  background: rgba(74,144,226,0.08); border: 1px solid rgba(74,144,226,0.2);
+  border-radius: 16px; white-space: nowrap; font-size: 12px;
+  transition: all 0.2s; color: var(--text); text-decoration: none;
 }
-.st-chip:hover { background: rgba(74,144,226,0.12); border-color: var(--accent); }
+.st-chip:hover { background: rgba(74,144,226,0.15); border-color: var(--accent); }
 .st-chip.status-developing { border-color: rgba(0,255,136,0.3); }
 .st-events {
-  background: var(--accent);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-weight: 700; color: var(--accent); font-size: 11px;
+  background: rgba(74,144,226,0.15); padding: 1px 5px; border-radius: 8px;
 }
 .st-title { font-weight: 500; }
 .st-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-green, #00ff88);
-  animation: pulse-dot-anim 1.5s infinite;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-green, #00ff88); animation: pulse-dot-anim 1.5s infinite;
 }
 
 /* Desktop/Mobile visibility helpers */
