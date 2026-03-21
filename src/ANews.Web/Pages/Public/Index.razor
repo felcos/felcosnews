@@ -473,6 +473,49 @@
         }
         else if (ViewMode == "grid")
         {
+            @if (SelectedSection.StartsWith("module:") && _selectedModuleForView != null)
+            {
+                <div class="module-view-header">
+                    <div class="module-view-info">
+                        <span class="module-view-icon" style="background:@_selectedModuleForView.Color">@_selectedModuleForView.Name[0]</span>
+                        <div>
+                            <h3 class="module-view-name">@_selectedModuleForView.Name</h3>
+                            <span class="module-view-meta">
+                                @if (_selectedModuleForView.HasPrompt)
+                                {
+                                    <text>Modulo con IA · @_moduleReports.Count(r => r.ModuleName == _selectedModuleForView.Name) informes · @FilteredEvents.Count eventos</text>
+                                }
+                                else
+                                {
+                                    <text>@_selectedModuleForView.Keywords.Count keywords · @FilteredEvents.Count eventos</text>
+                                }
+                            </span>
+                        </div>
+                    </div>
+                    <button class="btn-sm" @onclick="@(() => SelectSection("all"))"><i class="fa fa-times"></i> Quitar filtro</button>
+                </div>
+                @if (_selectedModuleForView.HasPrompt && _moduleReports.Any(r => r.ModuleName == _selectedModuleForView.Name))
+                {
+                    <div class="module-view-reports">
+                        @foreach (var r in _moduleReports.Where(r => r.ModuleName == _selectedModuleForView.Name))
+                        {
+                            <div class="module-report-card" @onclick="@(() => OpenReport(r.Id))">
+                                <div class="module-report-title">@r.Title</div>
+                                <div class="module-report-summary">@Truncate(r.Summary ?? "", 100)</div>
+                                <div class="module-report-footer">@r.EventsAnalyzed eventos · @r.CreatedAt.ToString("dd MMM")</div>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_selectedModuleForView.HasPrompt && !FilteredEvents.Any() && !_moduleReports.Any(r => r.ModuleName == _selectedModuleForView.Name))
+                {
+                    <div class="empty-universe" style="padding:40px">
+                        <i class="fa fa-robot" style="font-size:32px;opacity:0.4;margin-bottom:12px"></i>
+                        <h3>Modulo pendiente de generar informes</h3>
+                        <p>La IA generara el primer informe automaticamente. Los eventos aparecerán aquí cuando se generen.</p>
+                    </div>
+                }
+            }
             <div class="events-grid">
                 @if (_serendipityEvent != null && SelectedSection == "all")
                 {
@@ -1081,6 +1124,8 @@
     // ── Module reports ──────────────────────────────────────────────────
     private List<ReportCard> _moduleReports = [];
     private ReportCard? _selectedReport;
+    private HashSet<int> _moduleReportEventIds = [];
+    private ModuleFilterItem? _selectedModuleForView;
 
     // ── Workspace (geo-focus) ──────────────────────────────────────────
     private bool _showWorkspacePicker = false;
@@ -1133,7 +1178,7 @@
         await SelectWorkspace(string.Join(" + ", geos), geos);
     }
 
-    record ModuleFilterItem(int Id, string Name, string Color, List<string> Keywords);
+    record ModuleFilterItem(int Id, string Name, string Color, List<string> Keywords, bool HasPrompt);
 
     private List<EventItem> FilteredEvents
     {
@@ -1146,12 +1191,21 @@
                 var mod = UserModules.FirstOrDefault(m => m.Id == modId);
                 if (mod != null)
                 {
-                    var kws = mod.Keywords.Select(k => k.ToLowerInvariant()).ToList();
-                    q = Events.Where(e =>
+                    if (mod.HasPrompt && _moduleReportEventIds.Count > 0)
                     {
-                        var txt = $"{e.Title} {e.Description} {string.Join(" ", e.Tags)}".ToLowerInvariant();
-                        return kws.Any(k => txt.Contains(k));
-                    });
+                        // Modulo con prompt: mostrar eventos referenciados en sus informes
+                        q = Events.Where(e => _moduleReportEventIds.Contains(e.Id));
+                    }
+                    else if (mod.Keywords.Count > 0)
+                    {
+                        // Modulo con keywords legacy: filtrar por coincidencia de texto
+                        var kws = mod.Keywords.Select(k => k.ToLowerInvariant()).ToList();
+                        q = Events.Where(e =>
+                        {
+                            var txt = $"{e.Title} {e.Description} {string.Join(" ", e.Tags)}".ToLowerInvariant();
+                            return kws.Any(k => txt.Contains(k));
+                        });
+                    }
                 }
             }
             else if (SelectedSection != "all")
@@ -1514,7 +1568,8 @@
 
             UserModules = modules.Select(m => new ModuleFilterItem(
                 m.Id, m.Name, m.Color ?? "#4a90e2",
-                m.Keywords.Select(k => k.Keyword).ToList()
+                m.Keywords.Select(k => k.Keyword).ToList(),
+                !string.IsNullOrWhiteSpace(m.Prompt)
             )).ToList();
 
             var allKeywords = modules.SelectMany(m => m.Keywords).Select(k => k.Keyword).Distinct().ToList();
@@ -1624,6 +1679,31 @@
             await _hub.SendAsync("JoinSection", slug);
         }
         SelectedSection = slug;
+
+        // Si es un modulo, preparar la vista
+        if (slug.StartsWith("module:") && int.TryParse(slug[7..], out var selectedModId))
+        {
+            var mod = UserModules.FirstOrDefault(m => m.Id == selectedModId);
+            _selectedModuleForView = mod;
+            if (mod != null && mod.HasPrompt)
+            {
+                try
+                {
+                    _moduleReportEventIds = (await Ctx.ModuleReports
+                        .Where(r => r.UserModuleId == selectedModId && !r.IsDeleted)
+                        .SelectMany(r => r.SourceEventIds)
+                        .Distinct()
+                        .ToListAsync())
+                        .ToHashSet();
+                }
+                catch { _moduleReportEventIds = []; }
+            }
+        }
+        else
+        {
+            _moduleReportEventIds = [];
+            _selectedModuleForView = null;
+        }
 
         var sectionId = Sections.FirstOrDefault(s => s.Slug == slug)?.Id;
         await TrackActivity(ActivityType.SectionFiltered, sectionId: sectionId, metadata: slug);
