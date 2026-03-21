@@ -724,6 +724,7 @@
     private bool IsConnected => _adminHub?.State == HubConnectionState.Connected;
     private bool IsLoading;
     private bool _dataReady;
+    private TaskCompletionSource _initTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private string AgentFilter = "all";
     private string CostPeriod = "today";
     private string CostPeriodLabel => CostPeriod switch { "week" => "7 días", "month" => "Mes", _ => "Hoy" };
@@ -809,6 +810,10 @@
         catch (Exception ex)
         {
             LiveLogs.Add(new("System", "Error", $"Error cargando datos: {ex.Message}", DateTime.Now));
+        }
+        finally
+        {
+            _initTcs.TrySetResult();
         }
     }
 
@@ -1029,19 +1034,25 @@
         try { await _adminHub.StartAsync(); } catch { }
         try { await _agentHub.StartAsync(); } catch { }
 
-        // Auto-refresh KPIs every 30s
+        // Auto-refresh KPIs every 30s — usar InvokeAsync para serializar acceso al DbContext
         _refreshTimer = new System.Threading.Timer(async _ =>
         {
             if (_cts.IsCancellationRequested) return;
             try
             {
-                _now = DateTime.Now;
-                await LoadInitialDataAsync();
-                _kpiFlash = true;
-                await InvokeAsync(StateHasChanged);
+                await InvokeAsync(async () =>
+                {
+                    _now = DateTime.Now;
+                    await LoadInitialDataAsync();
+                    _kpiFlash = true;
+                    StateHasChanged();
+                });
                 await Task.Delay(500, _cts.Token);
-                _kpiFlash = false;
-                await InvokeAsync(StateHasChanged);
+                await InvokeAsync(() =>
+                {
+                    _kpiFlash = false;
+                    StateHasChanged();
+                });
             }
             catch (ObjectDisposedException) { }
             catch (OperationCanceledException) { }
@@ -1402,6 +1413,8 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+        // Esperar a que OnInitializedAsync termine antes de usar Ctx
+        await _initTcs.Task;
         await SetupHubsAsync();
         try { await JS.InvokeVoidAsync("adminRenderCostChart", ProviderCosts); } catch { }
     }
