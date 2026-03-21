@@ -262,58 +262,103 @@ public static class PublicApiEndpoints
 
         // ── Full-text Search ─────────────────────────────────────────────────
 
-        app.MapGet("/api/v1/search", async (string? q, int? limit, AppDbContext ctx) =>
+        app.MapGet("/api/v1/search", async (string? q, int? limit, string? mode, AppDbContext ctx) =>
         {
             if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
                 return Results.Json(new { events = Array.Empty<object>(), articles = Array.Empty<object>() });
 
             var take = Math.Clamp(limit ?? 20, 1, 20);
-            var pattern = $"%{q.Trim()}%";
+            var term = q.Trim();
             var halfTake = Math.Max(take / 2, 1);
+            var useFts = mode != "like"; // default: full-text search
 
-            var events = await ctx.NewsEvents
-                .Include(e => e.Section)
-                .Where(e => !e.IsDeleted && e.IsActive
-                    && (EF.Functions.ILike(e.Title, pattern)
-                        || EF.Functions.ILike(e.Description ?? "", pattern)))
-                .OrderByDescending(e => e.CreatedAt)
-                .Take(halfTake)
-                .Select(e => new
-                {
-                    type = "event",
-                    e.Id,
-                    title = e.Title,
-                    description = e.Description != null
-                        ? (e.Description.Length > 120 ? e.Description.Substring(0, 120) + "…" : e.Description)
-                        : "",
-                    section = e.Section != null ? e.Section.Name : "",
-                    priority = e.Priority.ToString(),
-                    date = e.CreatedAt
-                })
-                .ToListAsync();
+            // Build tsquery: split words, join with &
+            var tsQuery = string.Join(" & ", term.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(w => w.Replace("'", "").Replace("\\", "")));
 
-            var articles = await ctx.NewsArticles
-                .Include(a => a.Event).ThenInclude(ev => ev.Section)
-                .Where(a => !a.IsDeleted
-                    && (EF.Functions.ILike(a.Title, pattern)
-                        || EF.Functions.ILike(a.Summary ?? "", pattern)))
-                .OrderByDescending(a => a.PublishedAt)
-                .Take(take - events.Count)
-                .Select(a => new
-                {
-                    type = "article",
-                    a.Id,
-                    title = a.Title,
-                    description = a.Summary != null
-                        ? (a.Summary.Length > 120 ? a.Summary.Substring(0, 120) + "…" : a.Summary)
-                        : "",
-                    section = a.Event != null && a.Event.Section != null ? a.Event.Section.Name : "",
-                    priority = a.Event != null ? a.Event.Priority.ToString() : "Medium",
-                    date = a.PublishedAt
-                })
-                .ToListAsync();
+            List<object> events;
+            if (useFts && !string.IsNullOrEmpty(tsQuery))
+            {
+                events = await ctx.NewsEvents
+                    .Include(e => e.Section)
+                    .Where(e => !e.IsDeleted && e.IsActive
+                        && EF.Functions.ToTsVector("spanish", e.Title + " " + (e.Description ?? ""))
+                            .Matches(EF.Functions.PlainToTsQuery("spanish", term)))
+                    .OrderByDescending(e => e.CreatedAt)
+                    .Take(halfTake)
+                    .Select(e => new
+                    {
+                        type = "event", e.Id, title = e.Title,
+                        description = e.Description != null
+                            ? (e.Description.Length > 120 ? e.Description.Substring(0, 120) + "…" : e.Description) : "",
+                        section = e.Section != null ? e.Section.Name : "",
+                        priority = e.Priority.ToString(), date = e.CreatedAt
+                    })
+                    .ToListAsync<object>();
+            }
+            else
+            {
+                var pattern = $"%{term}%";
+                events = await ctx.NewsEvents
+                    .Include(e => e.Section)
+                    .Where(e => !e.IsDeleted && e.IsActive
+                        && (EF.Functions.ILike(e.Title, pattern) || EF.Functions.ILike(e.Description ?? "", pattern)))
+                    .OrderByDescending(e => e.CreatedAt)
+                    .Take(halfTake)
+                    .Select(e => new
+                    {
+                        type = "event", e.Id, title = e.Title,
+                        description = e.Description != null
+                            ? (e.Description.Length > 120 ? e.Description.Substring(0, 120) + "…" : e.Description) : "",
+                        section = e.Section != null ? e.Section.Name : "",
+                        priority = e.Priority.ToString(), date = e.CreatedAt
+                    })
+                    .ToListAsync<object>();
+            }
 
-            return Results.Json(new { events, articles });
+            List<object> articles;
+            if (useFts && !string.IsNullOrEmpty(tsQuery))
+            {
+                articles = await ctx.NewsArticles
+                    .Include(a => a.Event).ThenInclude(ev => ev.Section)
+                    .Where(a => !a.IsDeleted
+                        && EF.Functions.ToTsVector("spanish", a.Title + " " + (a.Summary ?? ""))
+                            .Matches(EF.Functions.PlainToTsQuery("spanish", term)))
+                    .OrderByDescending(a => a.PublishedAt)
+                    .Take(take - events.Count)
+                    .Select(a => new
+                    {
+                        type = "article", a.Id, title = a.Title,
+                        description = a.Summary != null
+                            ? (a.Summary.Length > 120 ? a.Summary.Substring(0, 120) + "…" : a.Summary) : "",
+                        section = a.Event != null && a.Event.Section != null ? a.Event.Section.Name : "",
+                        priority = a.Event != null ? a.Event.Priority.ToString() : "Medium",
+                        date = a.PublishedAt
+                    })
+                    .ToListAsync<object>();
+            }
+            else
+            {
+                var pattern = $"%{term}%";
+                articles = await ctx.NewsArticles
+                    .Include(a => a.Event).ThenInclude(ev => ev.Section)
+                    .Where(a => !a.IsDeleted
+                        && (EF.Functions.ILike(a.Title, pattern) || EF.Functions.ILike(a.Summary ?? "", pattern)))
+                    .OrderByDescending(a => a.PublishedAt)
+                    .Take(take - events.Count)
+                    .Select(a => new
+                    {
+                        type = "article", a.Id, title = a.Title,
+                        description = a.Summary != null
+                            ? (a.Summary.Length > 120 ? a.Summary.Substring(0, 120) + "…" : a.Summary) : "",
+                        section = a.Event != null && a.Event.Section != null ? a.Event.Section.Name : "",
+                        priority = a.Event != null ? a.Event.Priority.ToString() : "Medium",
+                        date = a.PublishedAt
+                    })
+                    .ToListAsync<object>();
+            }
+
+            return Results.Json(new { events, articles, mode = useFts ? "fulltext" : "like" });
         }).AllowAnonymous().RequireRateLimiting("api");
 
         // ── Activity Tracking ────────────────────────────────────────────────
@@ -370,6 +415,106 @@ public static class PublicApiEndpoints
             await ctx.SaveChangesAsync();
             return Results.Ok(new { tracked = true });
         }).RequireAuthorization().RequireRateLimiting("api");
+
+        // ── Webhooks ────────────────────────────────────────────────────────
+
+        app.MapGet("/api/webhooks", async (HttpContext http, AppDbContext ctx,
+            UserManager<ApplicationUser> userMgr) =>
+        {
+            var user = await userMgr.GetUserAsync(http.User);
+            if (user == null) return Results.Unauthorized();
+            var hooks = await ctx.WebhookSubscriptions
+                .Where(w => w.UserId == user.Id && !w.IsDeleted)
+                .OrderByDescending(w => w.CreatedAt)
+                .Select(w => new { w.Id, w.Url, w.EventTypes, w.IsActive, w.FailCount, w.LastTriggeredAt, w.LastError })
+                .ToListAsync();
+            return Results.Ok(hooks);
+        }).RequireAuthorization().RequireRateLimiting("api");
+
+        app.MapPost("/api/webhooks", async (HttpContext http, AppDbContext ctx,
+            UserManager<ApplicationUser> userMgr) =>
+        {
+            var user = await userMgr.GetUserAsync(http.User);
+            if (user == null) return Results.Unauthorized();
+
+            WebhookCreateRequest? req;
+            try { req = await http.Request.ReadFromJsonAsync<WebhookCreateRequest>(); }
+            catch { return Results.BadRequest(); }
+            if (req == null || string.IsNullOrWhiteSpace(req.Url)) return Results.BadRequest(new { error = "URL is required" });
+            if (!Uri.TryCreate(req.Url, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
+                return Results.BadRequest(new { error = "Invalid URL" });
+
+            var secret = Guid.NewGuid().ToString("N");
+            var hook = new WebhookSubscription
+            {
+                UserId = user.Id,
+                Url = req.Url.Trim(),
+                Secret = secret,
+                EventTypes = string.IsNullOrWhiteSpace(req.EventTypes) ? "high_priority" : req.EventTypes.Trim(),
+                IsActive = true
+            };
+            ctx.WebhookSubscriptions.Add(hook);
+            await ctx.SaveChangesAsync();
+            return Results.Ok(new { hook.Id, hook.Url, hook.EventTypes, hook.Secret, hook.IsActive });
+        }).RequireAuthorization().RequireRateLimiting("api");
+
+        app.MapDelete("/api/webhooks/{id:int}", async (int id, HttpContext http, AppDbContext ctx,
+            UserManager<ApplicationUser> userMgr) =>
+        {
+            var user = await userMgr.GetUserAsync(http.User);
+            if (user == null) return Results.Unauthorized();
+            var hook = await ctx.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == user.Id);
+            if (hook == null) return Results.NotFound();
+            hook.IsDeleted = true;
+            await ctx.SaveChangesAsync();
+            return Results.Ok(new { deleted = true });
+        }).RequireAuthorization().RequireRateLimiting("api");
+
+        app.MapPost("/api/webhooks/{id:int}/test", async (int id, HttpContext http, AppDbContext ctx,
+            UserManager<ApplicationUser> userMgr, IHttpClientFactory httpFactory) =>
+        {
+            var user = await userMgr.GetUserAsync(http.User);
+            if (user == null) return Results.Unauthorized();
+            var hook = await ctx.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == user.Id && !w.IsDeleted);
+            if (hook == null) return Results.NotFound();
+
+            var payload = new { type = "test", message = "Webhook test from AgenteNews", timestamp = DateTime.UtcNow };
+            try
+            {
+                var client = httpFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(10);
+                var json = JsonSerializer.Serialize(payload);
+                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                if (!string.IsNullOrEmpty(hook.Secret))
+                {
+                    var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(hook.Secret));
+                    var sig = Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json))).ToLower();
+                    content.Headers.Add("X-Webhook-Signature", sig);
+                }
+                var response = await client.PostAsync(hook.Url, content);
+                hook.LastTriggeredAt = DateTime.UtcNow;
+                if (!response.IsSuccessStatusCode)
+                {
+                    hook.LastError = $"HTTP {(int)response.StatusCode}";
+                    hook.LastFailedAt = DateTime.UtcNow;
+                    hook.FailCount++;
+                }
+                else
+                {
+                    hook.LastError = null;
+                }
+                await ctx.SaveChangesAsync();
+                return Results.Ok(new { success = response.IsSuccessStatusCode, statusCode = (int)response.StatusCode });
+            }
+            catch (Exception ex)
+            {
+                hook.LastError = ex.Message;
+                hook.LastFailedAt = DateTime.UtcNow;
+                hook.FailCount++;
+                await ctx.SaveChangesAsync();
+                return Results.Ok(new { success = false, error = ex.Message });
+            }
+        }).RequireAuthorization().RequireRateLimiting("api");
     }
 }
 
@@ -381,4 +526,10 @@ public record ActivityTrackRequest
     public int? ArticleId { get; init; }
     public int? ThreadId { get; init; }
     public string? Metadata { get; init; }
+}
+
+public record WebhookCreateRequest
+{
+    public required string Url { get; init; }
+    public string? EventTypes { get; init; }
 }

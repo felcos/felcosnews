@@ -95,6 +95,17 @@
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
 
+            @if (_isAuthenticated)
+            {
+                <a href="/user/notifications" class="notif-bell" title="Notificaciones">
+                    <i class="fa fa-bell"></i>
+                    @if (_unreadAlerts > 0)
+                    {
+                        <span class="notif-badge">@(_unreadAlerts > 9 ? "9+" : _unreadAlerts.ToString())</span>
+                    }
+                </a>
+            }
+
             <!-- Theme selector -->
             <div class="theme-selector" @onclick:stopPropagation>
                 <button class="theme-planet-trigger" @onclick="ToggleThemeMenu" title="Tema"
@@ -246,9 +257,33 @@
     <!-- Active Story Threads -->
     @if (_storyThreads.Any())
     {
+        <!-- Hilos narrativos: dropdown en desktop, scroll horizontal en movil -->
         <div class="story-threads-bar">
             <div class="st-label"><i class="fa fa-stream"></i> HILOS NARRATIVOS</div>
-            <div class="st-scroll">
+
+            <!-- Desktop: dropdown -->
+            <div class="st-dropdown-wrap desktop-only">
+                <button class="st-dropdown-trigger" @onclick="@(() => _showThreadDropdown = !_showThreadDropdown)" @onclick:stopPropagation>
+                    <span>@(_storyThreads.Count) hilos activos</span>
+                    <i class="fa fa-chevron-down"></i>
+                </button>
+                @if (_showThreadDropdown)
+                {
+                    <div class="st-dropdown-panel" @onclick:stopPropagation>
+                        @foreach (var thread in _storyThreads)
+                        {
+                            <a href="/story/@thread.Id" class="st-dropdown-item status-@thread.Status.ToLower()">
+                                <span class="st-events">@thread.EventCount</span>
+                                <span class="st-title">@thread.Title</span>
+                                @if (thread.Status == "Developing") { <span class="st-pulse"></span> }
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Movil: scroll horizontal (mantiene el comportamiento tactil) -->
+            <div class="st-scroll mobile-only">
                 @foreach (var thread in _storyThreads)
                 {
                     <a href="/story/@thread.Id" class="st-chip status-@thread.Status.ToLower()">
@@ -258,6 +293,46 @@
                     </a>
                 }
             </div>
+        </div>
+    }
+
+    <!-- Trending bar -->
+    @if (_trendingEvents.Any())
+    {
+        <div class="trending-bar">
+            <div class="trending-label"><i class="fa fa-fire"></i> TRENDING</div>
+            <div class="trending-items">
+                @foreach (var t in _trendingEvents)
+                {
+                    <button class="trending-chip" @onclick="@(() => OpenEventById(t.Id))">
+                        <span class="trending-count">+@t.RecentArticles</span>
+                        <span class="trending-title">@Truncate(t.Title, 40)</span>
+                        <span class="trending-section">@t.SectionName</span>
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Panel de informes de modulos (solo usuarios autenticados con informes) -->
+    @if (_moduleReports.Any())
+    {
+        <div class="reports-bar">
+            <div class="reports-label"><i class="fa fa-file-alt"></i> MIS INFORMES</div>
+            <div class="reports-scroll">
+                @foreach (var r in _moduleReports)
+                {
+                    <button class="report-chip" style="--rc:@r.ModuleColor"
+                            @onclick="@(() => OpenReport(r.Id))">
+                        <span class="report-module" style="background:@r.ModuleColor">@r.ModuleName[0]</span>
+                        <span class="report-title">@Truncate(r.Title, 35)</span>
+                        <span class="report-meta">@r.EventsAnalyzed ev · @r.CreatedAt.ToString("dd MMM")</span>
+                    </button>
+                }
+            </div>
+            <a href="/user/modules" class="reports-more" title="Ver todos los informes">
+                <i class="fa fa-arrow-right"></i>
+            </a>
         </div>
     }
 
@@ -560,6 +635,53 @@
                         </a>
                     }
 
+                    @* Source comparison *@
+                    @{
+                        var sourceGroups = SelectedEventArticles
+                            .GroupBy(a => a.SourceName)
+                            .OrderByDescending(g => g.Count())
+                            .ToList();
+                    }
+                    @if (sourceGroups.Count > 1)
+                    {
+                        <div class="em-source-compare">
+                            <button class="em-compare-toggle" @onclick="@(() => _showSourceCompare = !_showSourceCompare)">
+                                <i class="fa @(_showSourceCompare ? "fa-chevron-up" : "fa-balance-scale")"></i>
+                                Comparar @sourceGroups.Count fuentes
+                            </button>
+                            @if (_showSourceCompare)
+                            {
+                                <div class="em-compare-grid">
+                                    @foreach (var sg in sourceGroups.Take(6))
+                                    {
+                                        var firstArt = sg.OrderByDescending(a => a.PublishedAt).First();
+                                        var bias = firstArt.SourceBias ?? "Unknown";
+                                        var biasColor = bias switch {
+                                            "Left" => "#4ecdc4",
+                                            "Right" => "#ff6b6b",
+                                            "Center" => "var(--accent-green)",
+                                            "State" => "#ffd93d",
+                                            _ => "var(--text-muted)"
+                                        };
+                                        <div class="em-compare-card">
+                                            <div class="em-compare-source">
+                                                <strong>@sg.Key</strong>
+                                                <span style="font-size:10px;color:@biasColor;margin-left:4px">@bias</span>
+                                            </div>
+                                            <div class="em-compare-count">@sg.Count() articulo@(sg.Count() != 1 ? "s" : "")</div>
+                                            <div class="em-compare-title" title="@firstArt.Title">@Truncate(firstArt.Title, 80)</div>
+                                            @if (!string.IsNullOrEmpty(firstArt.Summary))
+                                            {
+                                                <div class="em-compare-summary">@Truncate(firstArt.Summary, 120)</div>
+                                            }
+                                            <div class="em-compare-time">@firstArt.PublishedAt.ToString("dd/MM HH:mm")</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
                     <div class="em-timeline-header">
                         <span><i class="fa fa-stream"></i> CRONOLOGÍA</span>
                         <div class="lang-toggle" title="Idioma de resúmenes">
@@ -805,6 +927,36 @@
     </div>
 }
 
+<!-- Modal de informe de modulo -->
+@if (_selectedReport != null)
+{
+    <div class="modal-overlay" @onclick="@(() => _selectedReport = null)">
+        <div class="modal-box modal-large" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3 style="display:flex;align-items:center;gap:8px">
+                    <span class="report-module-badge" style="background:@_selectedReport.ModuleColor">@_selectedReport.ModuleName[0]</span>
+                    @_selectedReport.Title
+                </h3>
+                <button @onclick="@(() => _selectedReport = null)"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="report-meta-bar">
+                    <span><i class="fa fa-layer-group"></i> @_selectedReport.ModuleName</span>
+                    <span><i class="fa fa-chart-bar"></i> @_selectedReport.EventsAnalyzed eventos analizados</span>
+                    <span><i class="fa fa-calendar"></i> @_selectedReport.CreatedAt.ToString("dd MMM yyyy HH:mm")</span>
+                </div>
+                <div class="report-content">
+                    @((MarkupString)FormatBriefText(_selectedReport.Content ?? "Sin contenido disponible."))
+                </div>
+            </div>
+            <div class="modal-footer">
+                <a href="/user/modules" class="btn-secondary"><i class="fa fa-layer-group"></i> Mis módulos</a>
+                <button class="btn-secondary" @onclick="@(() => _selectedReport = null)">Cerrar</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "eventId")]
     private int? AutoOpenEventId { get; set; }
@@ -821,6 +973,19 @@
     private List<SectionItem> Sections = [];
     private List<EventItem> Events = [];
     private List<ModuleFilterItem> UserModules = [];
+
+    // ── Auth / Notifications ──────────────────────────────────────────
+    private bool _isAuthenticated;
+    private int _unreadAlerts;
+
+    // ── Sync: evitar acceso concurrente a DbContext entre OnInitializedAsync y OnAfterRenderAsync ──
+    private TaskCompletionSource _initTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // ── Trending ──────────────────────────────────────────────────────
+    private List<TrendingItem> _trendingEvents = [];
+
+    // ── Source comparison ──────────────────────────────────────────────
+    private bool _showSourceCompare;
 
     // ── Quota limit modal ──────────────────────────────────────────────
     private bool _showQuotaModal = false;
@@ -909,6 +1074,13 @@
         _showFtSearch = false;
         _searchTimer?.Dispose();
     }
+
+    // ── Story threads dropdown ──────────────────────────────────────────
+    private bool _showThreadDropdown;
+
+    // ── Module reports ──────────────────────────────────────────────────
+    private List<ReportCard> _moduleReports = [];
+    private ReportCard? _selectedReport;
 
     // ── Workspace (geo-focus) ──────────────────────────────────────────
     private bool _showWorkspacePicker = false;
@@ -1022,7 +1194,9 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Sections = await Ctx.NewsSections
+        try
+        {
+            Sections = await Ctx.NewsSections
             .Where(s => s.IsPublic && !s.IsDeleted)
             .OrderBy(s => s.SortOrder)
             .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
@@ -1045,7 +1219,7 @@
             .FirstOrDefaultAsync();
 
         if (_morningBrief != null)
-            _ = TrackActivity(ActivityType.MorningBriefViewed);
+            await TrackActivity(ActivityType.MorningBriefViewed);
 
         // Load active story threads
         _storyThreads = await Ctx.StoryThreads
@@ -1054,6 +1228,22 @@
             .OrderByDescending(t => t.MaxImpactScore)
             .Take(10)
             .Select(t => new StoryThreadItem(t.Id, t.Title, t.Status.ToString(), t.EventCount, t.MaxImpactScore))
+            .ToListAsync();
+
+        // Load trending events (most articles in last 24h)
+        var last24h = DateTime.UtcNow.AddHours(-24);
+        _trendingEvents = await Ctx.NewsEvents
+            .Where(e => !e.IsDeleted && e.IsActive)
+            .Select(e => new {
+                e.Id, e.Title, e.Priority,
+                SectionName = e.Section.Name,
+                RecentArticles = e.Articles.Count(a => !a.IsDeleted && a.CreatedAt >= last24h),
+                TotalArticles = e.Articles.Count(a => !a.IsDeleted)
+            })
+            .Where(e => e.RecentArticles > 0)
+            .OrderByDescending(e => e.RecentArticles)
+            .Take(8)
+            .Select(e => new TrendingItem(e.Id, e.Title, e.Priority.ToString(), e.SectionName, e.RecentArticles, e.TotalArticles))
             .ToListAsync();
 
         _storyThreadsFull = await Ctx.StoryThreads
@@ -1068,7 +1258,33 @@
                 t.KeyActors, t.FirstEventDate, t.LastEventDate))
             .ToListAsync();
 
+        // Auth state + unread alerts
+        try
+        {
+            var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+            _isAuthenticated = auth.User.Identity?.IsAuthenticated ?? false;
+            if (_isAuthenticated)
+            {
+                var userName = auth.User.Identity?.Name;
+                if (!string.IsNullOrEmpty(userName))
+                {
+                    var userId = await Ctx.Users.Where(u => u.UserName == userName).Select(u => u.Id).FirstOrDefaultAsync();
+                    if (userId > 0)
+                    {
+                        _unreadAlerts = await Ctx.AlertTriggers
+                            .CountAsync(a => !a.IsAcknowledged && !a.IsDeleted);
+                    }
+                }
+            }
+        }
+        catch { }
+
         IsLoading = false;
+        }
+        finally
+        {
+            _initTcs.TrySetResult();
+        }
     }
 
     private int? _lastOpenedEventId;
@@ -1221,25 +1437,28 @@
     {
         if (firstRender)
         {
+            // JS interop seguro (no usa DbContext)
             try { _currentTheme = await JS.InvokeAsync<string>("themeManager.getTheme") ?? "dark"; } catch { }
 
-            // Load workspace from localStorage
-            try
-            {
-                var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "anews-workspace");
-                if (string.IsNullOrEmpty(saved))
-                {
-                    _showWorkspacePicker = true; // First visit — show picker
-                }
-                else if (saved != "Global")
-                {
-                    _workspaceName = saved;
-                    _geoFilter = saved.Split('+', StringSplitOptions.TrimEntries);
-                    // Reload events geo-aware now that filter is known
-                    await LoadEventsAsync();
-                }
-            }
+            // Leer workspace de localStorage (solo JS, sin BD)
+            string? savedWorkspace = null;
+            try { savedWorkspace = await JS.InvokeAsync<string?>("localStorage.getItem", "anews-workspace"); }
             catch { }
+
+            // Esperar a que OnInitializedAsync termine para evitar acceso concurrente al DbContext
+            await _initTcs.Task;
+
+            // Ahora es seguro usar Ctx
+            if (string.IsNullOrEmpty(savedWorkspace))
+            {
+                _showWorkspacePicker = true;
+            }
+            else if (savedWorkspace != "Global")
+            {
+                _workspaceName = savedWorkspace;
+                _geoFilter = savedWorkspace.Split('+', StringSplitOptions.TrimEntries);
+                await LoadEventsAsync();
+            }
 
             await SetupSignalRAsync();
 
@@ -1302,7 +1521,18 @@
             if (allKeywords.Count > 0)
                 try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKeywords); } catch { }
 
-            if (UserModules.Count > 0)
+            // Cargar ultimos informes de modulos del usuario
+            _moduleReports = await Ctx.ModuleReports
+                .Where(r => r.UserId == user.Id && !r.IsDeleted)
+                .OrderByDescending(r => r.CreatedAt)
+                .Take(10)
+                .Select(r => new ReportCard(
+                    r.Id, r.Title, r.Summary,
+                    r.Module.Name, r.Module.Color ?? "#4a90e2",
+                    r.EventsAnalyzed, r.CreatedAt, null))
+                .ToListAsync();
+
+            if (UserModules.Count > 0 || _moduleReports.Count > 0)
                 await InvokeAsync(StateHasChanged);
         }
         catch { }
@@ -1468,7 +1698,7 @@
             : null;
     }
 
-    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); StateHasChanged(); }
+    private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); _showSourceCompare = false; StateHasChanged(); }
 
     private void HandleModalKeydown(KeyboardEventArgs e)
     {
@@ -1538,11 +1768,14 @@
     record ArticleItem(int Id, string Title, string SourceName, string SourceUrl, decimal Relevance, string ArticleType, string? Summary, DateTime PublishedAt,
         int SourceCredibility = 0, string? SourceBias = null);
     record RelatedEventItem(int Id, string Title, string Priority);
+    record TrendingItem(int Id, string Title, string Priority, string SectionName, int RecentArticles, int TotalArticles);
     record StoryThreadItem(int Id, string Title, string Status, int EventCount, decimal MaxImpactScore);
     record StoryThreadFull(int Id, string Title, string? Summary, string? WhyItMatters, string? WhatToWatch,
         string Status, string MaxPriority, int EventCount, int TotalArticles,
         string? Section, string? SectionColor, string[] KeyActors,
         DateTime FirstEventDate, DateTime LastEventDate);
+    record ReportCard(int Id, string Title, string? Summary, string ModuleName, string ModuleColor,
+        int EventsAnalyzed, DateTime CreatedAt, string? Content);
 
     private void PickSerendipityEvent()
     {
@@ -1565,6 +1798,23 @@
             _serendipityEvent = candidates[Random.Shared.Next(candidates.Count)];
         else
             _serendipityEvent = null;
+    }
+
+    private async Task OpenReport(int reportId)
+    {
+        try
+        {
+            var report = await Ctx.ModuleReports
+                .Where(r => r.Id == reportId)
+                .Select(r => new ReportCard(
+                    r.Id, r.Title, r.Summary,
+                    r.Module.Name, r.Module.Color ?? "#4a90e2",
+                    r.EventsAnalyzed, r.CreatedAt, r.Content))
+                .FirstOrDefaultAsync();
+            if (report != null)
+                _selectedReport = report;
+        }
+        catch { }
     }
 
     private static string GetTrustLevel(int score) => score switch

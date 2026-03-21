@@ -1,0 +1,251 @@
+@page "/user/webhooks"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using ANews.Infrastructure.Data
+@using ANews.Domain.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize]
+@layout ANews.Web.Components.Layout.UserLayout
+@inject UserManager<ApplicationUser> UserManager
+@inject AppDbContext Db
+@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+
+<PageTitle>Webhooks - AgenteNews</PageTitle>
+
+<div class="user-page">
+    <div class="page-header">
+        <div>
+            <h2><i class="fa fa-plug"></i> Webhooks</h2>
+            <p class="text-muted">Recibe notificaciones push cuando se detecten eventos importantes</p>
+        </div>
+        <button class="btn btn-primary" @onclick="OpenCreate">
+            <i class="fa fa-plus"></i> Nuevo Webhook
+        </button>
+    </div>
+
+    <div class="alert alert-info mb-4" style="background:rgba(74,144,226,0.08); border:1px solid rgba(74,144,226,0.2); padding:12px 16px; border-radius:8px; font-size:13px">
+        <i class="fa fa-info-circle"></i>
+        Los webhooks envian un POST JSON a tu URL cada vez que se detecta un evento que coincida con tus criterios.
+        Incluyen una firma HMAC-SHA256 en el header <code>X-Webhook-Signature</code> para verificar autenticidad.
+    </div>
+
+    @if (_hooks.Count == 0 && !_loading)
+    {
+        <div style="text-align:center;padding:40px;color:var(--text-muted)">
+            <i class="fa fa-plug" style="font-size:32px;margin-bottom:12px;opacity:0.3"></i>
+            <p>No tienes webhooks configurados</p>
+            <button class="btn btn-primary" @onclick="OpenCreate"><i class="fa fa-plus"></i> Crear webhook</button>
+        </div>
+    }
+    else
+    {
+        <div style="display:flex;flex-direction:column;gap:12px">
+            @foreach (var h in _hooks)
+            {
+                var statusColor = h.FailCount > 5 ? "var(--accent-red)" : h.FailCount > 0 ? "#ffa000" : "var(--accent-green)";
+                var statusIcon = h.FailCount > 5 ? "fa-times-circle" : h.FailCount > 0 ? "fa-exclamation-triangle" : "fa-check-circle";
+                <div style="background:var(--admin-card,rgba(255,255,255,0.03));border:1px solid var(--border);border-radius:10px;padding:14px 18px">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+                        <i class="fa @statusIcon" style="color:@statusColor"></i>
+                        <code style="font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@h.Url</code>
+                        <span style="font-size:10px;background:var(--border);padding:2px 8px;border-radius:8px">@h.EventTypes</span>
+                        @if (!h.IsActive)
+                        {
+                            <span style="font-size:10px;color:var(--accent-red)">INACTIVO</span>
+                        }
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-muted);flex-wrap:wrap">
+                        @if (h.LastTriggeredAt.HasValue)
+                        {
+                            <span><i class="fa fa-clock"></i> Ultimo: @h.LastTriggeredAt.Value.ToString("dd/MM HH:mm")</span>
+                        }
+                        @if (h.FailCount > 0)
+                        {
+                            <span style="color:#ffa000"><i class="fa fa-exclamation-triangle"></i> @h.FailCount fallos</span>
+                        }
+                        @if (!string.IsNullOrEmpty(h.LastError))
+                        {
+                            <span style="color:var(--accent-red)">@h.LastError</span>
+                        }
+                        <div style="margin-left:auto;display:flex;gap:8px">
+                            <button class="btn-sm" @onclick="() => TestAsync(h.Id)" disabled="@_testing" title="Probar">
+                                <i class="fa @(_testing ? "fa-spinner fa-spin" : "fa-paper-plane")"></i> Probar
+                            </button>
+                            <button class="btn-sm" style="color:var(--accent-red)" @onclick="() => DeleteAsync(h.Id)" title="Eliminar">
+                                <i class="fa fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    @if (_testResult.ContainsKey(h.Id))
+                    {
+                        <div style="margin-top:6px;font-size:11px;color:@(_testResult[h.Id].Contains("OK") ? "var(--accent-green)" : "var(--accent-red)")">
+                            <i class="fa @(_testResult[h.Id].Contains("OK") ? "fa-check" : "fa-times")"></i> @_testResult[h.Id]
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (_showCreate)
+{
+    <div class="modal-overlay" @onclick="@(() => _showCreate = false)">
+        <div class="modal-box" style="max-width:500px" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Nuevo Webhook</h3>
+                <button @onclick="@(() => _showCreate = false)"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">URL del webhook (HTTPS recomendado) *</label>
+                    <input class="form-control" @bind="_newUrl" placeholder="https://tu-servidor.com/webhook" />
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted)">Tipos de evento</label>
+                    <select class="form-control" @bind="_newEventTypes">
+                        <option value="high_priority">Solo alta prioridad (High, Critical)</option>
+                        <option value="breaking">Solo breaking news</option>
+                        <option value="all">Todos los eventos</option>
+                    </select>
+                </div>
+                @if (!string.IsNullOrEmpty(_createError))
+                {
+                    <div style="color:var(--accent-red);font-size:12px">@_createError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" @onclick="@(() => _showCreate = false)">Cancelar</button>
+                <button class="btn btn-primary" @onclick="CreateAsync">Crear</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showSecret)
+{
+    <div class="modal-overlay" @onclick="@(() => _showSecret = false)">
+        <div class="modal-box" style="max-width:500px" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3><i class="fa fa-key"></i> Secret del Webhook</h3>
+                <button @onclick="@(() => _showSecret = false)"><i class="fa fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:13px;margin-bottom:12px">Guarda este secret — no se mostrara de nuevo:</p>
+                <code style="display:block;background:var(--border);padding:10px;border-radius:6px;font-size:13px;word-break:break-all">@_createdSecret</code>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:8px">
+                    Usa este secret para verificar la firma HMAC-SHA256 en el header <code>X-Webhook-Signature</code>.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" @onclick="@(() => _showSecret = false)">Entendido</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<WebhookSubscription> _hooks = [];
+    private bool _loading = true;
+    private bool _showCreate, _showSecret;
+    private string _newUrl = "", _newEventTypes = "high_priority";
+    private string? _createError, _createdSecret;
+    private bool _testing;
+    private Dictionary<int, string> _testResult = new();
+    private ApplicationUser? _user;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        _user = await UserManager.GetUserAsync(auth.User);
+        if (_user == null) return;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _hooks = await Db.WebhookSubscriptions
+            .Where(w => w.UserId == _user!.Id && !w.IsDeleted)
+            .OrderByDescending(w => w.CreatedAt)
+            .ToListAsync();
+        _loading = false;
+    }
+
+    private void OpenCreate() { _newUrl = ""; _newEventTypes = "high_priority"; _createError = null; _showCreate = true; }
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newUrl)) { _createError = "URL obligatoria"; return; }
+        if (!Uri.TryCreate(_newUrl.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
+        { _createError = "URL no valida"; return; }
+
+        var secret = Guid.NewGuid().ToString("N");
+        var hook = new WebhookSubscription
+        {
+            UserId = _user!.Id,
+            Url = _newUrl.Trim(),
+            Secret = secret,
+            EventTypes = _newEventTypes,
+            IsActive = true
+        };
+        Db.WebhookSubscriptions.Add(hook);
+        await Db.SaveChangesAsync();
+        _showCreate = false;
+        _createdSecret = secret;
+        _showSecret = true;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este webhook?")) return;
+        var hook = await Db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id);
+        if (hook != null) { hook.IsDeleted = true; await Db.SaveChangesAsync(); await LoadAsync(); }
+    }
+
+    private async Task TestAsync(int id)
+    {
+        _testing = true;
+        _testResult.Remove(id);
+        StateHasChanged();
+
+        var hook = await Db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id && !w.IsDeleted);
+        if (hook == null) { _testing = false; return; }
+
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var payload = System.Text.Json.JsonSerializer.Serialize(new { type = "test", message = "Webhook test", timestamp = DateTime.UtcNow });
+            var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+            if (!string.IsNullOrEmpty(hook.Secret))
+            {
+                var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(hook.Secret));
+                var sig = Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(payload))).ToLower();
+                content.Headers.Add("X-Webhook-Signature", sig);
+            }
+            var response = await client.PostAsync(hook.Url, content);
+            hook.LastTriggeredAt = DateTime.UtcNow;
+            if (response.IsSuccessStatusCode)
+            {
+                hook.LastError = null;
+                _testResult[id] = $"OK — HTTP {(int)response.StatusCode}";
+            }
+            else
+            {
+                hook.LastError = $"HTTP {(int)response.StatusCode}";
+                hook.FailCount++;
+                hook.LastFailedAt = DateTime.UtcNow;
+                _testResult[id] = $"Error — HTTP {(int)response.StatusCode}";
+            }
+            await Db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _testResult[id] = $"Error — {ex.Message}";
+        }
+        _testing = false;
+        await LoadAsync();
+    }
+}

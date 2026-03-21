@@ -4,17 +4,20 @@ using System.Collections.Generic;
 using ANews.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace ANews.Infrastructure.Migrations
+namespace ANews.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260312082244_AddWebhookSubscriptions")]
+    partial class AddWebhookSubscriptions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -600,62 +603,6 @@ namespace ANews.Infrastructure.Migrations
                     b.HasIndex("UserModuleId");
 
                     b.ToTable("ModuleKeywords");
-                });
-
-            modelBuilder.Entity("ANews.Domain.Entities.ModuleReport", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("EventsAnalyzed")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime>("PeriodEnd")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("PeriodStart")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<List<int>>("SourceEventIds")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("Summary")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("UserModuleId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("UserModuleId", "CreatedAt");
-
-                    b.ToTable("ModuleReports");
                 });
 
             modelBuilder.Entity("ANews.Domain.Entities.MorningBrief", b =>
@@ -1457,15 +1404,6 @@ namespace ANews.Infrastructure.Migrations
                     b.Property<bool>("NotificationsEnabled")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("Prompt")
-                        .HasColumnType("text");
-
-                    b.Property<string>("PromptRejectionReason")
-                        .HasColumnType("text");
-
-                    b.Property<int>("PromptStatus")
-                        .HasColumnType("integer");
-
                     b.Property<string>("RssFeedToken")
                         .HasColumnType("text");
 
@@ -1902,17 +1840,6 @@ namespace ANews.Infrastructure.Migrations
                     b.Navigation("Module");
                 });
 
-            modelBuilder.Entity("ANews.Domain.Entities.ModuleReport", b =>
-                {
-                    b.HasOne("ANews.Domain.Entities.UserModule", "Module")
-                        .WithMany("Reports")
-                        .HasForeignKey("UserModuleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Module");
-                });
-
             modelBuilder.Entity("ANews.Domain.Entities.NewsArticle", b =>
                 {
                     b.HasOne("ANews.Domain.Entities.NewsEvent", "Event")
@@ -2113,8 +2040,6 @@ namespace ANews.Infrastructure.Migrations
                     b.Navigation("Keywords");
 
                     b.Navigation("NotificationLogs");
-
-                    b.Navigation("Reports");
                 });
 #pragma warning restore 612, 618
         }

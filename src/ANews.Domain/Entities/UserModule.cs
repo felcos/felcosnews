@@ -17,6 +17,23 @@ public class UserModule : BaseEntity
     public int TotalMatchedEvents { get; set; } = 0;
     public DateTime? LastMatchAt { get; set; }
 
+    /// <summary>
+    /// Prompt del usuario para generar informes con IA.
+    /// Reemplaza el sistema de keywords: el usuario describe qué tipo de informe quiere.
+    /// </summary>
+    public string? Prompt { get; set; }
+
+    /// <summary>
+    /// Estado de validacion del prompt: Pending, Approved, Rejected.
+    /// </summary>
+    public PromptStatus PromptStatus { get; set; } = PromptStatus.Pending;
+
+    /// <summary>
+    /// Motivo de rechazo si el prompt fue detectado como malicioso o no valido.
+    /// </summary>
+    public string? PromptRejectionReason { get; set; }
+
     public ICollection<ModuleKeyword> Keywords { get; set; } = [];
+    public ICollection<ModuleReport> Reports { get; set; } = [];
     public ICollection<NotificationLog> NotificationLogs { get; set; } = [];
 }

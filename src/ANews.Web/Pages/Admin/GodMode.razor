@@ -54,6 +54,15 @@
 
     <!-- KPI Cards -->
     <div class="gm-kpis">
+        @if (!_dataReady)
+        {
+            @for (var _sk = 0; _sk < 7; _sk++)
+            {
+                <div class="kpi-card"><div class="skeleton skeleton-kpi"></div></div>
+            }
+        }
+        else
+        {
         <div class="kpi-card @(Stats.AgentsRunningCount > 0 ? "kpi-active" : "") @(_kpiFlash ? "kpi-refreshing" : "")">
             <i class="fa fa-robot kpi-icon"></i>
             <div class="kpi-value">@Stats.AgentsRunningCount</div>
@@ -94,6 +103,7 @@
             <div class="kpi-label">Hilos narrativos</div>
             <div class="kpi-detail">@Stats.ActivitiesToday actividades hoy</div>
         </div>
+        }
     </div>
 
     <!-- Body: Sidebar + Content -->
@@ -368,29 +378,52 @@
                             @foreach (var agent in AgentTriggers)
                             {
                                 var lastExec = _lastAgentExecs.GetValueOrDefault(agent.Name);
+                                var statusColor = lastExec?.Status switch {
+                                    "Completed" => "var(--accent-green)",
+                                    "Failed" => "var(--accent-red)",
+                                    "Running" => "var(--accent)",
+                                    _ => "var(--text-muted)"
+                                };
+                                var statusIcon = lastExec?.Status switch {
+                                    "Completed" => "fa-check-circle",
+                                    "Failed" => "fa-times-circle",
+                                    "Running" => "fa-spinner fa-spin",
+                                    _ => "fa-circle"
+                                };
                                 <div class="agent-card-wrap">
-                                    <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
-                                            @onclick="() => TriggerAgentAsync(agent.Name)"
-                                            disabled="@agent.IsRunning">
-                                        <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
-                                        @agent.DisplayName
-                                        @if (!agent.IsRunning && agent.NextRunIn > 0)
+                                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                                        <button class="btn-trigger @(agent.IsRunning ? "running" : "")"
+                                                @onclick="() => TriggerAgentAsync(agent.Name)"
+                                                disabled="@agent.IsRunning"
+                                                style="flex:1">
+                                            <i class="fa @(agent.IsRunning ? "fa-spinner fa-spin" : "fa-play")"></i>
+                                            @agent.DisplayName
+                                            @if (!agent.IsRunning && agent.NextRunIn > 0)
+                                            {
+                                                <span class="next-run-badge">en @agent.NextRunIn&#x2009;m</span>
+                                            }
+                                        </button>
+                                        @if (lastExec != null)
                                         {
-                                            <span class="next-run-badge">en @agent.NextRunIn&#x2009;m</span>
+                                            <i class="fa @statusIcon" style="color:@statusColor;font-size:12px" title="@lastExec.Status"></i>
                                         }
-                                    </button>
+                                    </div>
                                     <div class="agent-progress">
                                         <div class="agent-progress-bar @(agent.IsRunning ? "running" : "")"
-                                             style="width:@(agent.IsRunning ? "100%" : lastExec != null ? "100%" : "0%")"></div>
+                                             style="width:@(agent.IsRunning ? "100%" : lastExec != null ? "100%" : "0%");background:@(lastExec?.Status == "Failed" ? "var(--accent-red)" : "")"></div>
                                     </div>
                                     @if (lastExec != null && !agent.IsRunning)
                                     {
-                                        <div style="display:flex;gap:8px;font-size:10px;color:var(--text-muted);padding:2px 4px;flex-wrap:wrap">
-                                            <span><i class="fa fa-cog"></i> @lastExec.ItemsProcessed items</span>
+                                        <div style="display:flex;gap:8px;font-size:10px;color:var(--text-muted);padding:2px 4px;flex-wrap:wrap;align-items:center">
+                                            <span style="color:@statusColor"><i class="fa fa-cog"></i> @lastExec.ItemsProcessed proc / @lastExec.ItemsCreated nuevo</span>
                                             <span><i class="fa fa-clock"></i> @FormatDuration(lastExec.DurationMs)</span>
                                             @if (lastExec.AiCost > 0)
                                             {
                                                 <span><i class="fa fa-dollar-sign"></i> @lastExec.AiCost.ToString("F4")</span>
+                                            }
+                                            @if (!string.IsNullOrEmpty(lastExec.Error))
+                                            {
+                                                <span style="color:var(--accent-red)" title="@lastExec.Error"><i class="fa fa-exclamation-triangle"></i> Error</span>
                                             }
                                         </div>
                                     }
@@ -690,6 +723,7 @@
     private HubConnection? _agentHub;
     private bool IsConnected => _adminHub?.State == HubConnectionState.Connected;
     private bool IsLoading;
+    private bool _dataReady;
     private string AgentFilter = "all";
     private string CostPeriod = "today";
     private string CostPeriodLabel => CostPeriod switch { "week" => "7 días", "month" => "Mes", _ => "Hoy" };
@@ -765,6 +799,7 @@
         try
         {
             await LoadInitialDataAsync();
+            _dataReady = true;
             await LoadSystemHealthAsync();
             await LoadZonesAsync();
             await LoadAgentConfigsAsync();

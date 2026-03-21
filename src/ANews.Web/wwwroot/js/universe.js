@@ -274,8 +274,10 @@
             }
 
             // Collision resolution — push overlapping planets apart
-            this._resolveCollisions();
-            this._resolveMoonClearance();
+            for (let pass = 0; pass < 4; pass++) {
+                this._resolveCollisions();
+                this._resolveMoonClearance();
+            }
 
             if (this._userKeywords.length > 0) {
                 this._applyKeywords();
@@ -288,14 +290,14 @@
             const rings = [];
             let remaining = totalPlanets;
             let ringIdx = 0;
-            const baseRadius = 100;
-            const ringGap = 80;
+            const baseRadius = 145;
+            const ringGap = 90;
 
             while (remaining > 0) {
                 const radius = baseRadius + ringIdx * ringGap;
                 // How many planets fit at this radius with comfortable spacing
                 const circumference = Math.PI * 2 * radius;
-                const minSpacing = 55; // minimum px between planet centers
+                const minSpacing = 70; // minimum px between planet centers
                 const maxInRing = Math.max(3, Math.floor(circumference / minSpacing));
                 const count = Math.min(maxInRing, remaining);
                 rings.push({ count, radius });
@@ -306,6 +308,21 @@
         }
 
         _resolveCollisions() {
+            // Protección contra solapamiento con sol central de cada sistema
+            for (const node of this.nodes) {
+                const sys = node.system;
+                const dx = node.x - sys.x;
+                const dy = node.y - sys.y;
+                const dist = Math.hypot(dx, dy);
+                const moonClearance = node.radius * 1.9 + 3 * 12 + node.radius;
+                const minFromSun = 98 + moonClearance + 20;
+                if (dist < minFromSun && dist > 0.1) {
+                    const push = minFromSun - dist;
+                    node.x += (dx / dist) * push;
+                    node.y += (dy / dist) * push;
+                }
+            }
+
             // Robust iterative collision resolution with dynamic gap
             for (let iter = 0; iter < 30; iter++) {
                 let moved = false;

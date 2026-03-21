@@ -51,6 +51,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
     public DbSet<UserActivity> UserActivities => Set<UserActivity>();
     public DbSet<SectionQuota> SectionQuotas => Set<SectionQuota>();
     public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
+    public DbSet<WebhookSubscription> WebhookSubscriptions => Set<WebhookSubscription>();
+    public DbSet<ModuleReport> ModuleReports => Set<ModuleReport>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -201,6 +203,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
         builder.Entity<NewsEvent>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<NewsArticle>().HasQueryFilter(e => !e.IsDeleted);
         builder.Entity<UserModule>().HasQueryFilter(e => !e.IsDeleted);
+
+        builder.Entity<ModuleReport>(e =>
+        {
+            e.Property(r => r.SourceEventIds).HasColumnType("jsonb");
+            e.HasIndex(r => new { r.UserModuleId, r.CreatedAt });
+            e.HasIndex(r => r.UserId);
+        });
     }
 
     public override int SaveChanges()

@@ -162,3 +162,10 @@ public enum PlanTier
     Pro,
     Unlimited
 }
+
+public enum PromptStatus
+{
+    Pending,
+    Approved,
+    Rejected
+}

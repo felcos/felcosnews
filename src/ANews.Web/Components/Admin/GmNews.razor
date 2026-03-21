@@ -39,6 +39,11 @@
                     @foreach (var p in Enum.GetValues<EventPriority>())
                     { <option value="@p">@p</option> }
                 </select>
+                <select class="form-control" style="max-width:120px;height:30px;font-size:12px" @onchange="OnStatusFilter">
+                    <option value="">Todo estado</option>
+                    <option value="active">Activo</option>
+                    <option value="inactive">Inactivo</option>
+                </select>
             }
             @if (_newsTab == "articles")
             {
@@ -57,6 +62,9 @@
             </select>
             <button class="btn-sm" style="margin-left:auto" @onclick="ExportCsvAsync" title="Exportar CSV">
                 <i class="fa fa-download"></i> CSV
+            </button>
+            <button class="btn-sm" @onclick="ExportJsonAsync" title="Exportar JSON">
+                <i class="fa fa-code"></i> JSON
             </button>
             <span style="font-size:11px;color:var(--text-muted)">@_total registros</span>
         </div>
@@ -211,6 +219,7 @@
     private int? _sectionFilter;
     private string? _priorityFilter;
     private string? _sourceFilter;
+    private string? _statusFilter;
     private int? _daysFilter;
     private int _page = 1, _total;
     private const int PageSize = 25;
@@ -246,6 +255,7 @@
     private async Task OnSourceFilter(ChangeEventArgs e) { _sourceFilter = e.Value?.ToString(); _page = 1; await ReloadAsync(); }
     private async Task OnDateFilter(ChangeEventArgs e) { _daysFilter = int.TryParse(e.Value?.ToString(), out var d) ? d : null; _page = 1; await ReloadAsync(); }
     private async Task OnPriorityFilter(ChangeEventArgs e) { _priorityFilter = e.Value?.ToString(); _page = 1; await ReloadAsync(); }
+    private async Task OnStatusFilter(ChangeEventArgs e) { _statusFilter = e.Value?.ToString(); _page = 1; await ReloadAsync(); }
     private async Task PrevPage() { if (_page > 1) { _page--; await ReloadAsync(); } }
     private async Task NextPage() { if (_page < TotalPages) { _page++; await ReloadAsync(); } }
     private Task ReloadAsync() => _newsTab == "events" ? LoadEventsAsync() : LoadArticlesAsync();
@@ -257,6 +267,8 @@
         if (_sectionFilter.HasValue) q = q.Where(e => e.NewsSectionId == _sectionFilter.Value);
         if (!string.IsNullOrEmpty(_priorityFilter) && Enum.TryParse<EventPriority>(_priorityFilter, out var pri))
             q = q.Where(e => e.Priority == pri);
+        if (_statusFilter == "active") q = q.Where(e => e.IsActive);
+        else if (_statusFilter == "inactive") q = q.Where(e => !e.IsActive);
         if (_daysFilter.HasValue)
             q = q.Where(e => e.CreatedAt >= DateTime.UtcNow.AddDays(-_daysFilter.Value));
         _total = await q.CountAsync();
@@ -362,6 +374,41 @@
             var csv = "Id,Titulo,Fuente,URL,Relevancia,Tipo,Publicado\n" +
                 string.Join("\n", rows.Select(r => $"{r.Id},\"{r.Title.Replace("\"", "\"\"")}\",\"{r.SourceName}\",{r.SourceUrl},{r.Relevance},{r.Type},{r.PublishedAt:yyyy-MM-dd HH:mm}"));
             await JS.InvokeVoidAsync("downloadTextFile", $"articulos_{DateTime.UtcNow:yyyyMMdd}.csv", csv);
+        }
+    }
+
+    private async Task ExportJsonAsync()
+    {
+        if (_newsTab == "events")
+        {
+            var q = Ctx.NewsEvents.Where(e => !e.IsDeleted);
+            if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(e => e.Title.Contains(_search));
+            if (_sectionFilter.HasValue) q = q.Where(e => e.NewsSectionId == _sectionFilter.Value);
+            if (!string.IsNullOrEmpty(_priorityFilter) && Enum.TryParse<EventPriority>(_priorityFilter, out var pri))
+                q = q.Where(e => e.Priority == pri);
+            if (_daysFilter.HasValue)
+                q = q.Where(e => e.CreatedAt >= DateTime.UtcNow.AddDays(-_daysFilter.Value));
+            var rows = await q.OrderByDescending(e => e.CreatedAt)
+                .Select(e => new { e.Id, e.Title, Priority = e.Priority.ToString(), e.ImpactScore, Section = e.Section.Name,
+                    Articles = e.Articles.Count(a => !a.IsDeleted), e.Description, e.Location, e.IsActive, Created = e.CreatedAt })
+                .ToListAsync();
+            var json = System.Text.Json.JsonSerializer.Serialize(rows, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            await JS.InvokeVoidAsync("downloadTextFile", $"eventos_{DateTime.UtcNow:yyyyMMdd}.json", json);
+        }
+        else
+        {
+            var q = Ctx.NewsArticles.Where(a => !a.IsDeleted);
+            if (!string.IsNullOrWhiteSpace(_search)) q = q.Where(a => a.Title.Contains(_search));
+            if (_sectionFilter.HasValue) q = q.Where(a => a.Event.NewsSectionId == _sectionFilter.Value);
+            if (!string.IsNullOrEmpty(_sourceFilter)) q = q.Where(a => a.SourceName == _sourceFilter);
+            if (_daysFilter.HasValue)
+                q = q.Where(a => a.PublishedAt >= DateTime.UtcNow.AddDays(-_daysFilter.Value));
+            var rows = await q.OrderByDescending(a => a.PublishedAt)
+                .Select(a => new { a.Id, a.Title, a.SourceName, a.SourceUrl, a.Relevance, Type = a.ArticleType.ToString(),
+                    a.Summary, Published = a.PublishedAt })
+                .ToListAsync();
+            var json = System.Text.Json.JsonSerializer.Serialize(rows, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            await JS.InvokeVoidAsync("downloadTextFile", $"articulos_{DateTime.UtcNow:yyyyMMdd}.json", json);
         }
     }
 

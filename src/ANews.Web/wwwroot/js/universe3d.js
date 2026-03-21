@@ -153,6 +153,98 @@
         return pts;
     }
 
+    function _genPlanetTexture(seed, baseColor) {
+        const size = 256;
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = size;
+        const c = cv.getContext('2d');
+        const type = seed % 6;
+        const hsl = {};
+        baseColor.getHSL(hsl);
+        const col = `hsl(${Math.round(hsl.h*360)},${Math.round(hsl.s*100)}%,${Math.round(hsl.l*100)}%)`;
+        const grad = c.createRadialGradient(80,80,0,128,128,180);
+        grad.addColorStop(0,'white');
+        grad.addColorStop(0.3,col);
+        grad.addColorStop(1,'black');
+        c.fillStyle = grad;
+        c.fillRect(0,0,size,size);
+        const rng = (s) => { let x = Math.sin(s) * 10000; return x - Math.floor(x); };
+        if (type === 0) {
+            for (let i=0;i<12;i++) {
+                const cx=rng(seed+i*7)*size, cy=rng(seed+i*11)*size, cr=4+rng(seed+i*3)*20;
+                c.strokeStyle='rgba(0,0,0,0.4)'; c.lineWidth=cr*0.3;
+                c.beginPath(); c.arc(cx,cy,cr,0,Math.PI*2); c.stroke();
+                c.fillStyle='rgba(0,0,0,0.2)';
+                c.beginPath(); c.arc(cx,cy,cr,0,Math.PI*2); c.fill();
+            }
+        } else if (type === 1) {
+            c.globalAlpha=0.25;
+            for (let b=0;b<8;b++) {
+                const by=b/8*size, bh=size/8*(0.4+rng(seed+b)*0.6);
+                c.fillStyle=b%2===0?'rgba(0,0,0,0.5)':'rgba(255,255,255,0.3)';
+                c.fillRect(0,by,size,bh);
+            }
+            c.globalAlpha=1;
+        } else if (type === 2) {
+            c.globalAlpha=0.5;
+            c.fillStyle='rgba(200,230,255,0.85)';
+            c.beginPath(); c.ellipse(128,25,60,30,0,0,Math.PI*2); c.fill();
+            c.beginPath(); c.ellipse(128,230,40,20,0,0,Math.PI*2); c.fill();
+            c.globalAlpha=0.15;
+            for (let i=0;i<6;i++) {
+                c.strokeStyle='rgba(150,200,255,0.8)'; c.lineWidth=1;
+                c.beginPath();
+                c.moveTo(rng(seed+i*3)*size,rng(seed+i*5)*size);
+                c.lineTo(rng(seed+i*7)*size,rng(seed+i*11)*size);
+                c.stroke();
+            }
+            c.globalAlpha=1;
+        } else if (type === 3) {
+            c.globalAlpha=0.2;
+            for (let i=0;i<5;i++) {
+                c.strokeStyle='rgba(255,180,80,0.8)'; c.lineWidth=3+rng(seed+i)*4;
+                c.beginPath();
+                c.arc(rng(seed+i*4)*size,rng(seed+i*6)*size,20+rng(seed+i)*60,0.1,1.5);
+                c.stroke();
+            }
+            c.globalAlpha=1;
+        } else if (type === 4) {
+            c.globalAlpha=0.35;
+            for (let i=0;i<4;i++) {
+                c.fillStyle='rgba(0,180,80,0.6)';
+                c.beginPath();
+                c.ellipse(
+                    rng(seed+i*3)*size, rng(seed+i*7)*size,
+                    15+rng(seed+i)*35, 10+rng(seed+i*2)*25,
+                    rng(seed+i*5)*Math.PI, 0, Math.PI*2
+                );
+                c.fill();
+            }
+            c.globalAlpha=1;
+        } else {
+            c.globalAlpha=0.55;
+            for (let i=0;i<8;i++) {
+                const g2=c.createLinearGradient(
+                    128+rng(seed+i)*60-30, 128+rng(seed+i*3)*60-30,
+                    128+rng(seed+i*7)*120-60, 128+rng(seed+i*11)*120-60
+                );
+                g2.addColorStop(0,'rgba(255,80,0,0.9)');
+                g2.addColorStop(1,'rgba(255,0,0,0)');
+                c.strokeStyle=g2; c.lineWidth=2+rng(seed+i*2)*3;
+                c.beginPath();
+                c.moveTo(128+rng(seed+i)*40-20,128+rng(seed+i*5)*40-20);
+                c.lineTo(128+rng(seed+i*9)*100-50,128+rng(seed+i*13)*100-50);
+                c.stroke();
+            }
+            c.globalAlpha=1;
+        }
+        const rim=c.createRadialGradient(128,128,160,128,128,200);
+        rim.addColorStop(0,'rgba(0,0,0,0)');
+        rim.addColorStop(1,`hsla(${Math.round(hsl.h*360)},80%,60%,0.3)`);
+        c.fillStyle=rim; c.fillRect(0,0,size,size);
+        return new THREE.CanvasTexture(cv);
+    }
+
     function resolveCollisions3D(positions, radii, padding, maxIter) {
         maxIter = maxIter || 30;
         for (let iter = 0; iter < maxIter; iter++) {
@@ -350,11 +442,29 @@
                 const pointLight = new THREE.PointLight(sysColor.getHex(), 1.5, 600, 2);
                 group.add(pointLight);
 
-                // Sun mesh
-                const sunGeo = new THREE.SphereGeometry(28, 32, 32);
-                const sunMat = new THREE.MeshBasicMaterial({ color: sysColor });
-                const sunMesh = new THREE.Mesh(sunGeo, sunMat);
-                group.add(sunMesh);
+                // Sun — tetragrammaton (wireframe cubes + core)
+                const cubeOutGeo = new THREE.BoxGeometry(38, 38, 38);
+                const cubeOutMat = new THREE.MeshBasicMaterial({
+                    color: sysColor, wireframe: true, transparent: true, opacity: 0.55
+                });
+                const cubeOut = new THREE.Mesh(cubeOutGeo, cubeOutMat);
+                group.add(cubeOut);
+
+                const cubeInGeo = new THREE.BoxGeometry(22, 22, 22);
+                const cubeInMat = new THREE.MeshBasicMaterial({
+                    color: sysColor, wireframe: true, transparent: true, opacity: 0.8
+                });
+                const cubeIn = new THREE.Mesh(cubeInGeo, cubeInMat);
+                cubeIn.rotation.set(Math.PI / 4, Math.PI / 4, 0);
+                group.add(cubeIn);
+
+                const coreGeo = new THREE.SphereGeometry(10, 16, 16);
+                const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+                group.add(coreMesh);
+
+                group.userData.cubeOut = cubeOut;
+                group.userData.cubeIn = cubeIn;
 
                 // Sun glow sprite
                 const spriteMat = new THREE.SpriteMaterial({
@@ -388,9 +498,9 @@
 
                     const geo = new THREE.SphereGeometry(r, 32, 32);
                     const mat = new THREE.MeshPhongMaterial({
-                        color: planetColor,
-                        shininess: 60,
-                        specular: 0x333333
+                        map: _genPlanetTexture(ev.id, planetColor),
+                        shininess: 45,
+                        specular: new THREE.Color(0x222222)
                     });
                     const mesh = new THREE.Mesh(geo, mat);
                     mesh.position.copy(pos);
@@ -398,6 +508,40 @@
 
                     mesh.userData = { event: ev, system: sys };
                     this.planetMeshes.push({ mesh, event: ev, system: sys });
+
+                    const pBadgeColors = { Critical:'#ff0040', High:'#ff6600', Medium:'#e6b800', Low:'#4a90e2' };
+                    const labelCv = document.createElement('canvas');
+                    labelCv.width = 256; labelCv.height = 48;
+                    const lctx2 = labelCv.getContext('2d');
+                    const labelText = (ev.title || '').length > 28
+                        ? (ev.title || '').substring(0, 28) + '…'
+                        : (ev.title || '');
+                    lctx2.font = '600 13px system-ui';
+                    lctx2.fillStyle = '#e8eaf0';
+                    lctx2.textAlign = 'center';
+                    lctx2.textBaseline = 'middle';
+                    lctx2.fillText(labelText, 128, 24);
+                    lctx2.fillStyle = pBadgeColors[ev.priority] || '#4a90e2';
+                    lctx2.beginPath();
+                    lctx2.arc(20, 24, 5, 0, Math.PI * 2);
+                    lctx2.fill();
+                    const labelTex2 = new THREE.CanvasTexture(labelCv);
+                    const labelMat2 = new THREE.SpriteMaterial({
+                        map: labelTex2, transparent: true, opacity: 0.85, depthTest: false
+                    });
+                    const labelSp = new THREE.Sprite(labelMat2);
+                    labelSp.scale.set(90, 17, 1);
+                    labelSp.position.set(pos.x, pos.y - r - 14, pos.z);
+                    group.add(labelSp);
+                    const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                        new THREE.Vector3(pos.x, pos.y - r - 2, pos.z),
+                        new THREE.Vector3(pos.x, pos.y - r - 10, pos.z)
+                    ]);
+                    const lineMat = new THREE.LineBasicMaterial({
+                        color: new THREE.Color(pBadgeColors[ev.priority] || '#4a90e2'),
+                        transparent: true, opacity: 0.5
+                    });
+                    group.add(new THREE.Line(lineGeo, lineMat));
 
                     // Moons
                     const moons = (ev.articles || []).slice(0, 4);
@@ -465,8 +609,8 @@
                     opacity: 0.8
                 });
                 const labelSprite = new THREE.Sprite(labelMat);
-                labelSprite.scale.set(120, 30, 1);
-                labelSprite.position.set(0, -sphRadius - 40, 0);
+                labelSprite.scale.set(160, 36, 1);
+                labelSprite.position.set(0, 52, 0);
                 group.add(labelSprite);
 
                 this.scene.add(group);
@@ -601,6 +745,16 @@
                     md.parentPos.z + Math.sin(angle) * md.orbitR
                 );
             }
+
+            // Animate cubes (tetragrammaton)
+            this.scene.children.forEach(obj => {
+                if (obj.isGroup && obj.userData.cubeOut) {
+                    obj.userData.cubeOut.rotation.y += 0.004;
+                    obj.userData.cubeOut.rotation.x += 0.002;
+                    obj.userData.cubeIn.rotation.y -= 0.006;
+                    obj.userData.cubeIn.rotation.z += 0.003;
+                }
+            });
 
             // Hover detection
             this.raycaster.setFromCamera(this.mouse, this.camera);
