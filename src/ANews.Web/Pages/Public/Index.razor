@@ -257,33 +257,9 @@
     <!-- Active Story Threads -->
     @if (_storyThreads.Any())
     {
-        <!-- Hilos narrativos: dropdown en desktop, scroll horizontal en movil -->
         <div class="story-threads-bar">
             <div class="st-label"><i class="fa fa-stream"></i> HILOS NARRATIVOS</div>
-
-            <!-- Desktop: dropdown -->
-            <div class="st-dropdown-wrap desktop-only">
-                <button class="st-dropdown-trigger" @onclick="@(() => _showThreadDropdown = !_showThreadDropdown)" @onclick:stopPropagation>
-                    <span>@(_storyThreads.Count) hilos activos</span>
-                    <i class="fa fa-chevron-down"></i>
-                </button>
-                @if (_showThreadDropdown)
-                {
-                    <div class="st-dropdown-panel" @onclick:stopPropagation>
-                        @foreach (var thread in _storyThreads)
-                        {
-                            <a href="/story/@thread.Id" class="st-dropdown-item status-@thread.Status.ToLower()">
-                                <span class="st-events">@thread.EventCount</span>
-                                <span class="st-title">@thread.Title</span>
-                                @if (thread.Status == "Developing") { <span class="st-pulse"></span> }
-                            </a>
-                        }
-                    </div>
-                }
-            </div>
-
-            <!-- Movil: scroll horizontal (mantiene el comportamiento tactil) -->
-            <div class="st-scroll mobile-only">
+            <div class="st-scroll">
                 @foreach (var thread in _storyThreads)
                 {
                     <a href="/story/@thread.Id" class="st-chip status-@thread.Status.ToLower()">
@@ -1117,9 +1093,6 @@
         _showFtSearch = false;
         _searchTimer?.Dispose();
     }
-
-    // ── Story threads dropdown ──────────────────────────────────────────
-    private bool _showThreadDropdown;
 
     // ── Module reports ──────────────────────────────────────────────────
     private List<ReportCard> _moduleReports = [];

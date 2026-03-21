@@ -2416,10 +2416,13 @@ textarea.form-input { resize: vertical; font-family: inherit; }
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
   flex: 1;
 }
-.st-scroll::-webkit-scrollbar { display: none; }
+.st-scroll::-webkit-scrollbar { height: 4px; }
+.st-scroll::-webkit-scrollbar-track { background: transparent; }
+.st-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+.st-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 .st-chip {
   display: flex;
   align-items: center;
@@ -2465,39 +2468,6 @@ textarea.form-input { resize: vertical; font-family: inherit; }
   .mobile-only { display: none !important; }
 }
 
-/* Story threads dropdown (desktop) */
-.st-dropdown-wrap { position: relative; flex: 1; z-index: 200; }
-.st-dropdown-trigger {
-  display: flex; align-items: center; gap: 8px;
-  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 8px; padding: 6px 14px; font-size: 13px;
-  color: var(--text); cursor: pointer; transition: all 0.2s; width: 100%;
-}
-.st-dropdown-trigger:hover { background: rgba(74,144,226,0.12); border-color: var(--accent); }
-.st-dropdown-trigger i { margin-left: auto; font-size: 10px; opacity: 0.5; }
-.st-dropdown-panel {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
-  background: var(--bg-card, #1a1a2e); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px; padding: 6px; z-index: 500;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.5); max-height: 320px; overflow-y: auto;
-}
-.st-dropdown-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 6px; font-size: 13px;
-  color: var(--text); text-decoration: none; transition: background 0.15s;
-}
-.st-dropdown-item:hover { background: rgba(74,144,226,0.12); }
-.st-dropdown-item .st-events {
-  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
-  width: 22px; height: 22px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.st-dropdown-item .st-title { font-weight: 500; flex: 1; }
-.st-dropdown-item .st-pulse {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent-green, #00ff88); animation: pulse-dot-anim 1.5s infinite;
-}
-.st-dropdown-item.status-developing { border-left: 2px solid rgba(0,255,136,0.5); }
 
 /* Reports bar */
 .reports-bar {
