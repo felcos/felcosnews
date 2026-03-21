@@ -1626,7 +1626,7 @@
         SelectedSection = slug;
 
         var sectionId = Sections.FirstOrDefault(s => s.Slug == slug)?.Id;
-        _ = TrackActivity(ActivityType.SectionFiltered, sectionId: sectionId, metadata: slug);
+        await TrackActivity(ActivityType.SectionFiltered, sectionId: sectionId, metadata: slug);
 
         if (ViewMode == "universe")
         {
@@ -1655,7 +1655,7 @@
         _generatingEnSummary.Clear();
 
         var sectionId = Sections.FirstOrDefault(s => s.Slug == ev.SectionSlug)?.Id;
-        _ = TrackActivity(ActivityType.EventOpened, sectionId: sectionId, eventId: ev.Id);
+        await TrackActivity(ActivityType.EventOpened, sectionId: sectionId, eventId: ev.Id);
 
         SelectedEventArticles = await Ctx.NewsArticles
             .Include(a => a.Source)
@@ -1679,23 +1679,25 @@
             _selectedEventIsActive = evDb.IsActive;
         }
 
-        _relatedEvents = await Ctx.NewsEvents
-            .Where(e => e.NewsSectionId == evDb!.NewsSectionId && e.Id != ev.Id && e.IsActive && !e.IsDeleted)
-            .OrderByDescending(e => e.ImpactScore)
-            .Take(5)
-            .Select(e => new RelatedEventItem(e.Id, e.Title, e.Priority.ToString()))
-            .ToListAsync();
+        if (evDb != null)
+        {
+            _relatedEvents = await Ctx.NewsEvents
+                .Where(e => e.NewsSectionId == evDb.NewsSectionId && e.Id != ev.Id && e.IsActive && !e.IsDeleted)
+                .OrderByDescending(e => e.ImpactScore)
+                .Take(5)
+                .Select(e => new RelatedEventItem(e.Id, e.Title, e.Priority.ToString()))
+                .ToListAsync();
+
+            _selectedEventThread = evDb.StoryThreadId != null
+                ? await Ctx.StoryThreads.FindAsync(evDb.StoryThreadId)
+                : null;
+        }
 
         // Load contextual briefing
         _eventBriefing = await Ctx.EventBriefings
             .Where(b => b.NewsEventId == ev.Id && b.Type == ANews.Domain.Enums.BriefingType.EventContext)
             .OrderByDescending(b => b.GeneratedAt)
             .FirstOrDefaultAsync();
-
-        // Load story thread if linked
-        _selectedEventThread = evDb?.StoryThreadId != null
-            ? await Ctx.StoryThreads.FindAsync(evDb.StoryThreadId)
-            : null;
     }
 
     private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); _showSourceCompare = false; StateHasChanged(); }
@@ -1733,12 +1735,12 @@
         }
     }
 
-    private void ToggleArticlePreview(int id)
+    private async Task ToggleArticlePreview(int id)
     {
         if (!_expandedArticles.Remove(id))
         {
             _expandedArticles.Add(id);
-            _ = TrackActivity(ActivityType.ArticleExpanded, eventId: SelectedEvent?.Id, articleId: id);
+            await TrackActivity(ActivityType.ArticleExpanded, eventId: SelectedEvent?.Id, articleId: id);
         }
     }
     private void DismissBanner() => CriticalAlerts.Clear();
