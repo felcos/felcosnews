@@ -54,7 +54,8 @@ public enum AgentType
     SourceAnalyzer,
     TelegramEditorial,
     ReaderProfileAnalyzer,
-    ModuleReportGenerator
+    ModuleReportGenerator,
+    Translator
 }
 
 public enum AgentStatus

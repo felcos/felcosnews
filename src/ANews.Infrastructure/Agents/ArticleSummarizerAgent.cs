@@ -75,16 +75,7 @@ public class ArticleSummarizerAgent : BaseAgent
                             article.Summary = CleanText(result.Summary);
                         if (!string.IsNullOrWhiteSpace(result.TitleEs))
                         {
-                            var cleanTitle = CleanText(result.TitleEs);
-                            if (!string.IsNullOrEmpty(result.SourceLang) &&
-                                result.SourceLang != "es" && result.SourceLang != "en")
-                            {
-                                article.Title = $"{cleanTitle} [Traducido de {result.SourceLang}]";
-                            }
-                            else
-                            {
-                                article.Title = cleanTitle;
-                            }
+                            article.Title = CleanText(result.TitleEs);
                         }
                         if (!string.IsNullOrEmpty(result.SourceLang))
                             article.Language = result.SourceLang;
@@ -125,7 +116,7 @@ public class ArticleSummarizerAgent : BaseAgent
         var responseFormat = "{\"summaries\":[{\"index\":0,\"title_es\":\"titulo en español\",\"summary\":\"resumen en español\",\"keywords\":[\"kw1\",\"kw2\"],\"source_lang\":\"fr\"}]}";
         var prompt = $"""
             Eres un analista de inteligencia geopolítica. Para cada artículo:
-            1. Detecta el idioma original. Si NO es español ni inglés, traduce el título y resumen al español.
+            1. Detecta el idioma original. Si NO es español, traduce el título y resumen al español (incluyendo inglés, francés, alemán, etc.).
             2. Genera un resumen conciso de 2-3 frases en español.
             3. Extrae 3-5 palabras clave relevantes en español.
             4. Limpia caracteres extraños, HTML entities, y codificaciones rotas del título y resumen.
@@ -141,7 +132,7 @@ public class ArticleSummarizerAgent : BaseAgent
 
         var request = new AiRequest
         {
-            SystemPrompt = "Analista de inteligencia. Responde SOLO con JSON válido. Traduce siempre al español cuando el idioma no sea es/en.",
+            SystemPrompt = "Analista de inteligencia. Responde SOLO con JSON válido. Traduce SIEMPRE titulo y resumen al español, sin importar el idioma original.",
             UserPrompt = prompt,
             MaxTokens = 2000,
             Temperature = 0.3

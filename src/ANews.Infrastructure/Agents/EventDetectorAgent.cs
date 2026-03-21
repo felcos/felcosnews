@@ -300,8 +300,10 @@ public class EventDetectorAgent : BaseAgent
 
         var prompt =
             $"{sectionContext}\n\n" +
-            "Eres editor jefe de una agencia de noticias internacional. " +
-            "Agrupa estas noticias en EVENTOS DISTINTOS con precisión periodística.\n\n" +
+            "Eres editor jefe de una agencia de noticias internacional en ESPAÑOL. " +
+            "Agrupa estas noticias en EVENTOS DISTINTOS con precisión periodística.\n" +
+            "IMPORTANTE: Todos los títulos y descripciones de eventos DEBEN estar en ESPAÑOL.\n" +
+            "Si un artículo está en otro idioma, traduce al español para el título/descripción del evento.\n\n" +
             "REGLAS CRÍTICAS DE AGRUPACIÓN:\n" +
             "1. Un evento = un hecho específico en un lugar y tiempo concreto\n" +
             "2. NO mezcles eventos de países distintos aunque sean del mismo tema\n" +

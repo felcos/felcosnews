@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddSingleton<TelegramEditorialAgent>();
         services.AddSingleton<ReaderProfileAgent>();
         services.AddSingleton<ModuleReportAgent>();
+        services.AddSingleton<TranslatorAgent>();
         services.AddHostedService(sp => sp.GetRequiredService<NewsScannerAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<EventDetectorAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<AlertGeneratorAgent>());
@@ -83,6 +84,7 @@ public static class DependencyInjection
         services.AddHostedService(sp => sp.GetRequiredService<TelegramEditorialAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<ReaderProfileAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<ModuleReportAgent>());
+        services.AddHostedService(sp => sp.GetRequiredService<TranslatorAgent>());
 
         return services;
     }

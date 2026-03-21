@@ -20,6 +20,7 @@
 @inject ANews.Infrastructure.Agents.TelegramEditorialAgent TelegramEditorialAgent
 @inject ANews.Infrastructure.Agents.ReaderProfileAgent ReaderProfileAgent
 @inject ANews.Infrastructure.Agents.ModuleReportAgent ModuleReportAgent
+@inject ANews.Infrastructure.Agents.TranslatorAgent TranslatorAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
 @using ANews.Domain.Entities
@@ -841,6 +842,7 @@
             new("TelegramEditorialAgent",       "Telegram Editorial",   TelegramEditorialAgent),
             new("ReaderProfileAgent",            "Perfil Lector IA",     ReaderProfileAgent),
             new("ModuleReportAgent",             "Informes Módulos",     ModuleReportAgent),
+            new("TranslatorAgent",               "Traductor ES",         TranslatorAgent),
         ];
     }
 
