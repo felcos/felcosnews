@@ -19,6 +19,7 @@
 @inject ANews.Infrastructure.Agents.SourceAnalyzerAgent SourceAnalyzerAgent
 @inject ANews.Infrastructure.Agents.TelegramEditorialAgent TelegramEditorialAgent
 @inject ANews.Infrastructure.Agents.ReaderProfileAgent ReaderProfileAgent
+@inject ANews.Infrastructure.Agents.ModuleReportAgent ModuleReportAgent
 @using ANews.Infrastructure.Data
 @using ANews.Web.Hubs
 @using ANews.Domain.Entities
@@ -102,6 +103,12 @@
             <div class="kpi-value">@Stats.ActiveThreads</div>
             <div class="kpi-label">Hilos narrativos</div>
             <div class="kpi-detail">@Stats.ActivitiesToday actividades hoy</div>
+        </div>
+        <div class="kpi-card @(_kpiFlash ? "kpi-refreshing" : "")">
+            <i class="fa fa-file-alt kpi-icon"></i>
+            <div class="kpi-value">@Stats.ModuleReportsToday</div>
+            <div class="kpi-label">Informes hoy</div>
+            <div class="kpi-detail">@Stats.PendingPrompts prompts pendientes</div>
         </div>
         }
     </div>
@@ -833,6 +840,7 @@
             new("SourceAnalyzerAgent",          "Analizar Fuentes",     SourceAnalyzerAgent),
             new("TelegramEditorialAgent",       "Telegram Editorial",   TelegramEditorialAgent),
             new("ReaderProfileAgent",            "Perfil Lector IA",     ReaderProfileAgent),
+            new("ModuleReportAgent",             "Informes Módulos",     ModuleReportAgent),
         ];
     }
 
@@ -856,6 +864,8 @@
         var activeThreads = await Ctx.StoryThreads
             .CountAsync(t => !t.IsDeleted && (t.Status == ANews.Domain.Enums.StoryStatus.Developing || t.Status == ANews.Domain.Enums.StoryStatus.Active));
         var activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
+        var moduleReportsToday = await Ctx.ModuleReports.CountAsync(r => !r.IsDeleted && r.CreatedAt >= today);
+        var pendingPrompts = await Ctx.UserModules.CountAsync(m => !m.IsDeleted && m.PromptStatus == PromptStatus.Pending && m.Prompt != null);
 
         Stats = new DashboardStats
         {
@@ -869,7 +879,9 @@
             AgentsRunningCount = runningAgents.Count,
             RunningAgentNames  = runningAgents,
             ActiveThreads      = activeThreads,
-            ActivitiesToday    = activitiesToday
+            ActivitiesToday    = activitiesToday,
+            ModuleReportsToday = moduleReportsToday,
+            PendingPrompts     = pendingPrompts
         };
 
         RecentExecutions = await Ctx.AgentExecutions
@@ -1457,6 +1469,8 @@
         public int PendingAlerts { get; init; }
         public int ActiveThreads { get; init; }
         public int ActivitiesToday { get; init; }
+        public int ModuleReportsToday { get; init; }
+        public int PendingPrompts { get; init; }
     }
 
     record LiveLogEntry(string AgentName, string Level, string Message, DateTime Time);
