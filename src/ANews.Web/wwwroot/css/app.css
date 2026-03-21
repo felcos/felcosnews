@@ -2466,7 +2466,7 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 }
 
 /* Story threads dropdown (desktop) */
-.st-dropdown-wrap { position: relative; flex: 1; }
+.st-dropdown-wrap { position: relative; flex: 1; z-index: 200; }
 .st-dropdown-trigger {
   display: flex; align-items: center; gap: 8px;
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
@@ -2478,7 +2478,7 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .st-dropdown-panel {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0;
   background: var(--bg-card, #1a1a2e); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px; padding: 6px; z-index: 100;
+  border-radius: 10px; padding: 6px; z-index: 500;
   box-shadow: 0 12px 32px rgba(0,0,0,0.5); max-height: 320px; overflow-y: auto;
 }
 .st-dropdown-item {

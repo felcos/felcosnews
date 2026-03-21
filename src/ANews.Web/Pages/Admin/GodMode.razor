@@ -808,7 +808,6 @@
         try
         {
             await LoadInitialDataAsync();
-            _dataReady = true;
             await LoadSystemHealthAsync();
             await LoadZonesAsync();
             await LoadAgentConfigsAsync();
@@ -821,6 +820,7 @@
         }
         finally
         {
+            _dataReady = true;
             _initTcs.TrySetResult();
         }
     }
@@ -866,8 +866,14 @@
         var activeThreads = await Ctx.StoryThreads
             .CountAsync(t => !t.IsDeleted && (t.Status == ANews.Domain.Enums.StoryStatus.Developing || t.Status == ANews.Domain.Enums.StoryStatus.Active));
         var activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
-        var moduleReportsToday = await Ctx.ModuleReports.CountAsync(r => !r.IsDeleted && r.CreatedAt >= today);
-        var pendingPrompts = await Ctx.UserModules.CountAsync(m => !m.IsDeleted && m.PromptStatus == PromptStatus.Pending && m.Prompt != null);
+        int moduleReportsToday = 0;
+        int pendingPrompts = 0;
+        try
+        {
+            moduleReportsToday = await Ctx.ModuleReports.CountAsync(r => !r.IsDeleted && r.CreatedAt >= today);
+            pendingPrompts = await Ctx.UserModules.CountAsync(m => !m.IsDeleted && m.PromptStatus == PromptStatus.Pending && m.Prompt != null);
+        }
+        catch { /* migración puede no estar aplicada aún */ }
 
         Stats = new DashboardStats
         {
