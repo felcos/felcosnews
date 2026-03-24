@@ -25,8 +25,9 @@
             </button>
             @foreach (var s in Sections)
             {
-                <button class="nav-tab @(SelectedSection == s.Slug ? "active" : "")"
-                        @onclick="@(() => ApplyFilters(s.Slug))"
+                var slug = s.Slug;
+                <button class="nav-tab @(SelectedSection == slug ? "active" : "")"
+                        @onclick="@(() => ApplyFilters(SelectedSection == slug ? "all" : slug))"
                         style="--section-color:@s.Color">
                     <i class="fa @s.IconClass"></i> @s.Name
                 </button>
@@ -250,7 +251,7 @@
                 <div class="explore-grid">
                     @foreach (var ev in FilteredEvents)
                     {
-                        <div class="explore-card priority-@ev.Priority.ToLower()">
+                        <div class="explore-card priority-@ev.Priority.ToLower()" @onclick="@(() => Nav.NavigateTo($"/?eventId={ev.Id}"))" style="cursor:pointer">
                             <div class="ec-header">
                                 <span class="ec-priority">@ev.Priority</span>
                                 <span class="ec-section">@ev.SectionName</span>

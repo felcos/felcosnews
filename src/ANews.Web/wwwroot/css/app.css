@@ -91,9 +91,9 @@ a:hover { color: var(--accent-green); }
 }
 .sec-strip-scroll::-webkit-scrollbar { display: none; }
 
-/* Icon chip — collapses to icon-only, expands on hover/active */
+/* Icon chip — always shows icon + text with horizontal scroll */
 .sec-chip {
-  display: flex; align-items: center; gap: 0;
+  display: flex; align-items: center; gap: 6px;
   padding: 5px 9px; border-radius: 20px;
   border: 1px solid var(--border);
   background: transparent; cursor: pointer;
@@ -103,18 +103,14 @@ a:hover { color: var(--accent-green); }
 }
 .sec-chip i { font-size: 13px; flex-shrink: 0; transition: color 0.2s; }
 .sec-chip-name {
-  max-width: 0; overflow: hidden; opacity: 0;
-  transition: max-width 0.25s ease, opacity 0.2s ease, margin 0.22s ease;
   font-weight: 500; font-size: 12px;
 }
 .sec-chip:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.15); background: var(--card-bg); }
-.sec-chip:hover .sec-chip-name { max-width: 140px; opacity: 1; margin-left: 6px; }
 .sec-chip.active {
   color: var(--sc, var(--accent));
   border-color: var(--sc, var(--accent));
   background: rgba(74,144,226,0.12);
 }
-.sec-chip.active .sec-chip-name { max-width: 140px; opacity: 1; margin-left: 6px; }
 .sec-chip.active i { color: var(--sc, var(--accent)); }
 
 /* Scroll arrows */
@@ -296,6 +292,14 @@ a:hover { color: var(--accent-green); }
 .slider-label {
   font-size: 11px; color: var(--accent); font-weight: 600; min-width: 28px;
 }
+.time-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+  width: 22px; height: 22px; border-radius: 50%; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 10px;
+  transition: all 0.15s; padding: 0;
+}
+.time-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.time-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* Content */
 .content-area { flex: 1; overflow-y: auto; padding: 20px; }
@@ -1640,6 +1644,14 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .related-title { font-size: 0.9rem; color: var(--text); }
 
 /* ===== Explore Page ===== */
+/* Section nav in explore — horizontal scroll like other bars */
+.section-nav {
+  display: flex; gap: 4px; flex: 1; min-width: 0;
+  overflow-x: auto; scrollbar-width: none;
+  padding: 2px 0;
+}
+.section-nav::-webkit-scrollbar { display: none; }
+
 .explore-layout { min-height: 100vh; }
 
 /* Toolbar */
