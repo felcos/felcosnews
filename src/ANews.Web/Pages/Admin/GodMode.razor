@@ -805,24 +805,28 @@
     protected override async Task OnInitializedAsync()
     {
         InitAgentTriggers();
-        try
+        var loaders = new (string Name, Func<Task> Action)[]
         {
-            await LoadInitialDataAsync();
-            await LoadSystemHealthAsync();
-            await LoadZonesAsync();
-            await LoadAgentConfigsAsync();
-            await LoadSourcesAsync();
-            await LoadAiProvidersAsync();
-        }
-        catch (Exception ex)
+            ("Dashboard", LoadInitialDataAsync),
+            ("SystemHealth", LoadSystemHealthAsync),
+            ("Zones", LoadZonesAsync),
+            ("AgentConfigs", LoadAgentConfigsAsync),
+            ("Sources", LoadSourcesAsync),
+            ("AiProviders", LoadAiProvidersAsync),
+        };
+
+        foreach (var (name, action) in loaders)
         {
-            LiveLogs.Add(new("System", "Error", $"Error cargando datos: {ex.Message}", DateTime.Now));
+            try { await action(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GodMode.{name} error: {ex.Message}");
+                LiveLogs.Add(new("System", "Error", $"Error en {name}: {ex.Message}", DateTime.Now));
+            }
         }
-        finally
-        {
-            _dataReady = true;
-            _initTcs.TrySetResult();
-        }
+
+        _dataReady = true;
+        _initTcs.TrySetResult();
     }
 
     private void InitAgentTriggers()
@@ -1244,11 +1248,11 @@
     private async Task RefreshAll()
     {
         IsLoading = true;
-        await LoadInitialDataAsync();
-        await LoadSystemHealthAsync();
-        await LoadZonesAsync();
-        await LoadSourcesAsync();
-        await LoadAiProvidersAsync();
+        try { await LoadInitialDataAsync(); } catch { }
+        try { await LoadSystemHealthAsync(); } catch { }
+        try { await LoadZonesAsync(); } catch { }
+        try { await LoadSourcesAsync(); } catch { }
+        try { await LoadAiProvidersAsync(); } catch { }
         IsLoading = false;
     }
 
