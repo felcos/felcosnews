@@ -4,6 +4,22 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
 
+@if (_loading)
+{
+    <div class="gm-grid">
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header"><i class="fa fa-layer-group"></i><span>Secciones</span></div>
+            <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+                @for (var i = 0; i < 5; i++)
+                {
+                    <div class="skeleton" style="width:100%;height:14px;border-radius:3px"></div>
+                }
+            </div>
+        </div>
+    </div>
+    return;
+}
+
 <div class="gm-grid">
     <div class="gm-panel gm-panel-wide">
         <div class="panel-header">
@@ -121,6 +137,7 @@
 }
 
 @code {
+    private bool _loading = true;
     private List<SectionRow> _sections = [];
     private bool _showModal;
     private int _editingId;
@@ -131,6 +148,7 @@
 
     private async Task LoadAsync()
     {
+        _loading = true; StateHasChanged();
         var raw = await Ctx.NewsSections
             .Include(s => s.Events).Include(s => s.Sources)
             .ToListAsync();
@@ -140,6 +158,7 @@
             s.IsPublic, s.IsDefault, s.IsSystemSection,
             s.Events.Count(e => e.IsActive && !e.IsDeleted), s.Sources.Count(src => src.IsActive && !src.IsDeleted)))
             .ToList();
+        _loading = false;
     }
 
     private void ShowAdd()

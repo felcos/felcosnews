@@ -7,6 +7,22 @@
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 
+@if (_loading)
+{
+    <div class="gm-grid">
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header"><i class="fa fa-users"></i><span>Usuarios</span></div>
+            <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+                @for (var i = 0; i < 5; i++)
+                {
+                    <div class="skeleton" style="width:100%;height:14px;border-radius:3px"></div>
+                }
+            </div>
+        </div>
+    </div>
+    return;
+}
+
 <div class="gm-grid">
     <div class="gm-panel gm-panel-wide">
         <div class="panel-header">
@@ -110,6 +126,7 @@
 }
 
 @code {
+    private bool _loading = true;
     private List<UserRow> _users = [];
     private List<UserRow> _filtered = [];
     private string _search = "";
@@ -126,11 +143,13 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _loading = true; StateHasChanged();
         _users = await Ctx.Users
             .Select(u => new UserRow(u.Id, u.DisplayName ?? "", u.Email ?? "",
                 u.Role.ToString(), u.IsActive, u.CreatedAt, u.LastLoginAt))
             .ToListAsync();
         ApplyFilter();
+        _loading = false;
     }
 
     private void ApplyFilter()

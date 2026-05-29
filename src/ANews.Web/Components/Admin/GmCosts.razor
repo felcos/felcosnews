@@ -4,6 +4,22 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
 
+@if (_loading)
+{
+    <div class="gm-grid">
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header"><i class="fa fa-dollar-sign"></i><span>Costes de IA</span></div>
+            <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+                @for (var i = 0; i < 5; i++)
+                {
+                    <div class="skeleton" style="width:100%;height:14px;border-radius:3px"></div>
+                }
+            </div>
+        </div>
+    </div>
+    return;
+}
+
 <div class="gm-grid">
     <!-- KPIs -->
     <div class="gm-panel gm-panel-wide">
@@ -131,6 +147,7 @@
 </div>
 
 @code {
+    private bool _loading = true;
     private List<CostEntry> _entries = [];
     private decimal _totalCost, _todayCost;
     private long _totalInputTokens, _totalOutputTokens;
@@ -153,6 +170,7 @@
 
     private async Task LoadData()
     {
+        _loading = true; StateHasChanged();
         var since = DateTime.UtcNow.Date.AddDays(-_period);
         _entries = await Ctx.CostEntries
             .Include(e => e.Provider).Include(e => e.AgentExecution)
@@ -167,6 +185,7 @@
         _byAgent = _entries.GroupBy(e => e.AgentExecution?.AgentType.ToString() ?? "Manual")
             .Select(g => new AgentStat(g.Key, g.Sum(e => e.Cost), g.Count()))
             .OrderByDescending(a => a.Cost).ToList();
+        _loading = false;
         await RenderChart();
     }
 

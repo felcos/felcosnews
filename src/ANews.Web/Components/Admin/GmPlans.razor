@@ -5,6 +5,22 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
 
+@if (_loading)
+{
+    <div class="gm-grid">
+        <div class="gm-panel gm-panel-wide">
+            <div class="panel-header"><i class="fa fa-credit-card"></i><span>Planes</span></div>
+            <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+                @for (var i = 0; i < 5; i++)
+                {
+                    <div class="skeleton" style="width:100%;height:14px;border-radius:3px"></div>
+                }
+            </div>
+        </div>
+    </div>
+    return;
+}
+
 <div class="gm-grid">
     <div class="gm-panel gm-panel-wide">
         <div class="panel-header">
@@ -190,6 +206,7 @@
 }
 
 @code {
+    private bool _loading = true;
     private List<PlanRow> _plans = [];
     private Dictionary<PlanTier, int> _tierCounts = new();
     private List<UserOption> _userList = [];
@@ -207,6 +224,7 @@
 
     private async Task LoadAsync()
     {
+        _loading = true; StateHasChanged();
         var plans = await Ctx.SubscriptionPlans
             .Where(p => !p.IsDeleted)
             .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
@@ -234,6 +252,7 @@
             .OrderBy(u => u.Email)
             .Select(u => new UserOption(u.Id, u.Email ?? ""))
             .ToListAsync();
+        _loading = false;
     }
 
     private async Task ShowAdd()

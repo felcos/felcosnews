@@ -16,6 +16,28 @@
 
 <PageTitle>Fuentes de Noticias - Admin</PageTitle>
 
+@if (_loading)
+{
+    <div class="admin-page-header">
+        <div>
+            <h2>Fuentes de Noticias</h2>
+            <p class="text-muted">Cargando fuentes...</p>
+        </div>
+    </div>
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+        @for (var i = 0; i < 8; i++)
+        {
+            <div style="display:flex;gap:12px;align-items:center">
+                <div class="skeleton" style="width:180px;height:14px;border-radius:3px"></div>
+                <div class="skeleton" style="flex:1;height:14px;border-radius:3px"></div>
+                <div class="skeleton" style="width:60px;height:14px;border-radius:3px"></div>
+                <div class="skeleton" style="width:80px;height:14px;border-radius:3px"></div>
+            </div>
+        }
+    </div>
+    return;
+}
+
 <div @onclick="@(() => _seedMenuOpen = false)">
 <div class="admin-page-header">
     <div>
@@ -460,6 +482,7 @@
 </div><!-- close outer click-to-close wrapper -->
 
 @code {
+    private bool _loading = true;
     private List<NewsSource> _sources = new();
     private List<NewsSection> _sections = new();
     private string _search = "";
@@ -527,6 +550,9 @@
 
     private async Task LoadData()
     {
+        _loading = true;
+        StateHasChanged();
+
         _sources = await Db.NewsSources
             .Include(s => s.Section)
             .OrderByDescending(s => s.CreatedAt)
@@ -540,6 +566,8 @@
             .Where(z => z.IsActive && !z.IsDeleted)
             .OrderBy(z => z.SortOrder)
             .ToListAsync();
+
+        _loading = false;
     }
 
     private void OpenAddModal()

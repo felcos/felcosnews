@@ -115,11 +115,11 @@ public class ArticleSummarizerAgent : BaseAgent
 
         var responseFormat = "{\"summaries\":[{\"index\":0,\"title_es\":\"titulo en español\",\"summary\":\"resumen en español\",\"keywords\":[\"kw1\",\"kw2\"],\"source_lang\":\"fr\"}]}";
         var prompt = $"""
-            Eres un analista de inteligencia geopolítica. Para cada artículo:
-            1. Detecta el idioma original. Si NO es español, traduce el título y resumen al español (incluyendo inglés, francés, alemán, etc.).
-            2. Genera un resumen conciso de 2-3 frases en español.
+            Eres redactor de una agencia de noticias. Para cada artículo:
+            1. Detecta el idioma original. Si NO es español, traduce el título y resumen al español.
+            2. Genera un resumen de 1-2 frases en español: qué ha pasado, dónde y qué consecuencia tiene. Redacta como un despacho de agencia, directo y sin opinión. NUNCA uses fórmulas como "esta noticia es importante porque", "se trata de", "cabe destacar que" ni similares.
             3. Extrae 3-5 palabras clave relevantes en español.
-            4. Limpia caracteres extraños, HTML entities, y codificaciones rotas del título y resumen.
+            4. Limpia caracteres extraños, HTML entities y codificaciones rotas del título y resumen.
             5. En "title_es": pon el título limpio en español. Si el original ya era español, ponlo limpio. Si era otro idioma, tradúcelo.
             6. En "source_lang": pon el código ISO del idioma original detectado (es, en, fr, de, ar, zh, etc).
 
@@ -132,7 +132,7 @@ public class ArticleSummarizerAgent : BaseAgent
 
         var request = new AiRequest
         {
-            SystemPrompt = "Analista de inteligencia. Responde SOLO con JSON válido. Traduce SIEMPRE titulo y resumen al español, sin importar el idioma original.",
+            SystemPrompt = "Redactor de agencia de noticias. Responde SOLO con JSON válido. Traduce SIEMPRE titulo y resumen al español. Redacta directo al hecho, sin fórmulas repetitivas ni opinión.",
             UserPrompt = prompt,
             MaxTokens = 2000,
             Temperature = 0.3

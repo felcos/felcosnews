@@ -317,6 +317,12 @@ public class EventDetectorAgent : BaseAgent
             "IMPACT_SCORE 0-100: 90+=histórico · 70-89=crisis nacional · 50-69=importante · 20-49=regional · 0-19=local\n" +
             $"CATEGORÍA obligatoria = una de: {GetCategoryList(section)}\n\n" +
             "Noticias:\n" + articlesText + "\n\n" +
+            "ESTILO DE REDACCIÓN (CRÍTICO):\n" +
+            "- 'title': titular periodístico directo, sin opinión (ej: 'Rusia lanza ofensiva en Járkov')\n" +
+            "- 'description': 1-2 frases que resuman QUÉ ha pasado, DÓNDE y con qué consecuencia inmediata. " +
+            "Redacta como un despacho de agencia de noticias. " +
+            "NUNCA empieces con 'Esta noticia es importante porque', 'Este evento', 'Se trata de' ni fórmulas similares. " +
+            "Ve directo al hecho.\n\n" +
             "Responde SOLO con JSON válido:\n" +
             "{\"events\": [{\"title\": \"...\", \"description\": \"...\", \"priority\": \"High\", " +
             "\"impact_score\": 75, \"category\": \"...\", \"location\": \"Madrid, Spain\", " +
@@ -324,8 +330,9 @@ public class EventDetectorAgent : BaseAgent
 
         var response = await ai.CompleteAsync(new AiRequest
         {
-            SystemPrompt = $"Eres un editor de noticias experto en la sección '{sectionName}'. " +
-                           "Clasifica y agrupa noticias en eventos coherentes. Responde SIEMPRE con JSON válido.",
+            SystemPrompt = $"Eres redactor jefe de una agencia de noticias, sección '{sectionName}'. " +
+                           "Redacta titulares y descripciones como despachos de agencia: directos, informativos, sin opinión ni fórmulas repetitivas. " +
+                           "Responde SIEMPRE con JSON válido.",
             UserPrompt = prompt,
             MaxTokens = 4000,
             Temperature = 0.1,
