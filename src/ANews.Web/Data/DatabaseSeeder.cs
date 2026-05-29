@@ -189,34 +189,113 @@ public static class DatabaseSeeder
             .Where(s => !s.IsDeleted)
             .ToDictionaryAsync(s => s.Slug, s => s.Id);
 
-        var rssSources = new (string name, string url, string slug, int credibility)[]
+        var rssSources = new (string name, string url, string slug, int credibility, string lang)[]
         {
-            // Internacional
-            ("Reuters World",              "https://feeds.reuters.com/reuters/worldNews",                                                         "mundo", 95),
-            ("BBC News World",             "http://feeds.bbci.co.uk/news/world/rss.xml",                                                         "mundo", 95),
-            ("El Pais Internacional",      "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada",              "mundo", 90),
-            ("France 24 ES",               "https://www.france24.com/es/rss",                                                                    "mundo", 88),
-            ("Foreign Policy",             "https://foreignpolicy.com/feed/",                                                                    "mundo", 92),
-            // Seguridad y Defensa
-            ("War on the Rocks",           "https://warontherocks.com/feed/",                                                                    "seguridad", 90),
-            ("Defense News",               "https://www.defensenews.com/arc/outboundfeeds/rss/",                                                 "seguridad", 88),
-            ("Breaking Defense",           "https://breakingdefense.com/feed/",                                                                  "seguridad", 87),
-            ("The War Zone (The Drive)",   "https://www.thedrive.com/the-war-zone/rss",                                                         "seguridad", 89),
-            ("Krebs on Security",          "https://krebsonsecurity.com/feed/",                                                                  "seguridad", 95),
-            ("Bleeping Computer",          "https://www.bleepingcomputer.com/feed/",                                                             "seguridad", 88),
-            ("The Hacker News",            "https://feeds.feedburner.com/TheHackersNews",                                                        "seguridad", 85),
-            ("Schneier on Security",       "https://www.schneier.com/feed/atom/",                                                                "seguridad", 93),
-            ("Bellingcat",                 "https://www.bellingcat.com/feed/",                                                                   "seguridad", 88),
-            ("Just Security",              "https://www.justsecurity.org/feed/",                                                                 "seguridad", 87),
-            ("Lawfare",                    "https://www.lawfaremedia.org/rss.xml",                                                               "seguridad", 89),
-            ("Arms Control Association",   "https://www.armscontrol.org/rss.xml",                                                               "seguridad", 92),
-            ("Bulletin of Atomic Scientists","https://thebulletin.org/feed/",                                                                    "seguridad", 93),
-            // Economia y Negocios
-            ("Reuters Business",           "https://feeds.reuters.com/reuters/businessNews",                                                     "economia", 93),
-            ("Financial Times",            "https://www.ft.com/rss/home",                                                                       "economia", 94),
+            // ── Internacional ─────────────────────────────────────────────────
+            ("Reuters World",              "https://feeds.reuters.com/reuters/worldNews",                                                         "mundo", 95, "en"),
+            ("BBC News World",             "http://feeds.bbci.co.uk/news/world/rss.xml",                                                         "mundo", 95, "en"),
+            ("El Pais Internacional",      "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada",              "mundo", 90, "es"),
+            ("France 24 ES",               "https://www.france24.com/es/rss",                                                                    "mundo", 88, "es"),
+            ("Foreign Policy",             "https://foreignpolicy.com/feed/",                                                                    "mundo", 92, "en"),
+            ("Al Jazeera English",         "https://www.aljazeera.com/xml/rss/all.xml",                                                          "mundo", 88, "en"),
+            ("DW Espanol",                 "https://rss.dw.com/xml/rss-sp-all",                                                                  "mundo", 87, "es"),
+            ("EFE Internacional",          "https://www.efe.com/efe/espana/mundo/rss",                                                           "mundo", 90, "es"),
+            ("RTVE Noticias",              "https://www.rtve.es/api/noticias.rss",                                                               "mundo", 88, "es"),
+            ("Euronews ES",               "https://es.euronews.com/rss",                                                                         "mundo", 85, "es"),
+
+            // ── Politica (enfoque Espana) ─────────────────────────────────────
+            ("El Pais Espana",             "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/espana/portada",                     "politica", 90, "es"),
+            ("El Mundo Espana",            "https://e00-elmundo.uecdn.es/elmundo/rss/espana.xml",                                                "politica", 85, "es"),
+            ("La Vanguardia Politica",     "https://www.lavanguardia.com/rss/politica.xml",                                                      "politica", 87, "es"),
+            ("ABC Espana",                 "https://www.abc.es/rss/feeds/abc_EspsanaEspworlds.xml",                                              "politica", 84, "es"),
+            ("20 Minutos",                 "https://www.20minutos.es/rss/nacional/",                                                             "politica", 82, "es"),
+            ("Publico",                    "https://www.publico.es/rss/politica",                                                                "politica", 80, "es"),
+            ("elDiario.es",                "https://www.eldiario.es/rss/",                                                                       "politica", 83, "es"),
+            ("Europa Press Espana",        "https://www.europapress.es/rss/rss.aspx?ch=00285",                                                   "politica", 88, "es"),
+            ("Politico EU",                "https://www.politico.eu/feed/",                                                                      "politica", 90, "en"),
+
+            // ── Economia y Negocios ───────────────────────────────────────────
+            ("Reuters Business",           "https://feeds.reuters.com/reuters/businessNews",                                                     "economia", 93, "en"),
+            ("Financial Times",            "https://www.ft.com/rss/home",                                                                       "economia", 94, "en"),
+            ("El Economista",              "https://www.eleconomista.es/rss/rss-seleccion-ee.php",                                               "economia", 85, "es"),
+            ("Cinco Dias",                 "https://cincodias.elpais.com/rss/cincodias/portada.xml",                                             "economia", 87, "es"),
+            ("Expansion",                  "https://e00-expansion.uecdn.es/rss/portada.xml",                                                     "economia", 86, "es"),
+            ("Bloomberg",                  "https://feeds.bloomberg.com/markets/news.rss",                                                       "economia", 94, "en"),
+            ("CNBC",                       "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",                "economia", 90, "en"),
+            ("Europa Press Economia",      "https://www.europapress.es/rss/rss.aspx?ch=00296",                                                   "economia", 86, "es"),
+            ("Bolsamania",                 "https://www.bolsamania.com/rss/",                                                                    "economia", 80, "es"),
+
+            // ── Tecnologia ────────────────────────────────────────────────────
+            ("Ars Technica",               "https://feeds.arstechnica.com/arstechnica/index",                                                    "tecnologia", 90, "en"),
+            ("The Verge",                  "https://www.theverge.com/rss/index.xml",                                                             "tecnologia", 88, "en"),
+            ("Wired",                      "https://www.wired.com/feed/rss",                                                                     "tecnologia", 89, "en"),
+            ("Xataka",                     "https://www.xataka.com/feedburner.xml",                                                              "tecnologia", 85, "es"),
+            ("Genbeta",                    "https://www.genbeta.com/feedburner.xml",                                                             "tecnologia", 82, "es"),
+            ("TechCrunch",                 "https://techcrunch.com/feed/",                                                                       "tecnologia", 88, "en"),
+
+            // ── Ciencia y Salud ───────────────────────────────────────────────
+            ("Nature News",                "https://www.nature.com/nature.rss",                                                                  "ciencia", 95, "en"),
+            ("Science News",               "https://www.science.org/rss/news_current.xml",                                                       "ciencia", 95, "en"),
+            ("El Pais Ciencia",            "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/ciencia/portada",                    "ciencia", 88, "es"),
+            ("Agencia SINC",               "https://www.agenciasinc.es/feed",                                                                    "ciencia", 87, "es"),
+            ("WHO News",                   "https://www.who.int/rss-feeds/news-english.xml",                                                     "ciencia", 92, "en"),
+
+            // ── Sociedad ──────────────────────────────────────────────────────
+            ("El Pais Sociedad",           "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/sociedad/portada",                   "sociedad", 88, "es"),
+            ("La Vanguardia Vida",         "https://www.lavanguardia.com/rss/vida.xml",                                                          "sociedad", 85, "es"),
+            ("20 Minutos Sociedad",        "https://www.20minutos.es/rss/sociedad/",                                                             "sociedad", 80, "es"),
+            ("BBC News Education",         "https://feeds.bbci.co.uk/news/education/rss.xml",                                                    "sociedad", 88, "en"),
+
+            // ── Seguridad y Defensa ───────────────────────────────────────────
+            ("War on the Rocks",           "https://warontherocks.com/feed/",                                                                    "seguridad", 90, "en"),
+            ("Defense News",               "https://www.defensenews.com/arc/outboundfeeds/rss/",                                                 "seguridad", 88, "en"),
+            ("Breaking Defense",           "https://breakingdefense.com/feed/",                                                                  "seguridad", 87, "en"),
+            ("The War Zone (The Drive)",   "https://www.thedrive.com/the-war-zone/rss",                                                         "seguridad", 89, "en"),
+            ("Krebs on Security",          "https://krebsonsecurity.com/feed/",                                                                  "seguridad", 95, "en"),
+            ("Bleeping Computer",          "https://www.bleepingcomputer.com/feed/",                                                             "seguridad", 88, "en"),
+            ("The Hacker News",            "https://feeds.feedburner.com/TheHackersNews",                                                        "seguridad", 85, "en"),
+            ("Schneier on Security",       "https://www.schneier.com/feed/atom/",                                                                "seguridad", 93, "en"),
+            ("Bellingcat",                 "https://www.bellingcat.com/feed/",                                                                   "seguridad", 88, "en"),
+            ("Just Security",              "https://www.justsecurity.org/feed/",                                                                 "seguridad", 87, "en"),
+            ("Lawfare",                    "https://www.lawfaremedia.org/rss.xml",                                                               "seguridad", 89, "en"),
+            ("Arms Control Association",   "https://www.armscontrol.org/rss.xml",                                                               "seguridad", 92, "en"),
+            ("Bulletin of Atomic Scientists","https://thebulletin.org/feed/",                                                                    "seguridad", 93, "en"),
+            ("Infodefensa",                "https://www.infodefensa.com/rss/news.xml",                                                           "seguridad", 84, "es"),
+
+            // ── Justicia ──────────────────────────────────────────────────────
+            ("El Pais Tribunales",         "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/espana/cat/tribunales/portada",      "justicia", 88, "es"),
+            ("Confilegal",                 "https://confilegal.com/feed/",                                                                       "justicia", 82, "es"),
+            ("Noticias Juridicas",         "https://noticias.juridicas.com/rss/actualidad.xml",                                                  "justicia", 80, "es"),
+
+            // ── Medio Ambiente ────────────────────────────────────────────────
+            ("El Pais Clima",              "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/clima-y-medio-ambiente/portada",     "medioambiente", 87, "es"),
+            ("National Geographic ES",     "https://www.nationalgeographic.com.es/rss",                                                          "medioambiente", 88, "es"),
+            ("Carbon Brief",               "https://www.carbonbrief.org/feed",                                                                   "medioambiente", 90, "en"),
+
+            // ── Cultura y Deportes ────────────────────────────────────────────
+            ("Marca",                      "https://e00-marca.uecdn.es/rss/portada.xml",                                                        "cultura", 82, "es"),
+            ("AS Deportes",                "https://as.com/rss/tags/ultimas_noticias.xml",                                                       "cultura", 82, "es"),
+            ("El Pais Cultura",            "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/cultura/portada",                    "cultura", 88, "es"),
+            ("BBC Culture",                "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",                                       "cultura", 87, "en"),
+            ("Mundo Deportivo",            "https://www.mundodeportivo.com/rss/home.xml",                                                        "cultura", 80, "es"),
+
+            // ── Gente y Corazon ───────────────────────────────────────────────
+            ("Hola",                       "https://www.hola.com/rss/",                                                                          "gente", 75, "es"),
+            ("Vanitatis",                  "https://www.vanitatis.elconfidencial.com/rss/",                                                      "gente", 73, "es"),
+            ("Lecturas",                   "https://www.lecturas.com/rss.xml",                                                                   "gente", 72, "es"),
+            ("Semana",                     "https://www.semana.es/rss/",                                                                         "gente", 72, "es"),
+            ("Diez Minutos",               "https://www.diezminutos.es/rss/",                                                                   "gente", 71, "es"),
+            ("Cosmopolitan ES",            "https://www.cosmopolitan.com/es/rss/",                                                               "gente", 70, "es"),
+            ("People EN",                  "https://people.com/feed/",                                                                           "gente", 78, "en"),
+            ("E! News",                    "https://www.eonline.com/syndication/feeds/rssfeeds/topstories.xml",                                   "gente", 75, "en"),
+
+            // ── Opinion y Analisis ────────────────────────────────────────────
+            ("El Pais Opinion",            "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/opinion/portada",                    "opinion", 85, "es"),
+            ("El Mundo Opinion",           "https://e00-elmundo.uecdn.es/elmundo/rss/opinion.xml",                                               "opinion", 83, "es"),
+            ("The Guardian Opinion",       "https://www.theguardian.com/uk/commentisfree/rss",                                                   "opinion", 88, "en"),
         };
 
-        foreach (var (name, url, slug, credibility) in rssSources)
+        foreach (var (name, url, slug, credibility, lang) in rssSources)
         {
             if (!await ctx.NewsSources.AnyAsync(s => s.Url == url))
             {
@@ -228,7 +307,7 @@ public static class DatabaseSeeder
                         Type = NewsSourceType.Rss,
                         NewsSectionId = sectionId,
                         CredibilityScore = credibility,
-                        Language = "en",
+                        Language = lang,
                         IsActive = true
                     });
                 }

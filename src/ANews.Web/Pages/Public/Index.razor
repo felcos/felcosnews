@@ -38,10 +38,6 @@
                 @(IsConnected ? "EN VIVO" : "OFFLINE")
             </div>
             <div class="view-switcher">
-                <button class="view-btn @(ViewMode == "universe" ? "active" : "")"
-                        @onclick="@(() => SetViewMode("universe"))" title="Vista universo">
-                    <i class="fa fa-globe"></i>
-                </button>
                 <button class="view-btn @(ViewMode == "grid" ? "active" : "")"
                         @onclick="@(() => SetViewMode("grid"))" title="Vista grid">
                     <i class="fa fa-th"></i>
@@ -57,10 +53,6 @@
                 <button class="view-btn @(ViewMode == "threads" ? "active" : "")"
                         @onclick="@(() => SetViewMode("threads"))" title="Hilos narrativos">
                     <i class="fa fa-project-diagram"></i>
-                </button>
-                <button class="view-btn @(ViewMode == "universe3d" ? "active" : "")"
-                        @onclick="@(() => SetViewMode("universe3d"))" title="Vista universo 3D">
-                    <i class="fa fa-cube"></i>
                 </button>
             </div>
             <a href="/explore" class="explore-link"><i class="fa fa-calendar-alt"></i> Explorar</a>
@@ -349,21 +341,6 @@
                 <i class="fa fa-satellite-dish"></i>
                 <h2>Escaneando fuentes...</h2>
                 <p>Los agentes están trabajando. Vuelve en unos minutos.</p>
-            </div>
-        }
-        else if (ViewMode == "universe")
-        {
-            <!-- Universe canvas - gestionado por universe.js sin conflictos Blazor -->
-            <div class="universe-container" id="universe-container">
-                <canvas id="universe-canvas"></canvas>
-                <!-- Tooltip overlay gestionado por JS -->
-                <div id="universe-tooltip" class="universe-tooltip" style="display:none"></div>
-            </div>
-        }
-        else if (ViewMode == "universe3d")
-        {
-            <div class="universe-container" id="universe3d-container">
-                <canvas id="universe3d-canvas"></canvas>
             </div>
         }
         else if (ViewMode == "map")
@@ -1029,11 +1006,7 @@
         _geoFilter = geos;
         _showWorkspacePicker = false;
         try { await JS.InvokeVoidAsync("localStorage.setItem", "anews-workspace", name); } catch { }
-        if (ViewMode == "universe")
-            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
-        else if (ViewMode == "universe3d")
-            try { await JS.InvokeVoidAsync("universe3d.updateData", FilteredEvents, Sections); } catch { }
-        else if (ViewMode == "map")
+        if (ViewMode == "map")
             try { await JS.InvokeVoidAsync("newsMap.updateData", FilteredEvents); } catch { }
     }
 
@@ -1305,8 +1278,6 @@
             {
                 await LoadEventsAsync();
                 await InvokeAsync(StateHasChanged);
-                if (ViewMode == "universe")
-                    try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
             });
 
             _hub.On<object>("CriticalAlert", async _ =>
@@ -1324,8 +1295,6 @@
         }
     }
 
-    private bool _pendingUniverseInit = false;
-    private bool _pendingUniverse3dInit = false;
     private bool _pendingMapInit = false;
 
     // ── Theme ──────────────────────────────────────────────
@@ -1390,23 +1359,9 @@
 
             await LoadUserKeywordsAsync();
 
-            if (ViewMode == "universe")
-                await InitUniverseAsync();
             return;
         }
 
-        // Canvas is guaranteed in DOM here — safe to init universe
-        if (_pendingUniverseInit)
-        {
-            _pendingUniverseInit = false;
-            await InitUniverseAsync();
-            await LoadUserKeywordsAsync();
-        }
-        if (_pendingUniverse3dInit)
-        {
-            _pendingUniverse3dInit = false;
-            await InitUniverse3dAsync();
-        }
         if (_pendingMapInit)
         {
             _pendingMapInit = false;
@@ -1439,9 +1394,6 @@
             )).ToList();
 
             var allKeywords = modules.SelectMany(m => m.Keywords).Select(k => k.Keyword).Distinct().ToList();
-            if (allKeywords.Count > 0)
-                try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKeywords); } catch { }
-
             // Cargar ultimos informes de modulos del usuario
             _moduleReports = await Ctx.ModuleReports
                 .Where(r => r.UserId == user.Id && !r.IsDeleted)
@@ -1457,20 +1409,6 @@
                 await InvokeAsync(StateHasChanged);
         }
         catch { }
-    }
-
-    private async Task InitUniverseAsync()
-    {
-        _dotnetRef ??= DotNetObjectReference.Create(this);
-        try { await JS.InvokeVoidAsync("universe.init", "universe-canvas", FilteredEvents, Sections, _dotnetRef); }
-        catch { /* universe.js no disponible */ }
-    }
-
-    private async Task InitUniverse3dAsync()
-    {
-        _dotnetRef ??= DotNetObjectReference.Create(this);
-        try { await JS.InvokeVoidAsync("universe3d.init", "universe3d-canvas", FilteredEvents, Sections, _dotnetRef); }
-        catch { /* universe3d.js or three.js not available */ }
     }
 
     private async Task InitMapAsync()
@@ -1512,25 +1450,11 @@
 
     private async Task SetViewMode(string mode)
     {
-        if (mode != "universe")
-            try { await JS.InvokeVoidAsync("universe.destroy"); } catch { }
-        if (mode != "universe3d")
-            try { await JS.InvokeVoidAsync("universe3d.destroy"); } catch { }
         if (mode != "map")
             try { await JS.InvokeVoidAsync("newsMap.destroy"); } catch { }
 
         ViewMode = mode;
-        if (mode == "universe")
-        {
-            _pendingUniverseInit = true;
-            StateHasChanged();
-        }
-        else if (mode == "universe3d")
-        {
-            _pendingUniverse3dInit = true;
-            StateHasChanged();
-        }
-        else if (mode == "map")
+        if (mode == "map")
         {
             _pendingMapInit = true;
             StateHasChanged();
@@ -1574,23 +1498,6 @@
         var sectionId = Sections.FirstOrDefault(s => s.Slug == slug)?.Id;
         await TrackActivity(ActivityType.SectionFiltered, sectionId: sectionId, metadata: slug);
 
-        if (ViewMode == "universe")
-        {
-            // In universe mode, always show all events; use keywords for highlighting
-            if (slug.StartsWith("module:") && int.TryParse(slug[7..], out var modId))
-            {
-                var mod = UserModules.FirstOrDefault(m => m.Id == modId);
-                if (mod != null)
-                    try { await JS.InvokeVoidAsync("universe.setUserKeywords", mod.Keywords); } catch { }
-            }
-            else
-            {
-                // Restore all user keywords
-                var allKws = UserModules.SelectMany(m => m.Keywords).Distinct().ToList();
-                try { await JS.InvokeVoidAsync("universe.setUserKeywords", allKws); } catch { }
-            }
-            try { await JS.InvokeVoidAsync("universe.updateData", FilteredEvents, Sections); } catch { }
-        }
     }
 
     private async Task OpenEvent(EventItem ev)
