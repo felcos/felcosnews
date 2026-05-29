@@ -352,6 +352,8 @@ else
         _loading = true;
         StateHasChanged();
 
+        try
+        {
         _userPage = 1;
         _profilePage = 1;
 
@@ -372,12 +374,13 @@ else
         _profilesAnalyzed = await Ctx.ReaderProfiles.CountAsync(p => p.LastAnalyzedAt != null);
 
         // Activity by type for selected period
-        _byType = await Ctx.UserActivities
+        var rawByType = await Ctx.UserActivities
             .Where(a => a.CreatedAt >= since)
             .GroupBy(a => a.ActivityType)
-            .Select(g => new TypeStat(g.Key.ToString(), g.Count()))
-            .OrderByDescending(t => t.Count)
+            .Select(g => new { Type = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
             .ToListAsync();
+        _byType = rawByType.Select(x => new TypeStat(x.Type.ToString(), x.Count)).ToList();
         _totalPeriod = _byType.Sum(t => t.Count);
 
         // Top sections
@@ -448,34 +451,55 @@ else
         }).ToList();
 
         // Quotas
-        _quotas = await Ctx.SectionQuotas
+        var rawQuotas = await Ctx.SectionQuotas
             .Include(q => q.Section)
             .OrderByDescending(q => q.CurrentReads)
             .Take(100)
-            .Select(q => new QuotaRow(
-                Ctx.Users.Where(u => u.Id == q.UserId).Select(u => u.DisplayName ?? "").FirstOrDefault() ?? $"User#{q.UserId}",
-                q.Section != null ? q.Section.Name : $"Section#{q.NewsSectionId}",
-                q.PlanTier.ToString(),
-                q.CurrentReads,
-                q.MaxReadsPerMonth))
             .ToListAsync();
 
+        var quotaUserIds = rawQuotas.Select(q => q.UserId).Distinct().ToList();
+        var quotaUsers = await Ctx.Users
+            .Where(u => quotaUserIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName })
+            .ToDictionaryAsync(u => u.Id);
+
+        _quotas = rawQuotas.Select(q =>
+        {
+            quotaUsers.TryGetValue(q.UserId, out var u);
+            return new QuotaRow(
+                u?.DisplayName ?? $"User#{q.UserId}",
+                q.Section?.Name ?? $"Section#{q.NewsSectionId}",
+                q.PlanTier.ToString(),
+                q.CurrentReads,
+                q.MaxReadsPerMonth);
+        }).ToList();
+
         // Users near limit (80%+ of quota)
-        _nearLimitUsers = await Ctx.SectionQuotas
-            .Include(q => q.Section)
+        _nearLimitUsers = rawQuotas
             .Where(q => q.MaxReadsPerMonth > 0 && q.CurrentReads >= q.MaxReadsPerMonth * 0.8)
             .OrderByDescending(q => (double)q.CurrentReads / q.MaxReadsPerMonth)
             .Take(50)
-            .Select(q => new NearLimitRow(
-                Ctx.Users.Where(u => u.Id == q.UserId).Select(u => u.DisplayName ?? "").FirstOrDefault() ?? $"User#{q.UserId}",
-                q.Section != null ? q.Section.Name : $"Section#{q.NewsSectionId}",
-                q.PlanTier.ToString(),
-                q.CurrentReads,
-                q.MaxReadsPerMonth))
-            .ToListAsync();
+            .Select(q =>
+            {
+                quotaUsers.TryGetValue(q.UserId, out var u);
+                return new NearLimitRow(
+                    u?.DisplayName ?? $"User#{q.UserId}",
+                    q.Section?.Name ?? $"Section#{q.NewsSectionId}",
+                    q.PlanTier.ToString(),
+                    q.CurrentReads,
+                    q.MaxReadsPerMonth);
+            }).ToList();
 
-        _loading = false;
-        StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GmActivity.LoadData error: {ex.Message}");
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
     }
 
     private static string Truncate(string? s, int max) =>
