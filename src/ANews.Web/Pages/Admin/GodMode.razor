@@ -896,33 +896,35 @@
             PendingPrompts     = pendingPrompts
         };
 
-        RecentExecutions = await Ctx.AgentExecutions
+        var rawExecs = await Ctx.AgentExecutions
+            .AsNoTracking()
             .OrderByDescending(e => e.StartedAt).Take(10)
-            .Select(e => new ExecutionItem(
-                e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
-                e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
-                e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error))
             .ToListAsync();
+        RecentExecutions = rawExecs.Select(e => new ExecutionItem(
+            e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
+            e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
+            e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error)).ToList();
 
         // Load last execution per agent for progress bars
         var agentNames = AgentTriggers.Select(a => a.Name).ToList();
-        var lastExecs = await Ctx.AgentExecutions
+        var rawLastExecs = await Ctx.AgentExecutions
+            .AsNoTracking()
             .Where(e => agentNames.Contains(e.AgentName))
             .GroupBy(e => e.AgentName)
             .Select(g => g.OrderByDescending(e => e.StartedAt).First())
-            .Select(e => new ExecutionItem(
-                e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
-                e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
-                e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error))
             .ToListAsync();
-        _lastAgentExecs = lastExecs.ToDictionary(e => e.AgentName);
+        _lastAgentExecs = rawLastExecs.Select(e => new ExecutionItem(
+            e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
+            e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
+            e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error)).ToDictionary(e => e.AgentName);
 
-        PendingAlerts = await Ctx.AlertTriggers
+        var rawAlerts = await Ctx.AlertTriggers
+            .AsNoTracking()
             .Include(a => a.NewsEvent)
             .Where(a => !a.IsAcknowledged)
             .OrderByDescending(a => a.Severity).ThenByDescending(a => a.CreatedAt).Take(20)
-            .Select(a => new AlertItem(a.Id, a.Title, a.Severity.ToString(), a.CreatedAt))
             .ToListAsync();
+        PendingAlerts = rawAlerts.Select(a => new AlertItem(a.Id, a.Title, a.Severity.ToString(), a.CreatedAt)).ToList();
 
         await LoadCostDataAsync();
         UpdateNextRunCountdowns();
@@ -1007,8 +1009,8 @@
     private async Task LoadSourcesAsync()
     {
         var srcs = await Ctx.NewsSources
+            .AsNoTracking()
             .Include(s => s.Section)
-            .Where(s => !s.IsDeleted)
             .OrderByDescending(s => s.FailedScans)
             .Take(100)
             .ToListAsync();
