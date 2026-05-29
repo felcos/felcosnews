@@ -43,6 +43,15 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole<int>>(opts =>
 .AddEntityFrameworkStores<AppDbContext>()
 .AddDefaultTokenProviders();
 
+builder.Services.ConfigureApplicationCookie(opts =>
+{
+    opts.ExpireTimeSpan = TimeSpan.FromDays(30);
+    opts.SlidingExpiration = true;
+    opts.LoginPath = "/login";
+    opts.LogoutPath = "/logout";
+    opts.AccessDeniedPath = "/login";
+});
+
 // JWT Auth (para API tokens externos)
 var jwtKey = builder.Configuration["Jwt:SecretKey"]
     ?? throw new InvalidOperationException("Jwt:SecretKey no configurado");

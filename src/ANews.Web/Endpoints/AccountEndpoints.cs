@@ -13,13 +13,12 @@ public static class AccountEndpoints
             var form = await http.Request.ReadFormAsync();
             var email = form["email"].ToString();
             var password = form["password"].ToString();
-            var rememberMe = form["rememberMe"] == "true";
             var returnUrl = form["returnUrl"].ToString();
 
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
                 return Results.Redirect("/login?error=invalid");
 
-            var result = await signInMgr.PasswordSignInAsync(email, password, rememberMe, lockoutOnFailure: true);
+            var result = await signInMgr.PasswordSignInAsync(email, password, isPersistent: true, lockoutOnFailure: true);
             if (result.Succeeded)
                 return Results.Redirect(string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl);
             if (result.IsLockedOut)
@@ -83,7 +82,7 @@ public static class AccountEndpoints
                 return Results.Redirect("/register?success=check-email");
             }
 
-            await signInMgr.SignInAsync(user, isPersistent: false);
+            await signInMgr.SignInAsync(user, isPersistent: true);
             return Results.Redirect("/user");
         }).DisableAntiforgery();
 
@@ -99,7 +98,7 @@ public static class AccountEndpoints
             var result = await userManager.ConfirmEmailAsync(user, Uri.UnescapeDataString(token));
             if (!result.Succeeded) return Results.Redirect("/?confirmed=error");
 
-            await signInMgr.SignInAsync(user, isPersistent: false);
+            await signInMgr.SignInAsync(user, isPersistent: true);
             return Results.Redirect("/?confirmed=1");
         }).DisableAntiforgery();
 
