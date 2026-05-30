@@ -40,7 +40,12 @@ public class NewsScannerAgent : BaseAgent
         {
             try
             {
-                var newArticles = await ScanSourceAsync(ctx, httpFactory, source, ct);
+                int newArticles = source.Type switch
+                {
+                    NewsSourceType.Gdelt => await ScanGdeltAsync(ctx, httpFactory, source, ct),
+                    NewsSourceType.WorldNewsApi => await ScanWorldNewsApiAsync(ctx, httpFactory, source, ct),
+                    _ => await ScanSourceAsync(ctx, httpFactory, source, ct) // RSS, GoogleNewsRss, Api, Scraper usan parser RSS
+                };
                 totalNew += newArticles;
                 source.LastScannedAt = DateTime.UtcNow;
                 source.SuccessfulScans++;
@@ -117,6 +122,160 @@ public class NewsScannerAgent : BaseAgent
             };
 
             ctx.NewsArticles.Add(article);
+            newCount++;
+        }
+
+        await ctx.SaveChangesAsync(ct);
+        return newCount;
+    }
+
+    private async Task<int> ScanGdeltAsync(AppDbContext ctx, IHttpClientFactory httpFactory, NewsSource source, CancellationToken ct)
+    {
+        HttpClient http = httpFactory.CreateClient("rss");
+
+        // GDELT DOC API - source.Url contiene la query completa
+        // Ejemplo: https://api.gdeltproject.org/api/v2/doc/doc?query=sourcelang:spanish&mode=artlist&maxrecords=50&format=json
+        string url = source.Url;
+
+        HttpResponseMessage response = await http.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+        string json = await response.Content.ReadAsStringAsync(ct);
+
+        using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(json);
+        int newCount = 0;
+
+        if (!doc.RootElement.TryGetProperty("articles", out System.Text.Json.JsonElement articles))
+            return 0;
+
+        foreach (System.Text.Json.JsonElement article in articles.EnumerateArray().Take(50))
+        {
+            string? articleUrl = article.GetProperty("url").GetString();
+            if (string.IsNullOrWhiteSpace(articleUrl)) continue;
+
+            string hash = ComputeHash(articleUrl);
+            if (await ctx.NewsArticles.AnyAsync(a => a.ContentHash == hash, ct))
+                continue;
+
+            NewsEvent unclassifiedEvent = await GetOrCreateUnclassifiedEventAsync(ctx, source.NewsSectionId);
+
+            string title = article.TryGetProperty("title", out System.Text.Json.JsonElement t) ? t.GetString() ?? "Sin titulo" : "Sin titulo";
+            string domain = article.TryGetProperty("domain", out System.Text.Json.JsonElement d) ? d.GetString() ?? source.Name : source.Name;
+
+            DateTime publishedAt = DateTime.UtcNow;
+            if (article.TryGetProperty("seendate", out System.Text.Json.JsonElement sd))
+            {
+                string? dateStr = sd.GetString();
+                if (!string.IsNullOrWhiteSpace(dateStr) && dateStr.Length >= 14)
+                {
+                    // Formato de fecha GDELT: YYYYMMDDHHmmSS
+                    if (DateTime.TryParseExact(dateStr[..14], "yyyyMMddHHmmss",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime parsed))
+                        publishedAt = parsed;
+                }
+            }
+
+            NewsArticle newsArticle = new NewsArticle
+            {
+                Title = title,
+                Summary = "", // GDELT no proporciona resumenes
+                SourceUrl = articleUrl,
+                SourceName = domain,
+                PublishedAt = publishedAt,
+                ProcessedAt = DateTime.UtcNow,
+                Language = source.Language,
+                ContentHash = hash,
+                CredibilityScore = source.CredibilityScore,
+                NewsEventId = unclassifiedEvent.Id,
+                NewsSourceId = source.Id
+            };
+
+            ctx.NewsArticles.Add(newsArticle);
+            newCount++;
+        }
+
+        await ctx.SaveChangesAsync(ct);
+        return newCount;
+    }
+
+    private async Task<int> ScanWorldNewsApiAsync(AppDbContext ctx, IHttpClientFactory httpFactory, NewsSource source, CancellationToken ct)
+    {
+        HttpClient http = httpFactory.CreateClient("rss");
+
+        // API key almacenada en CustomHeaders como JSON
+        string apiKey = "";
+        if (!string.IsNullOrWhiteSpace(source.CustomHeaders))
+        {
+            try
+            {
+                using System.Text.Json.JsonDocument headersDoc = System.Text.Json.JsonDocument.Parse(source.CustomHeaders);
+                if (headersDoc.RootElement.TryGetProperty("apiKey", out System.Text.Json.JsonElement ak))
+                    apiKey = ak.GetString() ?? "";
+            }
+            catch { }
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("WorldNewsAPI requiere apiKey en CustomHeaders: {\"apiKey\":\"tu-key\"}");
+
+        // source.Url contiene la busqueda base, ej: https://api.worldnewsapi.com/search-news?language=es
+        string url = source.Url;
+        char separator = url.Contains('?') ? '&' : '?';
+        url += $"{separator}api-key={apiKey}&number=50";
+
+        HttpResponseMessage response = await http.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+        string json = await response.Content.ReadAsStringAsync(ct);
+
+        using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(json);
+        int newCount = 0;
+
+        if (!doc.RootElement.TryGetProperty("news", out System.Text.Json.JsonElement newsArray))
+            return 0;
+
+        foreach (System.Text.Json.JsonElement item in newsArray.EnumerateArray().Take(50))
+        {
+            string? articleUrl = item.TryGetProperty("url", out System.Text.Json.JsonElement u) ? u.GetString() : null;
+            if (string.IsNullOrWhiteSpace(articleUrl)) continue;
+
+            string hash = ComputeHash(articleUrl);
+            if (await ctx.NewsArticles.AnyAsync(a => a.ContentHash == hash, ct))
+                continue;
+
+            NewsEvent unclassifiedEvent = await GetOrCreateUnclassifiedEventAsync(ctx, source.NewsSectionId);
+
+            string title = item.TryGetProperty("title", out System.Text.Json.JsonElement t) ? t.GetString() ?? "Sin titulo" : "Sin titulo";
+            string? textContent = item.TryGetProperty("text", out System.Text.Json.JsonElement tx) ? tx.GetString() : null;
+            string summary = !string.IsNullOrWhiteSpace(textContent) ? textContent[..Math.Min(textContent.Length, 500)] : "";
+            string sourceName = source.Name;
+            if (item.TryGetProperty("author", out System.Text.Json.JsonElement author) && !string.IsNullOrWhiteSpace(author.GetString()))
+                sourceName = author.GetString()!;
+            else if (item.TryGetProperty("source_country", out System.Text.Json.JsonElement sc) && !string.IsNullOrWhiteSpace(sc.GetString()))
+                sourceName = sc.GetString()!;
+
+            DateTime publishedAt = DateTime.UtcNow;
+            if (item.TryGetProperty("publish_date", out System.Text.Json.JsonElement pd))
+            {
+                if (DateTime.TryParse(pd.GetString(), out DateTime parsed))
+                    publishedAt = parsed.ToUniversalTime();
+            }
+
+            NewsArticle newsArticle = new NewsArticle
+            {
+                Title = title,
+                Summary = summary,
+                SourceUrl = articleUrl,
+                SourceName = sourceName,
+                PublishedAt = publishedAt,
+                ProcessedAt = DateTime.UtcNow,
+                Language = source.Language,
+                ContentHash = hash,
+                CredibilityScore = source.CredibilityScore,
+                NewsEventId = unclassifiedEvent.Id,
+                NewsSourceId = source.Id
+            };
+
+            ctx.NewsArticles.Add(newsArticle);
             newCount++;
         }
 

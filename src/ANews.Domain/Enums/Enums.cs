@@ -106,7 +106,10 @@ public enum NewsSourceType
 {
     Rss,
     Api,
-    Scraper
+    Scraper,
+    GoogleNewsRss,
+    Gdelt,
+    WorldNewsApi
 }
 
 public enum DigestionFrequency
