@@ -26,6 +26,13 @@ public static class DependencyInjection
                 o => o.MigrationsAssembly("ANews.Infrastructure")
                       .EnableRetryOnFailure(3)));
 
+        // Factory para Blazor Server — cada componente crea su propio DbContext aislado
+        services.AddDbContextFactory<AppDbContext>(opts =>
+            opts.UseNpgsql(
+                dataSource,
+                o => o.MigrationsAssembly("ANews.Infrastructure")
+                      .EnableRetryOnFailure(3)), ServiceLifetime.Scoped);
+
         // Redis
         services.AddStackExchangeRedisCache(opts =>
         {
