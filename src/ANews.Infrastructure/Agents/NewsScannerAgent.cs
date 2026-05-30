@@ -44,7 +44,8 @@ public class NewsScannerAgent : BaseAgent
                 {
                     NewsSourceType.Gdelt => await ScanGdeltAsync(ctx, httpFactory, source, ct),
                     NewsSourceType.WorldNewsApi => await ScanWorldNewsApiAsync(ctx, httpFactory, source, ct),
-                    _ => await ScanSourceAsync(ctx, httpFactory, source, ct) // RSS, GoogleNewsRss, Api, Scraper usan parser RSS
+                    NewsSourceType.Scraper => await ScanHtmlAsync(ctx, httpFactory, source, ct),
+                    _ => await ScanSourceAsync(ctx, httpFactory, source, ct)
                 };
                 totalNew += newArticles;
                 source.LastScannedAt = DateTime.UtcNow;
@@ -83,10 +84,10 @@ public class NewsScannerAgent : BaseAgent
         catch { encoding = Encoding.UTF8; }
         var content = encoding.GetString(bytes);
 
-        // If content is HTML (not RSS), skip
+        // If content is HTML (not RSS), fallback to HTML scraping
         if (content.TrimStart().StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
             content.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("La URL devuelve HTML, no RSS. Verifica la URL del feed.");
+            return await ScanHtmlFromContentAsync(ctx, source, content);
 
         // Sanitize common XML issues before parsing
         content = SanitizeXml(content);
@@ -280,6 +281,103 @@ public class NewsScannerAgent : BaseAgent
         }
 
         await ctx.SaveChangesAsync(ct);
+        return newCount;
+    }
+
+    private async Task<int> ScanHtmlAsync(AppDbContext ctx, IHttpClientFactory httpFactory, NewsSource source, CancellationToken ct)
+    {
+        HttpClient http = httpFactory.CreateClient("rss");
+        string content = await http.GetStringAsync(source.Url, ct);
+        return await ScanHtmlFromContentAsync(ctx, source, content);
+    }
+
+    private async Task<int> ScanHtmlFromContentAsync(AppDbContext ctx, NewsSource source, string html)
+    {
+        var doc = new HtmlAgilityPack.HtmlDocument();
+        doc.LoadHtml(html);
+
+        // Extract base URL for resolving relative links
+        Uri baseUri = new Uri(source.Url);
+
+        // Strategy: find article links in common news site patterns
+        // Look for links inside <article>, <h1>-<h3>, or common CSS class patterns
+        var candidateNodes = new List<HtmlAgilityPack.HtmlNode>();
+
+        // 1. Links inside <article> tags
+        var articles = doc.DocumentNode.SelectNodes("//article//a[@href]");
+        if (articles != null) candidateNodes.AddRange(articles);
+
+        // 2. Links inside heading tags (h1, h2, h3)
+        var headingLinks = doc.DocumentNode.SelectNodes("//h1/a[@href] | //h2/a[@href] | //h3/a[@href]");
+        if (headingLinks != null) candidateNodes.AddRange(headingLinks);
+
+        // 3. Links with common news class/attribute patterns
+        var classLinks = doc.DocumentNode.SelectNodes("//a[@href][contains(@class,'title') or contains(@class,'headline') or contains(@class,'noticia') or contains(@class,'article') or contains(@class,'news') or contains(@class,'entry')]");
+        if (classLinks != null) candidateNodes.AddRange(classLinks);
+
+        // Deduplicate by href
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var extractedLinks = new List<(string Url, string Title)>();
+
+        foreach (var node in candidateNodes)
+        {
+            string? href = node.GetAttributeValue("href", null);
+            if (string.IsNullOrWhiteSpace(href)) continue;
+
+            // Resolve relative URLs
+            if (!Uri.TryCreate(baseUri, href, out Uri? fullUri)) continue;
+            string fullUrl = fullUri.AbsoluteUri;
+
+            // Skip non-article links (home, categories, tags, images, etc.)
+            if (fullUrl.Contains("#") || fullUrl.EndsWith("/") && fullUrl.Count(c => c == '/') <= 3) continue;
+            if (fullUrl.Contains("/tag/") || fullUrl.Contains("/categoria/") || fullUrl.Contains("/category/")) continue;
+            if (fullUrl.Contains("/author/") || fullUrl.Contains("/autor/")) continue;
+            if (fullUrl.EndsWith(".jpg") || fullUrl.EndsWith(".png") || fullUrl.EndsWith(".gif")) continue;
+
+            // Must be same domain
+            if (fullUri.Host != baseUri.Host) continue;
+
+            // Must have a path longer than just /
+            if (fullUri.AbsolutePath.Length < 5) continue;
+
+            if (!seen.Add(fullUrl)) continue;
+
+            string title = node.InnerText.Trim();
+            // Skip if title is too short (probably not an article)
+            if (title.Length < 10) continue;
+
+            extractedLinks.Add((fullUrl, title));
+        }
+
+        if (extractedLinks.Count == 0)
+            throw new InvalidOperationException("La URL devuelve HTML pero no se encontraron artículos. Verifica la URL.");
+
+        int newCount = 0;
+        foreach (var (url, title) in extractedLinks.Take(50))
+        {
+            string hash = ComputeHash(url);
+            if (await ctx.NewsArticles.AnyAsync(a => a.ContentHash == hash))
+                continue;
+
+            var unclassifiedEvent = await GetOrCreateUnclassifiedEventAsync(ctx, source.NewsSectionId);
+            ctx.NewsArticles.Add(new NewsArticle
+            {
+                Title = StripHtml(title),
+                Summary = "",
+                SourceUrl = url,
+                SourceName = source.Name,
+                PublishedAt = DateTime.UtcNow,
+                ProcessedAt = DateTime.UtcNow,
+                Language = source.Language,
+                ContentHash = hash,
+                CredibilityScore = source.CredibilityScore,
+                NewsEventId = unclassifiedEvent.Id,
+                NewsSourceId = source.Id
+            });
+            newCount++;
+        }
+
+        await ctx.SaveChangesAsync();
         return newCount;
     }
 
