@@ -35,6 +35,9 @@ public class SourceAnalyzerAgent : BaseAgent
         var providerConfig = await ctx.AiProviderConfigs.FirstOrDefaultAsync(p => p.IsDefault && p.IsActive, ct);
         if (providerConfig != null) execution.AiProviderConfigId = providerConfig.Id;
 
+        // Phase 0: Deduplicate sources with same URL
+        int deduped = await DeduplicateSourcesAsync(ctx, execution, ct);
+
         // Phase 1: Update speed scores based on article timing
         int speedUpdated = await UpdateSpeedScoresAsync(ctx, ct);
 
@@ -44,9 +47,60 @@ public class SourceAnalyzerAgent : BaseAgent
         // Phase 3: Analyze bias for sources that haven't been analyzed yet (AI)
         int biasAnalyzed = await AnalyzeBiasAsync(ctx, aiProvider, execution, ct);
 
-        execution.ItemsProcessed = speedUpdated + credibilityUpdated + biasAnalyzed;
+        execution.ItemsProcessed = speedUpdated + credibilityUpdated + biasAnalyzed + deduped;
         await LogAsync(ctx, execution, AgentLogLevel.Info,
-            $"Velocidad: {speedUpdated} fuentes, Credibilidad: {credibilityUpdated} fuentes, Sesgo: {biasAnalyzed} fuentes analizadas");
+            $"Dedup: {deduped}, Velocidad: {speedUpdated}, Credibilidad: {credibilityUpdated}, Sesgo: {biasAnalyzed}");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  Phase 0: Deduplicate — remove sources with the same URL, keep the best one
+    // ─────────────────────────────────────────────────────────────────────────────
+    private async Task<int> DeduplicateSourcesAsync(AppDbContext ctx, AgentExecution execution, CancellationToken ct)
+    {
+        var allSources = await ctx.NewsSources
+            .Where(s => !s.IsDeleted)
+            .ToListAsync(ct);
+
+        var duplicateGroups = allSources
+            .GroupBy(s => s.Url.TrimEnd('/').ToLowerInvariant())
+            .Where(g => g.Count() > 1);
+
+        int removed = 0;
+        foreach (var group in duplicateGroups)
+        {
+            // Keep the source with most articles, then most successful scans, then lowest Id
+            var ordered = group
+                .OrderByDescending(s => s.TotalArticlesFound)
+                .ThenByDescending(s => s.SuccessfulScans)
+                .ThenBy(s => s.Id)
+                .ToList();
+
+            var keeper = ordered[0];
+            foreach (var duplicate in ordered.Skip(1))
+            {
+                // Reassign articles from duplicate to keeper
+                var articles = await ctx.NewsArticles
+                    .Where(a => a.NewsSourceId == duplicate.Id)
+                    .ToListAsync(ct);
+                foreach (var article in articles)
+                    article.NewsSourceId = keeper.Id;
+
+                // Merge stats into keeper
+                keeper.TotalArticlesFound += duplicate.TotalArticlesFound;
+                keeper.SuccessfulScans += duplicate.SuccessfulScans;
+
+                duplicate.IsDeleted = true;
+                removed++;
+            }
+        }
+
+        if (removed > 0)
+        {
+            await ctx.SaveChangesAsync(ct);
+            await LogAsync(ctx, execution, AgentLogLevel.Info, $"Eliminadas {removed} fuentes duplicadas por URL");
+        }
+
+        return removed;
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
