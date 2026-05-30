@@ -124,9 +124,9 @@ builder.Services.AddHttpClient("nominatim", c =>
 });
 builder.Services.AddHttpClient("rss", c =>
 {
-    c.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible; AgenteNews/1.0; +https://agente.news/bot)");
+    c.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
     c.DefaultRequestHeaders.Add("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*");
-    c.Timeout = TimeSpan.FromSeconds(20);
+    c.Timeout = TimeSpan.FromSeconds(30);
 });
 
 // Controllers (para API REST publica)

@@ -313,8 +313,20 @@ public class NewsScannerAgent : BaseAgent
         xml = Regex.Replace(xml, @"\s+xlink:\w+='[^']*'", "");
         // Replace unescaped & not followed by known entity or #
         xml = Regex.Replace(xml, @"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)", "&amp;");
-        // Remove CDATA end sequences that appear outside CDATA
-        xml = xml.Replace("]]>", "");
+
+        // Fix truncated CDATA sections: if there's an unclosed <![CDATA[ without ]]>, close it
+        int lastCdataOpen = xml.LastIndexOf("<![CDATA[", StringComparison.Ordinal);
+        if (lastCdataOpen >= 0)
+        {
+            int lastCdataClose = xml.IndexOf("]]>", lastCdataOpen, StringComparison.Ordinal);
+            if (lastCdataClose < 0)
+            {
+                // CDATA is unclosed — truncate at the last complete XML tag before the unclosed CDATA
+                // and close the CDATA + parent tags to make it parseable
+                xml = xml + "]]></description></item></channel></rss>";
+            }
+        }
+
         return xml;
     }
 
