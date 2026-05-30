@@ -72,6 +72,7 @@ public class NewsScannerAgent : BaseAgent
             {
                 source.FailedScans++;
                 source.LastError = ex.Message;
+                source.LastScannedAt = DateTime.UtcNow; // Marcar como escaneada aunque falle
                 _logger.LogWarning(ex, "Error escaneando fuente {Source}", source.Name);
                 await LogAsync(ctx, execution, AgentLogLevel.Warning, $"[{source.Name}] Error: {ex.Message}");
             }
