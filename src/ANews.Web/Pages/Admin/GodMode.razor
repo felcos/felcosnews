@@ -516,16 +516,16 @@
                         </div>
                     </div>
 
-                    <!-- Source health table -->
+                    <!-- Source health table with full CRUD -->
                     <div class="gm-panel gm-panel-wide">
                         <div class="panel-header">
                             <i class="fa fa-heartbeat"></i>
-                            <span>Salud de Fuentes</span>
+                            <span>Gestión de Fuentes</span>
                             <span style="font-size:11px;color:var(--text-muted)">
                                 @_sources.Count(s => s.HealthStatus == "ok") OK ·
                                 <span style="color:var(--accent-yellow)">@_sources.Count(s => s.HealthStatus == "warn") degradadas</span> ·
                                 <span style="color:var(--accent-red)">@_sources.Count(s => s.HealthStatus == "fail") caídas</span>
-                                · @_sources.Count total
+                                · @_sourceTotalCount total
                             </span>
                             <div class="panel-actions" style="margin-left:auto;display:flex;gap:6px">
                                 <select class="form-control" style="width:auto;height:28px;font-size:11px" @bind="_sourceFilter" @bind:after="LoadSourcesAsync">
@@ -537,19 +537,19 @@
                                 <button class="btn-sm" style="color:var(--accent-red)" @onclick="DisableFailedSourcesAsync">
                                     <i class="fa fa-ban"></i> Deshabilitar caídas
                                 </button>
-                                <a href="/admin/sources" class="btn-sm" style="text-decoration:none">
-                                    <i class="fa fa-external-link-alt"></i> Gestión completa
-                                </a>
+                                <button class="btn-sm" style="color:var(--accent-green)" @onclick="OpenAddSource">
+                                    <i class="fa fa-plus"></i> Nueva fuente
+                                </button>
                             </div>
                         </div>
-                        <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+                        <div style="overflow-x:auto">
                             <table class="source-health-table">
                                 <thead><tr>
                                     <th></th><th>Fuente</th><th>Tipo</th><th>Sección</th>
                                     <th>OK / Fail</th><th>Artículos</th><th>Fiabilidad</th><th>Último scan</th><th>Acciones</th>
                                 </tr></thead>
                                 <tbody>
-                                    @foreach (var src in _sources.OrderBy(s => s.HealthStatus == "ok" ? 2 : s.HealthStatus == "warn" ? 1 : 0).ThenBy(s => s.Name))
+                                    @foreach (var src in _sourcesPaged)
                                     {
                                         <tr style="@(!src.IsActive ? "opacity:0.5" : "")">
                                             <td><span class="src-status-dot src-@src.HealthStatus"></span></td>
@@ -573,9 +573,17 @@
                                                 @(src.LastScannedAt.HasValue ? src.LastScannedAt.Value.ToString("dd/MM HH:mm") : "—")
                                             </td>
                                             <td style="display:flex;gap:4px">
+                                                <button class="btn-sm" @onclick="@(() => OpenEditSource(src.Id))"
+                                                        style="font-size:11px" title="Editar">
+                                                    <i class="fa fa-pencil-alt"></i>
+                                                </button>
                                                 <button class="btn-sm" @onclick="@(() => ToggleSourceAsync(src.Id, src.IsActive))"
                                                         style="font-size:11px" title="@(src.IsActive ? "Desactivar" : "Activar")">
-                                                    <i class="fa @(src.IsActive ? "fa-toggle-on" : "fa-toggle-off")"></i>
+                                                    <i class="fa @(src.IsActive ? "fa-toggle-on" : "fa-toggle-off")" style="color:@(src.IsActive ? "var(--accent-green)" : "var(--text-muted)")"></i>
+                                                </button>
+                                                <button class="btn-sm" @onclick="@(() => DeleteSourceAsync(src.Id))"
+                                                        style="font-size:11px;color:var(--accent-red)" title="Eliminar">
+                                                    <i class="fa fa-trash"></i>
                                                 </button>
                                             </td>
                                         </tr>
@@ -583,7 +591,100 @@
                                 </tbody>
                             </table>
                         </div>
+                        @if (_sourceTotalPages > 1)
+                        {
+                            <div style="display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 16px;border-top:1px solid var(--border);font-size:12px">
+                                <button class="btn-sm" disabled="@(_sourcePage <= 1)" @onclick="@(() => ChangeSourcePage(_sourcePage - 1))">
+                                    <i class="fa fa-chevron-left"></i>
+                                </button>
+                                @for (int p = 1; p <= _sourceTotalPages; p++)
+                                {
+                                    int page = p;
+                                    <button class="btn-sm" style="@(page == _sourcePage ? "background:var(--accent-blue);color:#fff;border-radius:4px" : "")"
+                                            @onclick="@(() => ChangeSourcePage(page))">@(page)</button>
+                                }
+                                <button class="btn-sm" disabled="@(_sourcePage >= _sourceTotalPages)" @onclick="@(() => ChangeSourcePage(_sourcePage + 1))">
+                                    <i class="fa fa-chevron-right"></i>
+                                </button>
+                                <span style="color:var(--text-muted);margin-left:8px">@_sourceTotalCount fuentes</span>
+                            </div>
+                        }
                     </div>
+
+                    <!-- Source Create/Edit Modal -->
+                    @if (_showSourceModal)
+                    {
+                        <div class="modal-overlay" @onclick="@(() => _showSourceModal = false)">
+                            <div class="modal-box" style="max-width:520px" @onclick:stopPropagation>
+                                <div class="modal-header">
+                                    <h3>@(_editingSourceId > 0 ? "Editar Fuente" : "Nueva Fuente")</h3>
+                                    <button @onclick="@(() => _showSourceModal = false)"><i class="fa fa-times"></i></button>
+                                </div>
+                                <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Nombre *</label>
+                                            <input class="form-control" @bind="_srcForm.Name" placeholder="Nombre de la fuente" />
+                                        </div>
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Tipo</label>
+                                            <select class="form-control" @bind="_srcForm.Type">
+                                                @foreach (NewsSourceType t in Enum.GetValues<NewsSourceType>())
+                                                {
+                                                    <option value="@t">@t</option>
+                                                }
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label style="font-size:12px;color:var(--text-muted)">URL *</label>
+                                        <input class="form-control" @bind="_srcForm.Url" placeholder="https://..." />
+                                    </div>
+                                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Sección</label>
+                                            <select class="form-control" @bind="_srcForm.NewsSectionId">
+                                                @foreach (var sec in _sectionsList)
+                                                {
+                                                    <option value="@sec.Id">@sec.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Credibilidad</label>
+                                            <input type="number" class="form-control" @bind="_srcForm.CredibilityScore" min="0" max="100" />
+                                        </div>
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Idioma</label>
+                                            <input class="form-control" @bind="_srcForm.Language" placeholder="es" />
+                                        </div>
+                                    </div>
+                                    @if (_srcForm.Type is NewsSourceType.WorldNewsApi or NewsSourceType.Api)
+                                    {
+                                        <div>
+                                            <label style="font-size:12px;color:var(--text-muted)">Custom Headers (JSON)</label>
+                                            <input class="form-control" @bind="_srcForm.CustomHeaders" placeholder="{&quot;apiKey&quot;:&quot;xxx&quot;}" />
+                                        </div>
+                                    }
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <input type="checkbox" id="srcActive" @bind="_srcForm.IsActive" />
+                                        <label for="srcActive" style="font-size:12px;margin:0">Activa</label>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(_srcFormError))
+                                    {
+                                        <div style="color:var(--accent-red);font-size:12px"><i class="fa fa-exclamation-circle"></i> @_srcFormError</div>
+                                    }
+                                </div>
+                                <div class="modal-footer">
+                                    <button class="btn btn-secondary" @onclick="@(() => _showSourceModal = false)">Cancelar</button>
+                                    <button class="btn btn-primary" @onclick="SaveSourceAsync" disabled="@_savingSource">
+                                        @if (_savingSource) { <i class="fa fa-spinner fa-spin"></i> }
+                                        @(_editingSourceId > 0 ? "Guardar" : "Crear")
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }
 
                     <!-- Geocodificación -->
                     <div class="gm-panel gm-panel-wide">
@@ -797,6 +898,21 @@
     private string _zoneError = "";
     private WorkspaceZone? _editingZone;
     private ZoneForm _zoneForm = new();
+
+    // Source CRUD
+    private int _sourcePage = 1;
+    private int _sourcePageSize = 25;
+    private int _sourceTotalCount;
+    private int _sourceTotalPages => (int)Math.Ceiling((double)_sourceTotalCount / _sourcePageSize);
+    private List<SourceHealthItem> _sourcesPaged => _sources
+        .OrderBy(s => s.HealthStatus == "ok" ? 2 : s.HealthStatus == "warn" ? 1 : 0).ThenBy(s => s.Name)
+        .Skip((_sourcePage - 1) * _sourcePageSize).Take(_sourcePageSize).ToList();
+    private bool _showSourceModal;
+    private bool _savingSource;
+    private int _editingSourceId;
+    private string _srcFormError = "";
+    private SourceFormModel _srcForm = new();
+    private List<NewsSection> _sectionsList = [];
 
     // Auto-refresh timer
     private System.Threading.Timer? _refreshTimer;
@@ -1052,6 +1168,17 @@
             string status = !s.IsActive ? "fail" : total == 0 ? "ok" : pct >= 70 ? "ok" : pct >= 40 ? "warn" : "fail";
             return new SourceHealthItem(s.Id, s.Name, s.Section?.Name ?? "—", s.Type.ToString(), s.SuccessfulScans, s.FailedScans, s.TotalArticlesFound, pct, status, s.LastScannedAt, s.IsActive);
         }).ToList();
+        _sourceTotalCount = _sources.Count;
+
+        // Asegurar que la página actual es válida
+        if (_sourcePage > _sourceTotalPages && _sourceTotalPages > 0) _sourcePage = _sourceTotalPages;
+
+        // Cargar secciones si no se han cargado
+        if (_sectionsList.Count == 0)
+        {
+            _sectionsList = await ctx.NewsSections.AsNoTracking()
+                .Where(s => !s.IsDeleted).OrderBy(s => s.Name).ToListAsync(_cts.Token);
+        }
     }
 
     private async Task LoadAiProvidersAsync()
@@ -1336,6 +1463,95 @@
         await LoadSourcesAsync();
     }
 
+    private void ChangeSourcePage(int page)
+    {
+        _sourcePage = Math.Max(1, Math.Min(page, _sourceTotalPages));
+    }
+
+    private void OpenAddSource()
+    {
+        _editingSourceId = 0;
+        _srcForm = new SourceFormModel { IsActive = true, CredibilityScore = 70, Language = "es" };
+        if (_sectionsList.Count > 0) _srcForm.NewsSectionId = _sectionsList[0].Id;
+        _srcFormError = "";
+        _showSourceModal = true;
+    }
+
+    private async Task OpenEditSource(int id)
+    {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        NewsSource? src = await ctx.NewsSources.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, _cts.Token);
+        if (src == null) return;
+        _editingSourceId = id;
+        _srcForm = new SourceFormModel
+        {
+            Name = src.Name, Url = src.Url, Type = src.Type,
+            NewsSectionId = src.NewsSectionId, CredibilityScore = src.CredibilityScore,
+            Language = src.Language, IsActive = src.IsActive, CustomHeaders = src.CustomHeaders
+        };
+        _srcFormError = "";
+        _showSourceModal = true;
+    }
+
+    private async Task SaveSourceAsync()
+    {
+        _srcFormError = "";
+        if (string.IsNullOrWhiteSpace(_srcForm.Name)) { _srcFormError = "El nombre es obligatorio"; return; }
+        if (string.IsNullOrWhiteSpace(_srcForm.Url)) { _srcFormError = "La URL es obligatoria"; return; }
+        if (!Uri.TryCreate(_srcForm.Url.Trim(), UriKind.Absolute, out _)) { _srcFormError = "URL no válida"; return; }
+
+        _savingSource = true;
+        try
+        {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            if (_editingSourceId > 0)
+            {
+                NewsSource? src = await ctx.NewsSources.FindAsync(new object[] { _editingSourceId }, _cts.Token);
+                if (src == null) { _srcFormError = "Fuente no encontrada"; return; }
+                src.Name = _srcForm.Name.Trim();
+                src.Url = _srcForm.Url.Trim();
+                src.Type = _srcForm.Type;
+                src.NewsSectionId = _srcForm.NewsSectionId;
+                src.CredibilityScore = _srcForm.CredibilityScore;
+                src.Language = _srcForm.Language;
+                src.IsActive = _srcForm.IsActive;
+                src.CustomHeaders = _srcForm.CustomHeaders;
+            }
+            else
+            {
+                ctx.NewsSources.Add(new NewsSource
+                {
+                    Name = _srcForm.Name.Trim(),
+                    Url = _srcForm.Url.Trim(),
+                    Type = _srcForm.Type,
+                    NewsSectionId = _srcForm.NewsSectionId,
+                    CredibilityScore = _srcForm.CredibilityScore,
+                    Language = _srcForm.Language,
+                    IsActive = _srcForm.IsActive,
+                    CustomHeaders = _srcForm.CustomHeaders
+                });
+            }
+            await ctx.SaveChangesAsync(_cts.Token);
+            _showSourceModal = false;
+            await LoadSourcesAsync();
+        }
+        catch (Exception ex) { _srcFormError = ex.Message; }
+        finally { _savingSource = false; }
+    }
+
+    private async Task DeleteSourceAsync(int id)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar esta fuente?")) return;
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        NewsSource? src = await ctx.NewsSources.FindAsync(new object[] { id }, _cts.Token);
+        if (src != null)
+        {
+            src.IsDeleted = true;
+            await ctx.SaveChangesAsync(_cts.Token);
+            await LoadSourcesAsync();
+        }
+    }
+
     // ── Zones ─────────────────────────────────────────
     private async Task LoadZonesAsync()
     {
@@ -1557,5 +1773,17 @@
         public string Description { get; set; } = "";
         public string GeoTermsText { get; set; } = "";
         public int SortOrder { get; set; } = 0;
+    }
+
+    class SourceFormModel
+    {
+        public string Name { get; set; } = "";
+        public string Url { get; set; } = "";
+        public NewsSourceType Type { get; set; } = NewsSourceType.Rss;
+        public int NewsSectionId { get; set; }
+        public int CredibilityScore { get; set; } = 70;
+        public string Language { get; set; } = "es";
+        public bool IsActive { get; set; } = true;
+        public string? CustomHeaders { get; set; }
     }
 }
