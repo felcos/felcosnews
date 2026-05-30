@@ -300,6 +300,13 @@ else
                         Activa
                     </label>
                 </div>
+                @if (_form.Type is NewsSourceType.WorldNewsApi or NewsSourceType.Api)
+                {
+                    <div class="form-group form-group-full">
+                        <label>Custom Headers (JSON) <small class="text-muted">Ej: {"apiKey":"tu-key"}</small></label>
+                        <input class="form-control" @bind="_form.CustomHeaders" placeholder='{"apiKey":"xxx"}' />
+                    </div>
+                }
             </div>
 
             @if (!string.IsNullOrEmpty(_formError))
@@ -596,7 +603,8 @@ else
             NewsSectionId = src.NewsSectionId,
             CredibilityScore = src.CredibilityScore,
             Language = src.Language ?? "es",
-            IsActive = src.IsActive
+            IsActive = src.IsActive,
+            CustomHeaders = src.CustomHeaders
         };
         _formError = "";
         _showModal = true;
@@ -628,6 +636,7 @@ else
                 _editingSource.CredibilityScore = _form.CredibilityScore;
                 _editingSource.Language = _form.Language;
                 _editingSource.IsActive = _form.IsActive;
+                _editingSource.CustomHeaders = _form.CustomHeaders;
                 ctx.NewsSources.Update(_editingSource);
             }
             else
@@ -640,7 +649,8 @@ else
                     NewsSectionId = _form.NewsSectionId,
                     CredibilityScore = _form.CredibilityScore,
                     Language = _form.Language,
-                    IsActive = _form.IsActive
+                    IsActive = _form.IsActive,
+                    CustomHeaders = _form.CustomHeaders
                 };
                 await ctx.NewsSources.AddAsync(newSource);
             }
@@ -772,6 +782,7 @@ else
         public int CredibilityScore { get; set; } = 70;
         public string Language { get; set; } = "es";
         public bool IsActive { get; set; } = true;
+        public string? CustomHeaders { get; set; }
     }
 
     // ── Seed feeds by workspace ───────────────────────────
