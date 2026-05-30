@@ -525,29 +525,43 @@
                                 @_sources.Count(s => s.HealthStatus == "ok") OK ·
                                 <span style="color:var(--accent-yellow)">@_sources.Count(s => s.HealthStatus == "warn") degradadas</span> ·
                                 <span style="color:var(--accent-red)">@_sources.Count(s => s.HealthStatus == "fail") caídas</span>
+                                · @_sources.Count total
                             </span>
-                            <button class="btn-sm" style="margin-left:auto" @onclick="DisableFailedSourcesAsync">
-                                Deshabilitar caídas
-                            </button>
+                            <div class="panel-actions" style="margin-left:auto;display:flex;gap:6px">
+                                <select class="form-control" style="width:auto;height:28px;font-size:11px" @bind="_sourceFilter" @bind:after="LoadSourcesAsync">
+                                    <option value="active">Activas</option>
+                                    <option value="all">Todas</option>
+                                    <option value="failing">Con errores</option>
+                                    <option value="inactive">Inactivas</option>
+                                </select>
+                                <button class="btn-sm" style="color:var(--accent-red)" @onclick="DisableFailedSourcesAsync">
+                                    <i class="fa fa-ban"></i> Deshabilitar caídas
+                                </button>
+                                <a href="/admin/sources" class="btn-sm" style="text-decoration:none">
+                                    <i class="fa fa-external-link-alt"></i> Gestión completa
+                                </a>
+                            </div>
                         </div>
-                        <div style="overflow-x:auto">
+                        <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
                             <table class="source-health-table">
                                 <thead><tr>
-                                    <th></th><th>Fuente</th><th>Sección</th>
-                                    <th>OK / Fail</th><th>Fiabilidad</th><th>Último scan</th><th>Acciones</th>
+                                    <th></th><th>Fuente</th><th>Tipo</th><th>Sección</th>
+                                    <th>OK / Fail</th><th>Artículos</th><th>Fiabilidad</th><th>Último scan</th><th>Acciones</th>
                                 </tr></thead>
                                 <tbody>
-                                    @foreach (var src in _sources.OrderBy(s => s.HealthStatus == "ok" ? 2 : s.HealthStatus == "warn" ? 1 : 0))
+                                    @foreach (var src in _sources.OrderBy(s => s.HealthStatus == "ok" ? 2 : s.HealthStatus == "warn" ? 1 : 0).ThenBy(s => s.Name))
                                     {
-                                        <tr>
+                                        <tr style="@(!src.IsActive ? "opacity:0.5" : "")">
                                             <td><span class="src-status-dot src-@src.HealthStatus"></span></td>
-                                            <td style="font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@src.Name</td>
-                                            <td style="color:var(--text-muted)">@src.SectionName</td>
+                                            <td style="font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@src.Name">@src.Name</td>
+                                            <td style="font-size:10px;color:var(--text-muted)">@src.SourceType</td>
+                                            <td style="color:var(--text-muted);font-size:11px">@src.SectionName</td>
                                             <td>
                                                 <span style="color:var(--accent-green)">@src.SuccessfulScans</span>
                                                 /
                                                 <span style="color:var(--accent-red)">@src.FailedScans</span>
                                             </td>
+                                            <td style="font-size:11px">@src.TotalArticles</td>
                                             <td>
                                                 <span class="health-bar">
                                                     <span class="health-bar-fill"
@@ -558,10 +572,10 @@
                                             <td style="color:var(--text-muted);font-size:11px">
                                                 @(src.LastScannedAt.HasValue ? src.LastScannedAt.Value.ToString("dd/MM HH:mm") : "—")
                                             </td>
-                                            <td>
+                                            <td style="display:flex;gap:4px">
                                                 <button class="btn-sm" @onclick="@(() => ToggleSourceAsync(src.Id, src.IsActive))"
-                                                        style="font-size:11px">
-                                                    @(src.IsActive ? "Deshab." : "Habilitar")
+                                                        style="font-size:11px" title="@(src.IsActive ? "Desactivar" : "Activar")">
+                                                    <i class="fa @(src.IsActive ? "fa-toggle-on" : "fa-toggle-off")"></i>
                                                 </button>
                                             </td>
                                         </tr>
@@ -1012,22 +1026,31 @@
         _agentConfigs = await ctx.AgentConfigs.OrderBy(c => c.AgentType).ToListAsync(_cts.Token);
     }
 
+    private string _sourceFilter = "active";
+
     private async Task LoadSourcesAsync()
     {
         await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
-        var srcs = await ctx.NewsSources
+        IQueryable<NewsSource> query = ctx.NewsSources
             .AsNoTracking()
-            .Include(s => s.Section)
-            .OrderByDescending(s => s.FailedScans)
-            .Take(100)
-            .ToListAsync(_cts.Token);
+            .Include(s => s.Section);
+
+        query = _sourceFilter switch
+        {
+            "active" => query.Where(s => s.IsActive),
+            "inactive" => query.Where(s => !s.IsActive),
+            "failing" => query.Where(s => s.IsActive && s.FailedScans > s.SuccessfulScans),
+            _ => query
+        };
+
+        List<NewsSource> srcs = await query.OrderBy(s => s.Name).ToListAsync(_cts.Token);
 
         _sources = srcs.Select(s =>
         {
-            var total = s.SuccessfulScans + s.FailedScans;
-            var pct = total > 0 ? (int)(s.SuccessfulScans * 100.0 / total) : 100;
-            var status = total == 0 ? "ok" : pct >= 70 ? "ok" : pct >= 40 ? "warn" : "fail";
-            return new SourceHealthItem(s.Id, s.Name, s.Section?.Name ?? "—", s.SuccessfulScans, s.FailedScans, pct, status, s.LastScannedAt, s.IsActive);
+            int total = s.SuccessfulScans + s.FailedScans;
+            int pct = total > 0 ? (int)(s.SuccessfulScans * 100.0 / total) : (s.IsActive ? 100 : 0);
+            string status = !s.IsActive ? "fail" : total == 0 ? "ok" : pct >= 70 ? "ok" : pct >= 40 ? "warn" : "fail";
+            return new SourceHealthItem(s.Id, s.Name, s.Section?.Name ?? "—", s.Type.ToString(), s.SuccessfulScans, s.FailedScans, s.TotalArticlesFound, pct, status, s.LastScannedAt, s.IsActive);
         }).ToList();
     }
 
@@ -1516,7 +1539,7 @@
     record ProviderCostItem(string Name, decimal Cost, double Percent, string Color);
     record HealthItem(string Name, bool IsOk, string Value);
     record ExecutionLogItem(string Level, string Message, DateTime Timestamp);
-    record SourceHealthItem(int Id, string Name, string SectionName, int SuccessfulScans, int FailedScans, int ReliabilityPct, string HealthStatus, DateTime? LastScannedAt, bool IsActive);
+    record SourceHealthItem(int Id, string Name, string SectionName, string SourceType, int SuccessfulScans, int FailedScans, int TotalArticles, int ReliabilityPct, string HealthStatus, DateTime? LastScannedAt, bool IsActive);
     class AgentTriggerItem(string name, string displayName, ANews.Infrastructure.Agents.BaseAgent? agent)
     {
         public string Name = name;
