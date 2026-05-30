@@ -1,7 +1,7 @@
 @page "/user/modules"
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
@@ -12,6 +12,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>Mis Modulos — AgenteNews</PageTitle>
 
@@ -211,6 +212,7 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private List<ModuleRow> Modules = [];
     private int CurrentUserId;
     private bool ShowModal;
@@ -235,7 +237,9 @@
 
     private async Task LoadAsync()
     {
-        Modules = await Ctx.UserModules
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        Modules = await ctx.UserModules
             .Include(m => m.Keywords)
             .Where(m => m.UserId == CurrentUserId && !m.IsDeleted)
             .Select(m => new ModuleRow(
@@ -245,7 +249,8 @@
                 m.Keywords.Select(k => new KwItem(k.Keyword, k.Weight)).ToList(),
                 m.Prompt, m.PromptStatus.ToString(), m.PromptRejectionReason,
                 m.Reports.Count(r => !r.IsDeleted)))
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
     }
 
     private void ShowAdd()
@@ -256,7 +261,9 @@
 
     private async Task ShowEdit(int id)
     {
-        var m = await Ctx.UserModules.Include(m => m.Keywords).FirstOrDefaultAsync(m => m.Id == id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var m = await ctx.UserModules.Include(m => m.Keywords).AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == id, _cts.Token);
         if (m == null) return;
         Form = new ModuleForm
         {
@@ -346,6 +353,8 @@
 
             var promptStatus = isValid ? PromptStatus.Approved : PromptStatus.Rejected;
 
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
             if (EditingId == 0)
             {
                 var module = new UserModule
@@ -358,11 +367,11 @@
                     PromptStatus = promptStatus,
                     PromptRejectionReason = rejectionReason
                 };
-                Ctx.UserModules.Add(module);
+                ctx.UserModules.Add(module);
             }
             else
             {
-                var m = await Ctx.UserModules.FirstOrDefaultAsync(m => m.Id == EditingId);
+                var m = await ctx.UserModules.FirstOrDefaultAsync(m => m.Id == EditingId, _cts.Token);
                 if (m == null) return;
                 m.Name = Form.Name; m.Color = Form.Color; m.IconClass = Form.IconClass;
                 m.NotificationFrequency = Form.Frequency; m.NotificationsEnabled = Form.NotificationsEnabled;
@@ -374,7 +383,7 @@
                 if (!isValid) m.IsActive = false;
             }
 
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             await LoadAsync();
 
             if (!isValid)
@@ -391,7 +400,9 @@
 
     private async Task ToggleActiveAsync(int id)
     {
-        var m = await Ctx.UserModules.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var m = await ctx.UserModules.FindAsync(new object[] { id }, _cts.Token);
         if (m != null)
         {
             if (!m.IsActive && m.PromptStatus == PromptStatus.Rejected)
@@ -400,7 +411,7 @@
                 return;
             }
             m.IsActive = !m.IsActive;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             await LoadAsync();
         }
     }
@@ -408,20 +419,25 @@
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este modulo y todos sus informes?")) return;
-        var m = await Ctx.UserModules.FindAsync(id);
-        if (m != null) { m.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var m = await ctx.UserModules.FindAsync(new object[] { id }, _cts.Token);
+        if (m != null) { m.IsDeleted = true; await ctx.SaveChangesAsync(_cts.Token); await LoadAsync(); }
     }
 
     private async Task ShowReports(int moduleId, string moduleName)
     {
         _reportsModuleName = moduleName;
         _expandedReport = null;
-        _reports = await Ctx.ModuleReports
+
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _reports = await ctx.ModuleReports
             .Where(r => r.UserModuleId == moduleId && !r.IsDeleted)
             .OrderByDescending(r => r.CreatedAt)
             .Take(20)
             .Select(r => new ReportRow(r.Id, r.Title, r.Summary, r.Content, r.EventsAnalyzed, r.CreatedAt))
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
         _showReportsModal = true;
     }
 
@@ -459,4 +475,6 @@
         public bool GenerateRss { get; set; }
         public string? Prompt { get; set; }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

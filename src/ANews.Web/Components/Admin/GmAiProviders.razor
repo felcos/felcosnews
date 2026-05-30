@@ -1,4 +1,4 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @inject ANews.Infrastructure.Security.KeyEncryptionService KeyEncryption
@@ -7,6 +7,7 @@
 @using ANews.Infrastructure.AI
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -178,6 +179,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<AiProviderConfig> _providers = [];
     private bool _showModal;
@@ -193,8 +195,9 @@ else
     private async Task LoadAsync()
     {
         _loading = true; StateHasChanged();
-        _providers = await Ctx.AiProviderConfigs
-            .OrderByDescending(p => p.IsDefault).ThenBy(p => p.Name).ToListAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _providers = await ctx.AiProviderConfigs.AsNoTracking()
+            .OrderByDescending(p => p.IsDefault).ThenBy(p => p.Name).ToListAsync(_cts.Token);
         _loading = false;
     }
 
@@ -223,14 +226,15 @@ else
         _saving = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             if (_editingId == 0)
             {
                 if (string.IsNullOrWhiteSpace(_form.ApiKey))
                 { _formError = "API Key obligatoria para nuevos proveedores"; return; }
                 if (_form.IsDefault)
-                    await Ctx.AiProviderConfigs.Where(p => p.IsDefault)
-                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
-                Ctx.AiProviderConfigs.Add(new AiProviderConfig
+                    await ctx.AiProviderConfigs.Where(p => p.IsDefault)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), _cts.Token);
+                ctx.AiProviderConfigs.Add(new AiProviderConfig
                 {
                     Name = _form.Name, Provider = _form.Provider, Model = _form.Model,
                     EncryptedApiKey = KeyEncryption.Encrypt(_form.ApiKey!), BaseUrl = _form.BaseUrl,
@@ -241,11 +245,11 @@ else
             }
             else
             {
-                var existing = await Ctx.AiProviderConfigs.FindAsync(_editingId);
+                var existing = await ctx.AiProviderConfigs.FindAsync(new object[] { _editingId }, _cts.Token);
                 if (existing == null) return;
                 if (_form.IsDefault && !existing.IsDefault)
-                    await Ctx.AiProviderConfigs.Where(p => p.IsDefault && p.Id != _editingId)
-                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
+                    await ctx.AiProviderConfigs.Where(p => p.IsDefault && p.Id != _editingId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), _cts.Token);
                 existing.Name = _form.Name; existing.Provider = _form.Provider;
                 existing.Model = _form.Model; existing.BaseUrl = _form.BaseUrl;
                 existing.CostPerInputTokenK = _form.CostInput; existing.CostPerOutputTokenK = _form.CostOutput;
@@ -254,7 +258,7 @@ else
                 if (!string.IsNullOrWhiteSpace(_form.ApiKey))
                     existing.EncryptedApiKey = KeyEncryption.Encrypt(_form.ApiKey);
             }
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             await LoadAsync();
             _showModal = false;
         }
@@ -263,17 +267,19 @@ else
 
     private async Task SetDefaultAsync(int id)
     {
-        await Ctx.AiProviderConfigs.Where(p => p.IsDefault)
-            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
-        await Ctx.AiProviderConfigs.Where(p => p.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, true));
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        await ctx.AiProviderConfigs.Where(p => p.IsDefault)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), _cts.Token);
+        await ctx.AiProviderConfigs.Where(p => p.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, true), _cts.Token);
         await LoadAsync();
     }
 
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este proveedor?")) return;
-        await Ctx.AiProviderConfigs.Where(p => p.Id == id).ExecuteDeleteAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        await ctx.AiProviderConfigs.Where(p => p.Id == id).ExecuteDeleteAsync(_cts.Token);
         await LoadAsync();
     }
 
@@ -282,7 +288,8 @@ else
         _testingId = id; _testResults.Remove(id); StateHasChanged();
         try
         {
-            var config = await Ctx.AiProviderConfigs.FindAsync(id);
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            var config = await ctx.AiProviderConfigs.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, _cts.Token);
             if (config == null) return;
             var provider = AiFactory.CreateProvider(config.Provider, KeyEncryption.Decrypt(config.EncryptedApiKey), config.Model, config.BaseUrl);
             var ok = await provider.TestConnectionAsync();
@@ -311,6 +318,8 @@ else
         AiProviderType.Groq => "llama-3.3-70b-versatile / mixtral-8x7b",
         _ => "URL base requerida para custom"
     };
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     class ProviderForm
     {

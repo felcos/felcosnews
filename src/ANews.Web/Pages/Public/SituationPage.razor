@@ -1,9 +1,10 @@
 @page "/situation/{Id:int}"
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @using ANews.Infrastructure.Data
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>@(_event?.Title ?? "Situación") — AgenteNews</PageTitle>
 
@@ -198,6 +199,8 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     [Parameter] public int Id { get; set; }
 
     private bool _loading = true;
@@ -209,31 +212,39 @@ else
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
-        _event = await Ctx.NewsEvents
+
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        _event = await ctx.NewsEvents
+            .AsNoTracking()
             .Include(e => e.Section)
-            .FirstOrDefaultAsync(e => e.Id == Id && !e.IsDeleted);
+            .FirstOrDefaultAsync(e => e.Id == Id && !e.IsDeleted, _cts.Token);
 
         if (_event != null)
         {
-            _articles = await Ctx.NewsArticles
+            _articles = await ctx.NewsArticles
+                .AsNoTracking()
                 .Where(a => a.NewsEventId == Id && !a.IsDeleted)
                 .OrderByDescending(a => a.PublishedAt)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             _articlesByDay = _articles
                 .GroupBy(a => a.PublishedAt.Date)
                 .OrderByDescending(g => g.Key)
                 .ToDictionary(g => g.Key, g => g.OrderByDescending(a => a.Relevance).ToList());
 
-            _related = await Ctx.NewsEvents
+            _related = await ctx.NewsEvents
+                .AsNoTracking()
                 .Where(e => e.NewsSectionId == _event.NewsSectionId
                          && e.Id != Id && !e.IsDeleted && e.IsActive
                          && e.EventType == "Detected")
                 .OrderByDescending(e => e.ImpactScore)
                 .Take(5)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
         }
 
         _loading = false;
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

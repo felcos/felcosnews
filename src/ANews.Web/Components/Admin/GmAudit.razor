@@ -1,8 +1,9 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @using AuditLogEntity = ANews.Domain.Entities.AuditLog
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -117,6 +118,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<AuditLogEntity> _logs = [];
     private AuditLogEntity? _detail;
@@ -138,17 +140,18 @@ else
     private async Task LoadData()
     {
         _loading = true; StateHasChanged();
-        var query = Ctx.AuditLogs.AsQueryable();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var query = ctx.AuditLogs.AsNoTracking().AsQueryable();
         if (!string.IsNullOrEmpty(_filterAction))
             query = query.Where(l => l.Action == _filterAction);
         if (_filterDate.HasValue)
             query = query.Where(l => l.Timestamp.Date == _filterDate.Value.Date);
-        _totalCount = await query.CountAsync();
+        _totalCount = await query.CountAsync(_cts.Token);
         _totalPages = Math.Max(1, (int)Math.Ceiling(_totalCount / (double)_pageSize));
         if (_page >= _totalPages) _page = 0;
         _logs = await query.IgnoreQueryFilters()
             .OrderByDescending(l => l.Timestamp)
-            .Skip(_page * _pageSize).Take(_pageSize).ToListAsync();
+            .Skip(_page * _pageSize).Take(_pageSize).ToListAsync(_cts.Token);
         _loading = false;
     }
 
@@ -164,4 +167,6 @@ else
         }
         catch { return json; }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

@@ -1,7 +1,7 @@
 @page "/"
 @inject IJSRuntime JS
 @inject NavigationManager Nav
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthStateProvider
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @using ANews.Infrastructure.Data
@@ -931,6 +931,8 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     [SupplyParameterFromQuery(Name = "eventId")]
     private int? AutoOpenEventId { get; set; }
 
@@ -1089,16 +1091,20 @@
     {
         try
         {
-            Sections = await Ctx.NewsSections
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+            Sections = await ctx.NewsSections
+            .AsNoTracking()
             .Where(s => s.IsPublic && !s.IsDeleted)
             .OrderBy(s => s.SortOrder)
             .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
-        _wsPresets = await Ctx.WorkspaceZones
+        _wsPresets = await ctx.WorkspaceZones
+            .AsNoTracking()
             .Where(z => z.IsActive && !z.IsDeleted)
             .OrderBy(z => z.SortOrder)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         await LoadEventsAsync();
 
@@ -1107,25 +1113,28 @@
 
         // Load morning brief for today
         var today = DateTime.UtcNow.Date;
-        _morningBrief = await Ctx.MorningBriefs
+        _morningBrief = await ctx.MorningBriefs
+            .AsNoTracking()
             .Where(m => m.BriefDate == today)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(_cts.Token);
 
         if (_morningBrief != null)
             await TrackActivity(ActivityType.MorningBriefViewed);
 
         // Load active story threads
-        _storyThreads = await Ctx.StoryThreads
+        _storyThreads = await ctx.StoryThreads
+            .AsNoTracking()
             .Where(t => t.Status == ANews.Domain.Enums.StoryStatus.Developing
                      || t.Status == ANews.Domain.Enums.StoryStatus.Active)
             .OrderByDescending(t => t.MaxImpactScore)
             .Take(10)
             .Select(t => new StoryThreadItem(t.Id, t.Title, t.Status.ToString(), t.EventCount, t.MaxImpactScore))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         // Load trending events (most articles in last 24h)
         var last24h = DateTime.UtcNow.AddHours(-24);
-        _trendingEvents = await Ctx.NewsEvents
+        _trendingEvents = await ctx.NewsEvents
+            .AsNoTracking()
             .Where(e => !e.IsDeleted && e.IsActive)
             .Select(e => new {
                 e.Id, e.Title, e.Priority,
@@ -1137,9 +1146,10 @@
             .OrderByDescending(e => e.RecentArticles)
             .Take(8)
             .Select(e => new TrendingItem(e.Id, e.Title, e.Priority.ToString(), e.SectionName, e.RecentArticles, e.TotalArticles))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
-        _storyThreadsFull = await Ctx.StoryThreads
+        _storyThreadsFull = await ctx.StoryThreads
+            .AsNoTracking()
             .Include(t => t.PrimarySection)
             .Where(t => !t.IsDeleted)
             .OrderByDescending(t => t.LastEventDate)
@@ -1149,7 +1159,7 @@
                 t.PrimarySection != null ? t.PrimarySection.Name : null,
                 t.PrimarySection != null ? t.PrimarySection.Color : null,
                 t.KeyActors, t.FirstEventDate, t.LastEventDate))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         // Auth state + unread alerts
         try
@@ -1161,11 +1171,11 @@
                 var userName = auth.User.Identity?.Name;
                 if (!string.IsNullOrEmpty(userName))
                 {
-                    var userId = await Ctx.Users.Where(u => u.UserName == userName).Select(u => u.Id).FirstOrDefaultAsync();
+                    var userId = await ctx.Users.AsNoTracking().Where(u => u.UserName == userName).Select(u => u.Id).FirstOrDefaultAsync(_cts.Token);
                     if (userId > 0)
                     {
-                        _unreadAlerts = await Ctx.AlertTriggers
-                            .CountAsync(a => !a.IsAcknowledged && !a.IsDeleted);
+                        _unreadAlerts = await ctx.AlertTriggers
+                            .CountAsync(a => !a.IsAcknowledged && !a.IsDeleted, _cts.Token);
                     }
                 }
             }
@@ -1194,7 +1204,10 @@
 
     private async Task LoadEventsAsync()
     {
-        var baseQuery = Ctx.NewsEvents
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var baseQuery = ctx.NewsEvents
+            .AsNoTracking()
             .Include(e => e.Section)
             .Where(e => e.IsActive && e.EventType != "Unclassified");
 
@@ -1215,7 +1228,7 @@
                     .ToArray(),
                 e.Latitude, e.Longitude, e.Location,
                 e.StoryThreadId, e.SourceDiversity))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         // When a workspace is active, also load geo-specific events that may not be in top 200
         if (_geoFilter.Length > 0)
@@ -1246,7 +1259,7 @@
                         .ToArray(),
                     e.Latitude, e.Longitude, e.Location,
                     e.StoryThreadId, e.SourceDiversity))
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             Events = globalTop.Concat(geoEvents).ToList();
         }
@@ -1255,12 +1268,13 @@
             Events = globalTop;
         }
 
-        CriticalAlerts = await Ctx.AlertTriggers
+        CriticalAlerts = await ctx.AlertTriggers
+            .AsNoTracking()
             .Where(a => !a.IsAcknowledged)
             .OrderByDescending(a => a.Severity)
             .Take(5)
             .Select(a => new AlertItem(a.Id, a.Title))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         LastUpdate = DateTime.Now;
     }
@@ -1334,10 +1348,9 @@
             try { savedWorkspace = await JS.InvokeAsync<string?>("localStorage.getItem", "anews-workspace"); }
             catch { }
 
-            // Esperar a que OnInitializedAsync termine para evitar acceso concurrente al DbContext
+            // Esperar a que OnInitializedAsync termine para evitar acceso concurrente
             await _initTcs.Task;
 
-            // Ahora es seguro usar Ctx
             if (string.IsNullOrEmpty(savedWorkspace))
             {
                 _showWorkspacePicker = true;
@@ -1379,13 +1392,16 @@
             var userName = auth.User.Identity?.Name;
             if (string.IsNullOrEmpty(userName)) return;
 
-            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+            var user = await ctx.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserName == userName, _cts.Token);
             if (user == null) return;
 
-            var modules = await Ctx.Set<ANews.Domain.Entities.UserModule>()
+            var modules = await ctx.Set<ANews.Domain.Entities.UserModule>()
+                .AsNoTracking()
                 .Include(m => m.Keywords)
                 .Where(m => m.UserId == user.Id && !m.IsDeleted && m.IsActive)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             UserModules = modules.Select(m => new ModuleFilterItem(
                 m.Id, m.Name, m.Color ?? "#4a90e2",
@@ -1395,7 +1411,8 @@
 
             var allKeywords = modules.SelectMany(m => m.Keywords).Select(k => k.Keyword).Distinct().ToList();
             // Cargar ultimos informes de modulos del usuario
-            _moduleReports = await Ctx.ModuleReports
+            _moduleReports = await ctx.ModuleReports
+                .AsNoTracking()
                 .Where(r => r.UserId == user.Id && !r.IsDeleted)
                 .OrderByDescending(r => r.CreatedAt)
                 .Take(10)
@@ -1403,7 +1420,7 @@
                     r.Id, r.Title, r.Summary,
                     r.Module.Name, r.Module.Color ?? "#4a90e2",
                     r.EventsAnalyzed, r.CreatedAt, null))
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             if (UserModules.Count > 0 || _moduleReports.Count > 0)
                 await InvokeAsync(StateHasChanged);
@@ -1427,8 +1444,9 @@
             if (ev == null)
             {
                 // Event not in filtered list — load from DB
-                var dbEv = await Ctx.NewsEvents.Include(e => e.Section)
-                    .FirstOrDefaultAsync(e => e.Id == id && !e.IsDeleted);
+                await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+                var dbEv = await ctx.NewsEvents.AsNoTracking().Include(e => e.Section)
+                    .FirstOrDefaultAsync(e => e.Id == id && !e.IsDeleted, _cts.Token);
                 if (dbEv != null)
                     ev = new EventItem(dbEv.Id, dbEv.Title, dbEv.Description, dbEv.Priority.ToString(),
                         dbEv.ImpactScore, dbEv.Trend.ToString(), dbEv.Tags.ToArray(),
@@ -1479,11 +1497,13 @@
             {
                 try
                 {
-                    _moduleReportEventIds = (await Ctx.ModuleReports
+                    await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+                    _moduleReportEventIds = (await ctx.ModuleReports
+                        .AsNoTracking()
                         .Where(r => r.UserModuleId == selectedModId && !r.IsDeleted)
                         .SelectMany(r => r.SourceEventIds)
                         .Distinct()
-                        .ToListAsync())
+                        .ToListAsync(_cts.Token))
                         .ToHashSet();
                 }
                 catch { _moduleReportEventIds = []; }
@@ -1510,7 +1530,10 @@
         var sectionId = Sections.FirstOrDefault(s => s.Slug == ev.SectionSlug)?.Id;
         await TrackActivity(ActivityType.EventOpened, sectionId: sectionId, eventId: ev.Id);
 
-        SelectedEventArticles = await Ctx.NewsArticles
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        SelectedEventArticles = await ctx.NewsArticles
+            .AsNoTracking()
             .Include(a => a.Source)
             .Where(a => a.NewsEventId == ev.Id && !a.IsDeleted)
             .OrderByDescending(a => a.PublishedAt)
@@ -1518,14 +1541,14 @@
                 a.Relevance, a.ArticleType.ToString(), a.Summary, a.PublishedAt,
                 a.Source != null ? a.Source.CredibilityScore : 0,
                 a.Source != null ? a.Source.Bias.ToString() : null))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         _articlesByDay = SelectedEventArticles
             .GroupBy(a => a.PublishedAt.Date)
             .OrderByDescending(g => g.Key)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var evDb = await Ctx.NewsEvents.FindAsync(ev.Id);
+        var evDb = await ctx.NewsEvents.AsNoTracking().FirstOrDefaultAsync(e => e.Id == ev.Id, _cts.Token);
         if (evDb != null)
         {
             _selectedEventEnd = evDb.EndDate;
@@ -1534,23 +1557,25 @@
 
         if (evDb != null)
         {
-            _relatedEvents = await Ctx.NewsEvents
+            _relatedEvents = await ctx.NewsEvents
+                .AsNoTracking()
                 .Where(e => e.NewsSectionId == evDb.NewsSectionId && e.Id != ev.Id && e.IsActive && !e.IsDeleted)
                 .OrderByDescending(e => e.ImpactScore)
                 .Take(5)
                 .Select(e => new RelatedEventItem(e.Id, e.Title, e.Priority.ToString()))
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             _selectedEventThread = evDb.StoryThreadId != null
-                ? await Ctx.StoryThreads.FindAsync(evDb.StoryThreadId)
+                ? await ctx.StoryThreads.AsNoTracking().FirstOrDefaultAsync(t => t.Id == evDb.StoryThreadId, _cts.Token)
                 : null;
         }
 
         // Load contextual briefing
-        _eventBriefing = await Ctx.EventBriefings
+        _eventBriefing = await ctx.EventBriefings
+            .AsNoTracking()
             .Where(b => b.NewsEventId == ev.Id && b.Type == ANews.Domain.Enums.BriefingType.EventContext)
             .OrderByDescending(b => b.GeneratedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(_cts.Token);
     }
 
     private void CloseEvent() { SelectedEvent = null; _expandedArticles.Clear(); _articleSummariesEn.Clear(); _generatingEnSummary.Clear(); _showSourceCompare = false; StateHasChanged(); }
@@ -1608,6 +1633,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _cts.Cancel();
+        _cts.Dispose();
         if (_hub != null) await _hub.DisposeAsync();
     }
 
@@ -1658,13 +1685,15 @@
     {
         try
         {
-            var report = await Ctx.ModuleReports
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            var report = await ctx.ModuleReports
+                .AsNoTracking()
                 .Where(r => r.Id == reportId)
                 .Select(r => new ReportCard(
                     r.Id, r.Title, r.Summary,
                     r.Module.Name, r.Module.Color ?? "#4a90e2",
                     r.EventsAnalyzed, r.CreatedAt, r.Content))
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(_cts.Token);
             if (report != null)
                 _selectedReport = report;
         }
@@ -1708,15 +1737,18 @@
             if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
             var userName = auth.User.Identity?.Name;
             if (string.IsNullOrEmpty(userName)) return;
-            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+            var user = await ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName, _cts.Token);
             if (user == null) return;
 
             // Check quota for content-consuming activities
             if (sectionId.HasValue && (type == ActivityType.EventOpened || type == ActivityType.ArticleRead || type == ActivityType.ArticleExpanded))
             {
                 var periodStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-                var quota = await Ctx.SectionQuotas.FirstOrDefaultAsync(q =>
-                    q.UserId == user.Id && q.NewsSectionId == sectionId.Value && q.PeriodStart == periodStart);
+                var quota = await ctx.SectionQuotas.FirstOrDefaultAsync(q =>
+                    q.UserId == user.Id && q.NewsSectionId == sectionId.Value && q.PeriodStart == periodStart, _cts.Token);
                 if (quota != null && quota.MaxReadsPerMonth >= 0 && quota.CurrentReads >= quota.MaxReadsPerMonth)
                 {
                     _quotaPlanTier = quota.PlanTier.ToString();
@@ -1727,11 +1759,11 @@
                 if (quota != null)
                 {
                     quota.CurrentReads++;
-                    Ctx.SectionQuotas.Update(quota);
+                    ctx.SectionQuotas.Update(quota);
                 }
             }
 
-            Ctx.UserActivities.Add(new UserActivity
+            ctx.UserActivities.Add(new UserActivity
             {
                 UserId = user.Id,
                 ActivityType = type,
@@ -1741,7 +1773,7 @@
                 StoryThreadId = threadId,
                 Metadata = metadata
             });
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
         }
         catch { /* Never block UI */ }
     }

@@ -10,7 +10,9 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
 @inject ANews.Web.Services.ToastService Toast
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+@implements IDisposable
 
 <PageTitle>Mi Perfil — AgenteNews</PageTitle>
 
@@ -212,6 +214,7 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
     private ApplicationUser? _user;
     private bool _loading = true;
 
@@ -245,15 +248,20 @@
             _receiveDigest = _user.ReceiveDigest;
             _digestFrequency = _user.DigestFrequency;
 
-            _quotas = await Ctx.SectionQuotas.Include(q => q.Section)
-                .Where(q => q.UserId == _user.Id).ToListAsync();
-            _readerProfile = await Ctx.ReaderProfiles
-                .FirstOrDefaultAsync(r => r.UserId == _user.Id);
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+            _quotas = await ctx.SectionQuotas.Include(q => q.Section)
+                .Where(q => q.UserId == _user.Id).AsNoTracking().ToListAsync(_cts.Token);
+            _readerProfile = await ctx.ReaderProfiles
+                .AsNoTracking().FirstOrDefaultAsync(r => r.UserId == _user.Id, _cts.Token);
             if (_user.SubscriptionPlanId.HasValue)
-                _currentPlan = await Ctx.SubscriptionPlans.FindAsync(_user.SubscriptionPlanId);
+                _currentPlan = await ctx.SubscriptionPlans.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == _user.SubscriptionPlanId.Value, _cts.Token);
         }
         _loading = false;
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     private async Task SaveProfileAsync()
     {

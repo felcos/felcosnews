@@ -1,11 +1,12 @@
 @page "/planes"
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthStateProvider
 @using ANews.Infrastructure.Data
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>Planes — AgenteNews</PageTitle>
 
@@ -81,6 +82,8 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private List<SubscriptionPlan> _plans = [];
     private bool _isAuthenticated;
 
@@ -89,10 +92,15 @@
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         _isAuthenticated = auth.User.Identity?.IsAuthenticated ?? false;
 
-        _plans = await Ctx.SubscriptionPlans
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        _plans = await ctx.SubscriptionPlans
+            .AsNoTracking()
             .Where(p => p.IsActive)
             .OrderBy(p => p.SortOrder)
             .ThenBy(p => p.MonthlyPrice)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

@@ -8,7 +8,7 @@
 @implements IAsyncDisposable
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @inject NavigationManager NavManager
 @inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
@@ -233,6 +233,8 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private List<AgentExecution> _executions = new();
     private List<AgentLog> _logs = new();
     private AgentExecution? _logExecution;
@@ -270,7 +272,8 @@
 
     private async Task LoadData()
     {
-        var query = Db.AgentExecutions.AsQueryable();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var query = ctx.AgentExecutions.AsNoTracking().AsQueryable();
 
         if (!string.IsNullOrEmpty(_filterAgent) && Enum.TryParse<AgentType>(_filterAgent, out var at))
             query = query.Where(e => e.AgentType == at);
@@ -281,7 +284,7 @@
         if (_filterDate.HasValue)
             query = query.Where(e => e.StartedAt.Date == _filterDate.Value.Date);
 
-        var total = await query.CountAsync();
+        var total = await query.CountAsync(_cts.Token);
         _totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)_pageSize));
         if (_page >= _totalPages) _page = 0;
 
@@ -289,16 +292,18 @@
             .OrderByDescending(e => e.StartedAt)
             .Skip(_page * _pageSize)
             .Take(_pageSize)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private async Task ShowLogs(AgentExecution ex)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         _logExecution = ex;
-        _logs = await Db.AgentLogs
+        _logs = await ctx.AgentLogs
+            .AsNoTracking()
             .Where(l => l.AgentExecutionId == ex.Id)
             .OrderBy(l => l.Timestamp)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private void CloseLogModal()
@@ -395,6 +400,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _cts.Cancel();
+        _cts.Dispose();
         if (_hub != null) await _hub.DisposeAsync();
     }
 

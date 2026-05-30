@@ -6,7 +6,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @inject IHubContext<AdminHub> AdminHubCtx
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject ANews.Infrastructure.Agents.NewsScannerAgent NewsScannerAgent
 @inject ANews.Infrastructure.Agents.EventDetectorAgent EventDetectorAgent
 @inject ANews.Infrastructure.Agents.AlertGeneratorAgent AlertGeneratorAgent
@@ -852,30 +852,32 @@
 
     private async Task LoadInitialDataAsync()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var today = DateTime.UtcNow.Date;
         var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        var articlesToday = await Ctx.NewsArticles.CountAsync(a => a.CreatedAt >= today);
-        var eventsToday   = await Ctx.NewsEvents.CountAsync(e => e.IsActive && e.CreatedAt >= today);
-        var totalUsers    = await Ctx.Users.CountAsync();
-        var activeUsers   = await Ctx.Users.CountAsync(u => u.LastLoginAt >= DateTime.UtcNow.AddDays(-30));
-        var pendingAlerts = await Ctx.AlertTriggers.CountAsync(a => !a.IsAcknowledged);
-        var costToday     = await Ctx.CostEntries.Where(c => c.Date >= today).SumAsync(c => (decimal?)c.Cost) ?? 0;
-        var costMonth     = await Ctx.CostEntries.Where(c => c.Date >= monthStart).SumAsync(c => (decimal?)c.Cost) ?? 0;
+        var articlesToday = await ctx.NewsArticles.CountAsync(a => a.CreatedAt >= today, _cts.Token);
+        var eventsToday   = await ctx.NewsEvents.CountAsync(e => e.IsActive && e.CreatedAt >= today, _cts.Token);
+        var totalUsers    = await ctx.Users.CountAsync(_cts.Token);
+        var activeUsers   = await ctx.Users.CountAsync(u => u.LastLoginAt >= DateTime.UtcNow.AddDays(-30), _cts.Token);
+        var pendingAlerts = await ctx.AlertTriggers.CountAsync(a => !a.IsAcknowledged, _cts.Token);
+        var costToday     = await ctx.CostEntries.Where(c => c.Date >= today).SumAsync(c => (decimal?)c.Cost, _cts.Token) ?? 0;
+        var costMonth     = await ctx.CostEntries.Where(c => c.Date >= monthStart).SumAsync(c => (decimal?)c.Cost, _cts.Token) ?? 0;
 
-        var runningAgents = await Ctx.AgentExecutions
+        var runningAgents = await ctx.AgentExecutions
+            .AsNoTracking()
             .Where(e => e.StartedAt >= DateTime.UtcNow.AddMinutes(-10) && e.CompletedAt == null)
-            .Select(e => e.AgentName).ToListAsync();
+            .Select(e => e.AgentName).ToListAsync(_cts.Token);
 
-        var activeThreads = await Ctx.StoryThreads
-            .CountAsync(t => !t.IsDeleted && (t.Status == ANews.Domain.Enums.StoryStatus.Developing || t.Status == ANews.Domain.Enums.StoryStatus.Active));
-        var activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
+        var activeThreads = await ctx.StoryThreads
+            .CountAsync(t => !t.IsDeleted && (t.Status == ANews.Domain.Enums.StoryStatus.Developing || t.Status == ANews.Domain.Enums.StoryStatus.Active), _cts.Token);
+        var activitiesToday = await ctx.UserActivities.CountAsync(a => a.CreatedAt >= today, _cts.Token);
         int moduleReportsToday = 0;
         int pendingPrompts = 0;
         try
         {
-            moduleReportsToday = await Ctx.ModuleReports.CountAsync(r => !r.IsDeleted && r.CreatedAt >= today);
-            pendingPrompts = await Ctx.UserModules.CountAsync(m => !m.IsDeleted && m.PromptStatus == PromptStatus.Pending && m.Prompt != null);
+            moduleReportsToday = await ctx.ModuleReports.CountAsync(r => !r.IsDeleted && r.CreatedAt >= today, _cts.Token);
+            pendingPrompts = await ctx.UserModules.CountAsync(m => !m.IsDeleted && m.PromptStatus == PromptStatus.Pending && m.Prompt != null, _cts.Token);
         }
         catch { /* migración puede no estar aplicada aún */ }
 
@@ -896,10 +898,10 @@
             PendingPrompts     = pendingPrompts
         };
 
-        var rawExecs = await Ctx.AgentExecutions
+        var rawExecs = await ctx.AgentExecutions
             .AsNoTracking()
             .OrderByDescending(e => e.StartedAt).Take(10)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         RecentExecutions = rawExecs.Select(e => new ExecutionItem(
             e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
             e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
@@ -907,23 +909,23 @@
 
         // Load last execution per agent for progress bars
         var agentNames = AgentTriggers.Select(a => a.Name).ToList();
-        var rawLastExecs = await Ctx.AgentExecutions
+        var rawLastExecs = await ctx.AgentExecutions
             .AsNoTracking()
             .Where(e => agentNames.Contains(e.AgentName))
             .GroupBy(e => e.AgentName)
             .Select(g => g.OrderByDescending(e => e.StartedAt).First())
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         _lastAgentExecs = rawLastExecs.Select(e => new ExecutionItem(
             e.Id, e.AgentName, e.Status.ToString(), e.StartedAt,
             e.CompletedAt.HasValue ? (int)(e.CompletedAt.Value - e.StartedAt).TotalMilliseconds : -1,
             e.ItemsProcessed, e.ItemsCreated, e.AiCost, e.Error)).ToDictionary(e => e.AgentName);
 
-        var rawAlerts = await Ctx.AlertTriggers
+        var rawAlerts = await ctx.AlertTriggers
             .AsNoTracking()
             .Include(a => a.NewsEvent)
             .Where(a => !a.IsAcknowledged)
             .OrderByDescending(a => a.Severity).ThenByDescending(a => a.CreatedAt).Take(20)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         PendingAlerts = rawAlerts.Select(a => new AlertItem(a.Id, a.Title, a.Severity.ToString(), a.CreatedAt)).ToList();
 
         await LoadCostDataAsync();
@@ -946,6 +948,7 @@
 
     private async Task LoadCostDataAsync()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var cutoff = CostPeriod switch
         {
             "week"  => DateTime.UtcNow.AddDays(-7),
@@ -953,12 +956,13 @@
             _       => DateTime.UtcNow.Date
         };
 
-        var byProvider = await Ctx.CostEntries
+        var byProvider = await ctx.CostEntries
+            .AsNoTracking()
             .Include(c => c.Provider)
             .Where(c => c.Date >= cutoff)
             .GroupBy(c => c.Provider.Name)
             .Select(g => new { Name = g.Key, Cost = g.Sum(c => c.Cost) })
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         TotalCostSelected = byProvider.Sum(p => p.Cost);
         var colors = new[] { "#4a90e2", "#00ff88", "#ff6600", "#ff0080", "#ffcc00" };
@@ -971,6 +975,7 @@
 
     private async Task LoadSystemHealthAsync()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         SystemHealth = [];
 
         // Process metrics
@@ -984,36 +989,38 @@
         }
         catch { _memMb = "—"; _uptime = "—"; }
 
-        try { await Ctx.Database.ExecuteSqlRawAsync("SELECT 1"); SystemHealth.Add(new("PostgreSQL", true, "Conectado")); }
+        try { await ctx.Database.ExecuteSqlRawAsync("SELECT 1", _cts.Token); SystemHealth.Add(new("PostgreSQL", true, "Conectado")); }
         catch { SystemHealth.Add(new("PostgreSQL", false, "Error")); }
 
-        var lastAgent = await Ctx.AgentExecutions.OrderByDescending(e => e.StartedAt).FirstOrDefaultAsync();
+        var lastAgent = await ctx.AgentExecutions.AsNoTracking().OrderByDescending(e => e.StartedAt).FirstOrDefaultAsync(_cts.Token);
         if (lastAgent != null)
         {
             var ago = DateTime.UtcNow - lastAgent.StartedAt;
             SystemHealth.Add(new("Último agente", ago.TotalHours < 2, $"hace {(int)ago.TotalMinutes}min"));
         }
 
-        var failedSrcs = await Ctx.NewsSources.CountAsync(s => s.IsActive && s.FailedScans > s.SuccessfulScans);
+        var failedSrcs = await ctx.NewsSources.CountAsync(s => s.IsActive && s.FailedScans > s.SuccessfulScans, _cts.Token);
         SystemHealth.Add(new("Fuentes degradadas", failedSrcs == 0, failedSrcs == 0 ? "OK" : $"{failedSrcs}"));
 
-        var activeProviders = await Ctx.AiProviderConfigs.CountAsync(p => p.IsActive);
+        var activeProviders = await ctx.AiProviderConfigs.CountAsync(p => p.IsActive, _cts.Token);
         SystemHealth.Add(new("Proveedores IA", activeProviders > 0, $"{activeProviders} activos"));
     }
 
     private async Task LoadAgentConfigsAsync()
     {
-        _agentConfigs = await Ctx.AgentConfigs.OrderBy(c => c.AgentType).ToListAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _agentConfigs = await ctx.AgentConfigs.OrderBy(c => c.AgentType).ToListAsync(_cts.Token);
     }
 
     private async Task LoadSourcesAsync()
     {
-        var srcs = await Ctx.NewsSources
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var srcs = await ctx.NewsSources
             .AsNoTracking()
             .Include(s => s.Section)
             .OrderByDescending(s => s.FailedScans)
             .Take(100)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         _sources = srcs.Select(s =>
         {
@@ -1026,7 +1033,8 @@
 
     private async Task LoadAiProvidersAsync()
     {
-        _aiProviders = await Ctx.AiProviderConfigs.OrderByDescending(p => p.IsDefault).ToListAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _aiProviders = await ctx.AiProviderConfigs.AsNoTracking().OrderByDescending(p => p.IsDefault).ToListAsync(_cts.Token);
     }
 
 
@@ -1106,9 +1114,10 @@
         await InvokeAsync(StateHasChanged);
         try
         {
-            var events = await Ctx.NewsEvents
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            var events = await ctx.NewsEvents
                 .Where(e => e.IsActive && !e.IsDeleted)
-                .OrderByDescending(e => e.ImpactScore).Take(50).ToListAsync();
+                .OrderByDescending(e => e.ImpactScore).Take(50).ToListAsync(_cts.Token);
 
             ANews.Domain.Interfaces.IAiProvider ai;
             try { ai = await AiFactory.GetDefaultProviderAsync(); }
@@ -1165,7 +1174,7 @@
                 }
             }
 
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             _geocodeResult = $"Completado: {enriched} de {events.Count} geocodificados";
         }
         catch (Exception ex) { _geocodeResult = $"Error: {ex.Message}"; }
@@ -1178,11 +1187,12 @@
         await InvokeAsync(StateHasChanged);
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             var ageCutoff = DateTime.UtcNow.AddDays(-30);
-            var articles = await Ctx.NewsArticles
+            var articles = await ctx.NewsArticles
                 .Include(a => a.Event)
                 .Where(a => !a.IsDeleted && a.CreatedAt < ageCutoff && a.Event.EventType == "Unclassified")
-                .OrderBy(a => a.CreatedAt).Take(100).ToListAsync();
+                .OrderBy(a => a.CreatedAt).Take(100).ToListAsync(_cts.Token);
 
             if (articles.Count == 0) { _quickActionResult = "No hay artículos antiguos sin clasificar"; return; }
 
@@ -1190,18 +1200,18 @@
             int queued = 0;
             foreach (var group in articles.GroupBy(a => a.Event.NewsSectionId))
             {
-                var unclEv = await Ctx.NewsEvents
-                    .FirstOrDefaultAsync(e => e.NewsSectionId == group.Key && e.EventType == "Unclassified" && e.StartDate >= today);
+                var unclEv = await ctx.NewsEvents
+                    .FirstOrDefaultAsync(e => e.NewsSectionId == group.Key && e.EventType == "Unclassified" && e.StartDate >= today, _cts.Token);
                 if (unclEv == null)
                 {
                     unclEv = new NewsEvent { Title = "Artículos sin clasificar", EventType = "Unclassified",
                         Priority = ANews.Domain.Enums.EventPriority.Low, NewsSectionId = group.Key,
                         StartDate = DateTime.UtcNow, IsActive = false };
-                    Ctx.NewsEvents.Add(unclEv); await Ctx.SaveChangesAsync();
+                    ctx.NewsEvents.Add(unclEv); await ctx.SaveChangesAsync(_cts.Token);
                 }
                 foreach (var art in group) { art.NewsEventId = unclEv.Id; art.CreatedAt = DateTime.UtcNow; queued++; }
             }
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             _quickActionResult = $"Encolados {queued} artículos para reclasificación";
         }
         catch (Exception ex) { _quickActionResult = $"Error: {ex.Message}"; }
@@ -1221,7 +1231,8 @@
                 ["tecnologia-dual"] = "seguridad"
             };
 
-            var allSections = await Ctx.NewsSections.IgnoreQueryFilters().ToListAsync();
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            var allSections = await ctx.NewsSections.IgnoreQueryFilters().ToListAsync(_cts.Token);
             var bySlug = allSections.ToDictionary(s => s.Slug);
             int migrated = 0;
 
@@ -1230,17 +1241,17 @@
                 if (!bySlug.TryGetValue(oldSlug, out var oldSec)) continue;
                 if (!bySlug.TryGetValue(newSlug, out var newSec)) continue;
 
-                var events = await Ctx.NewsEvents.IgnoreQueryFilters()
-                    .Where(e => e.NewsSectionId == oldSec.Id).ToListAsync();
+                var events = await ctx.NewsEvents.IgnoreQueryFilters()
+                    .Where(e => e.NewsSectionId == oldSec.Id).ToListAsync(_cts.Token);
                 foreach (var ev in events) { ev.NewsSectionId = newSec.Id; migrated++; }
 
-                var sources = await Ctx.NewsSources.IgnoreQueryFilters()
-                    .Where(s => s.NewsSectionId == oldSec.Id).ToListAsync();
+                var sources = await ctx.NewsSources.IgnoreQueryFilters()
+                    .Where(s => s.NewsSectionId == oldSec.Id).ToListAsync(_cts.Token);
                 foreach (var src in sources) src.NewsSectionId = newSec.Id;
 
                 oldSec.IsDeleted = true;
             }
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             _quickActionResult = migrated > 0 ? $"Migrados {migrated} eventos de secciones obsoletas" : "No hay secciones obsoletas para migrar";
         }
         catch (Exception ex) { _quickActionResult = $"Error: {ex.Message}"; }
@@ -1264,15 +1275,16 @@
         _savingConfigs = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             foreach (var cfg in _agentConfigs)
             {
-                Ctx.AgentConfigs.Update(cfg);
+                ctx.AgentConfigs.Update(cfg);
                 // Hot-patch running agents
                 var agent = AgentTriggers.FirstOrDefault(a => a.Name == cfg.AgentType)?.Agent;
                 agent?.UpdateInterval(cfg.IntervalMinutes);
                 agent?.SetEnabled(cfg.IsEnabled);
             }
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             _configSaved = true;
             _ = Task.Delay(2000).ContinueWith(_ => { _configSaved = false; InvokeAsync(StateHasChanged); });
         }
@@ -1282,28 +1294,31 @@
     // ── Source health ─────────────────────────────────
     private async Task ToggleSourceAsync(int id, bool currentlyActive)
     {
-        var src = await Ctx.NewsSources.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var src = await ctx.NewsSources.FindAsync(new object[] { id }, _cts.Token);
         if (src == null) return;
         src.IsActive = !currentlyActive;
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         await LoadSourcesAsync();
     }
 
     private async Task DisableFailedSourcesAsync()
     {
-        var failed = await Ctx.NewsSources
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var failed = await ctx.NewsSources
             .Where(s => s.IsActive && s.FailedScans > s.SuccessfulScans && s.SuccessfulScans < 3)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         foreach (var s in failed) s.IsActive = false;
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         await LoadSourcesAsync();
     }
 
     // ── Zones ─────────────────────────────────────────
     private async Task LoadZonesAsync()
     {
-        _zones = await Ctx.WorkspaceZones.Where(z => !z.IsDeleted)
-            .OrderBy(z => z.SortOrder).ThenBy(z => z.Name).ToListAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _zones = await ctx.WorkspaceZones.Where(z => !z.IsDeleted)
+            .OrderBy(z => z.SortOrder).ThenBy(z => z.Name).ToListAsync(_cts.Token);
     }
 
     private void OpenAddZone()
@@ -1335,26 +1350,28 @@
         _savingZone = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             var terms = _zoneForm.GeoTermsText
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(t => !string.IsNullOrEmpty(t)).ToList();
 
             if (_editingZone?.Id > 0)
             {
+                ctx.Attach(_editingZone);
                 _editingZone.Name = _zoneForm.Name; _editingZone.Flag = _zoneForm.Flag;
                 _editingZone.Description = _zoneForm.Description; _editingZone.GeoTerms = terms;
                 _editingZone.SortOrder = _zoneForm.SortOrder;
-                Ctx.WorkspaceZones.Update(_editingZone);
+                ctx.WorkspaceZones.Update(_editingZone);
             }
             else
             {
-                Ctx.WorkspaceZones.Add(new WorkspaceZone
+                ctx.WorkspaceZones.Add(new WorkspaceZone
                 {
                     Name = _zoneForm.Name, Flag = _zoneForm.Flag, Description = _zoneForm.Description,
                     GeoTerms = terms, SortOrder = _zoneForm.SortOrder, IsActive = true
                 });
             }
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             await LoadZonesAsync();
             _showZoneModal = false;
         }
@@ -1364,9 +1381,11 @@
 
     private async Task DeleteZoneAsync(WorkspaceZone zone)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        ctx.Attach(zone);
         zone.IsDeleted = true;
-        Ctx.WorkspaceZones.Update(zone);
-        await Ctx.SaveChangesAsync();
+        ctx.WorkspaceZones.Update(zone);
+        await ctx.SaveChangesAsync(_cts.Token);
         _zones.Remove(zone);
     }
 
@@ -1399,11 +1418,12 @@
     // ── Alerts ───────────────────────────────────────
     private async Task AcknowledgeAlertAsync(int alertId)
     {
-        var alert = await Ctx.AlertTriggers.FindAsync(alertId);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var alert = await ctx.AlertTriggers.FindAsync(new object[] { alertId }, _cts.Token);
         if (alert != null)
         {
             alert.IsAcknowledged = true; alert.AcknowledgedAt = DateTime.UtcNow;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             PendingAlerts.RemoveAll(a => a.Id == alertId);
             Stats = Stats with { PendingAlerts = Stats.PendingAlerts - 1 };
         }
@@ -1411,11 +1431,13 @@
 
     private async Task ShowExecutionLogs(int executionId)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         SelectedExecutionId = executionId;
-        ExecutionLogs = await Ctx.AgentLogs
+        ExecutionLogs = await ctx.AgentLogs
+            .AsNoTracking()
             .Where(l => l.AgentExecutionId == executionId).OrderBy(l => l.Timestamp)
             .Select(l => new ExecutionLogItem(l.Level.ToString(), l.Message, l.Timestamp))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         ShowLogsModal = true;
     }
 

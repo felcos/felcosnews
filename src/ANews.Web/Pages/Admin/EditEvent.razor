@@ -1,7 +1,7 @@
 @page "/admin/events/{Id:int}"
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Nav
 @inject ANews.Web.Services.ToastService Toast
 @using ANews.Domain.Entities
@@ -9,6 +9,7 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>Editar Evento — Admin</PageTitle>
 
@@ -128,6 +129,8 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     [Parameter] public int Id { get; set; }
 
     private NewsEvent? _event;
@@ -140,8 +143,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _sections = await Db.NewsSections.Where(s => !s.IsDeleted).OrderBy(s => s.Name).ToListAsync();
-        _event = await Db.NewsEvents.FirstOrDefaultAsync(e => e.Id == Id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _sections = await ctx.NewsSections.AsNoTracking().Where(s => !s.IsDeleted).OrderBy(s => s.Name).ToListAsync(_cts.Token);
+        _event = await ctx.NewsEvents.FirstOrDefaultAsync(e => e.Id == Id, _cts.Token);
         if (_event != null)
         {
             _form = new EventForm
@@ -155,10 +159,11 @@ else
                 TagsText = string.Join(", ", _event.Tags ?? []),
                 IsActive = _event.IsActive
             };
-            _articles = await Db.NewsArticles
+            _articles = await ctx.NewsArticles
+                .AsNoTracking()
                 .Where(a => a.NewsEventId == Id && !a.IsDeleted)
                 .OrderByDescending(a => a.Relevance)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
         }
         _loading = false;
     }
@@ -172,6 +177,8 @@ else
         _error = "";
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            ctx.Attach(_event);
             _event.Title = _form.Title.Trim();
             _event.Description = _form.Description;
             _event.Priority = _form.Priority;
@@ -184,7 +191,7 @@ else
                 .Select(t => t.Trim())
                 .Where(t => !string.IsNullOrEmpty(t))
                 .ToArray();
-            await Db.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success("Evento guardado correctamente");
         }
         catch (Exception ex)
@@ -197,6 +204,8 @@ else
             _saving = false;
         }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     class EventForm
     {

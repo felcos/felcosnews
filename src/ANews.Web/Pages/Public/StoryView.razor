@@ -1,11 +1,13 @@
 @page "/story/{Id:int}"
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthStateProvider
+@using ANews.Infrastructure.Data
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>@(_thread?.Title ?? "Hilo Narrativo") - AgenteNews</PageTitle>
 
@@ -112,6 +114,8 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     [Parameter] public int Id { get; set; }
 
     private ANews.Domain.Entities.StoryThread? _thread;
@@ -119,17 +123,21 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _thread = await Ctx.StoryThreads
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        _thread = await ctx.StoryThreads
+            .AsNoTracking()
             .Include(t => t.PrimarySection)
-            .FirstOrDefaultAsync(t => t.Id == Id);
+            .FirstOrDefaultAsync(t => t.Id == Id, _cts.Token);
 
         if (_thread != null)
         {
-            _events = await Ctx.NewsEvents
+            _events = await ctx.NewsEvents
+                .AsNoTracking()
                 .Include(e => e.Articles)
                 .Where(e => e.StoryThreadId == Id && !e.IsDeleted)
                 .OrderBy(e => e.StartDate)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             _ = TrackActivity(ActivityType.StoryThreadViewed, sectionId: _thread.PrimarySectionId, threadId: _thread.Id);
         }
@@ -141,13 +149,15 @@
     {
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
             var auth = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
             var userName = auth.User.Identity?.Name;
             if (string.IsNullOrEmpty(userName)) return;
-            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            var user = await ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName, _cts.Token);
             if (user == null) return;
-            Ctx.UserActivities.Add(new UserActivity
+            ctx.UserActivities.Add(new UserActivity
             {
                 UserId = user.Id,
                 ActivityType = type,
@@ -157,8 +167,10 @@
                 StoryThreadId = threadId,
                 Metadata = metadata
             });
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
         }
         catch { /* Never block UI */ }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

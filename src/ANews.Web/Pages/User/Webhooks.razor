@@ -6,8 +6,9 @@
 @using Microsoft.EntityFrameworkCore
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
+@implements IDisposable
 @inject UserManager<ApplicationUser> UserManager
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
 
@@ -146,6 +147,7 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private List<WebhookSubscription> _hooks = [];
     private bool _loading = true;
     private bool _showCreate, _showSecret;
@@ -166,10 +168,12 @@
     private async Task LoadAsync()
     {
         _loading = true;
-        _hooks = await Db.WebhookSubscriptions
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _hooks = await ctx.WebhookSubscriptions
+            .AsNoTracking()
             .Where(w => w.UserId == _user!.Id && !w.IsDeleted)
             .OrderByDescending(w => w.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         _loading = false;
     }
 
@@ -181,6 +185,7 @@
         if (!Uri.TryCreate(_newUrl.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
         { _createError = "URL no valida"; return; }
 
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var secret = Guid.NewGuid().ToString("N");
         var hook = new WebhookSubscription
         {
@@ -190,8 +195,8 @@
             EventTypes = _newEventTypes,
             IsActive = true
         };
-        Db.WebhookSubscriptions.Add(hook);
-        await Db.SaveChangesAsync();
+        ctx.WebhookSubscriptions.Add(hook);
+        await ctx.SaveChangesAsync(_cts.Token);
         _showCreate = false;
         _createdSecret = secret;
         _showSecret = true;
@@ -201,8 +206,9 @@
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este webhook?")) return;
-        var hook = await Db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id);
-        if (hook != null) { hook.IsDeleted = true; await Db.SaveChangesAsync(); await LoadAsync(); }
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var hook = await ctx.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id, _cts.Token);
+        if (hook != null) { hook.IsDeleted = true; await ctx.SaveChangesAsync(_cts.Token); await LoadAsync(); }
     }
 
     private async Task TestAsync(int id)
@@ -211,7 +217,8 @@
         _testResult.Remove(id);
         StateHasChanged();
 
-        var hook = await Db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id && !w.IsDeleted);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var hook = await ctx.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id && w.UserId == _user!.Id && !w.IsDeleted, _cts.Token);
         if (hook == null) { _testing = false; return; }
 
         try
@@ -239,7 +246,7 @@
                 hook.LastFailedAt = DateTime.UtcNow;
                 _testResult[id] = $"Error — HTTP {(int)response.StatusCode}";
             }
-            await Db.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
         }
         catch (Exception ex)
         {
@@ -248,4 +255,6 @@
         _testing = false;
         await LoadAsync();
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

@@ -1,8 +1,9 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @using ANews.Domain.Entities
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -138,6 +139,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<SectionRow> _sections = [];
     private bool _showModal;
@@ -150,9 +152,10 @@ else
     private async Task LoadAsync()
     {
         _loading = true; StateHasChanged();
-        var raw = await Ctx.NewsSections
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var raw = await ctx.NewsSections.AsNoTracking()
             .Include(s => s.Events).Include(s => s.Sources)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         _sections = raw.Select(s => new SectionRow(
             s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2",
             s.IconClass ?? "fa-newspaper", s.Keywords.Count,
@@ -170,7 +173,8 @@ else
 
     private async Task ShowEdit(int id)
     {
-        var s = await Ctx.NewsSections.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var s = await ctx.NewsSections.FindAsync(new object[] { id }, _cts.Token);
         if (s == null) return;
         _form = new SectionForm
         {
@@ -198,9 +202,10 @@ else
         var keywords = (_form.KeywordsText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(k => k.Trim().ToLower()).Where(k => !string.IsNullOrEmpty(k)).ToList();
 
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         if (_editingId == 0)
         {
-            Ctx.NewsSections.Add(new NewsSection
+            ctx.NewsSections.Add(new NewsSection
             {
                 Name = _form.Name, Slug = _form.Slug, Description = _form.Description,
                 Color = _form.Color, IconClass = _form.IconClass, Keywords = keywords,
@@ -209,7 +214,7 @@ else
         }
         else
         {
-            var s = await Ctx.NewsSections.FindAsync(_editingId);
+            var s = await ctx.NewsSections.FindAsync(new object[] { _editingId }, _cts.Token);
             if (s != null)
             {
                 s.Name = _form.Name; s.Slug = _form.Slug; s.Description = _form.Description;
@@ -217,7 +222,7 @@ else
                 s.IsPublic = _form.IsPublic; s.IsDefault = _form.IsDefault;
             }
         }
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         await LoadAsync();
         _showModal = false;
     }
@@ -225,9 +230,12 @@ else
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Eliminar esta seccion?")) return;
-        var s = await Ctx.NewsSections.FindAsync(id);
-        if (s != null) { s.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var s = await ctx.NewsSections.FindAsync(new object[] { id }, _cts.Token);
+        if (s != null) { s.IsDeleted = true; await ctx.SaveChangesAsync(_cts.Token); await LoadAsync(); }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     record SectionRow(int Id, string Name, string Slug, string Color, string IconClass,
         int KeywordCount, bool IsPublic, bool IsDefault, bool IsSystemSection, int EventCount, int SourceCount);

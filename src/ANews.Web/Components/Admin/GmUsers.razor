@@ -1,4 +1,4 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject Microsoft.AspNetCore.Identity.UserManager<ANews.Infrastructure.Data.ApplicationUser> UserManager
 @inject IJSRuntime JS
 @using ANews.Domain.Entities
@@ -6,6 +6,7 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -127,6 +128,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<UserRow> _users = [];
     private List<UserRow> _filtered = [];
@@ -145,10 +147,11 @@ else
     protected override async Task OnInitializedAsync()
     {
         _loading = true; StateHasChanged();
-        _users = await Ctx.Users
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _users = await ctx.Users.AsNoTracking()
             .Select(u => new UserRow(u.Id, u.DisplayName ?? "", u.Email ?? "",
                 u.Role.ToString(), u.IsActive, u.CreatedAt, u.LastLoginAt))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         ApplyFilter();
         _loading = false;
     }
@@ -204,6 +207,8 @@ else
         _showEdit = false;
         await OnInitializedAsync();
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     record UserRow(int Id, string DisplayName, string Email, string Role,
         bool IsActive, DateTime CreatedAt, DateTime? LastLoginAt);

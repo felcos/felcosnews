@@ -10,9 +10,10 @@
 @using System.Collections.Generic
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @inject AiProviderFactory AiFactory
+@implements IDisposable
 
 <PageTitle>Fuentes de Noticias - Admin</PageTitle>
 
@@ -483,6 +484,8 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private bool _loading = true;
     private List<NewsSource> _sources = new();
     private List<NewsSection> _sections = new();
@@ -554,19 +557,22 @@ else
         _loading = true;
         StateHasChanged();
 
-        _sources = await Db.NewsSources
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _sources = await ctx.NewsSources
             .Include(s => s.Section)
             .OrderByDescending(s => s.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
-        _sections = await Db.NewsSections
+        _sections = await ctx.NewsSections
+            .AsNoTracking()
             .OrderBy(s => s.Name)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
-        _seedWorkspaces = await Db.WorkspaceZones
+        _seedWorkspaces = await ctx.WorkspaceZones
+            .AsNoTracking()
             .Where(z => z.IsActive && !z.IsDeleted)
             .OrderBy(z => z.SortOrder)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         _loading = false;
     }
@@ -611,8 +617,10 @@ else
         _saving = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             if (_editingSource?.Id > 0)
             {
+                ctx.Attach(_editingSource);
                 _editingSource.Name = _form.Name;
                 _editingSource.Url = _form.Url;
                 _editingSource.Type = _form.Type;
@@ -620,7 +628,7 @@ else
                 _editingSource.CredibilityScore = _form.CredibilityScore;
                 _editingSource.Language = _form.Language;
                 _editingSource.IsActive = _form.IsActive;
-                Db.NewsSources.Update(_editingSource);
+                ctx.NewsSources.Update(_editingSource);
             }
             else
             {
@@ -634,10 +642,10 @@ else
                     Language = _form.Language,
                     IsActive = _form.IsActive
                 };
-                await Db.NewsSources.AddAsync(newSource);
+                await ctx.NewsSources.AddAsync(newSource);
             }
 
-            await Db.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             CloseModal();
             await LoadData();
         }
@@ -653,17 +661,20 @@ else
 
     private async Task ToggleActive(NewsSource src)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        ctx.Attach(src);
         src.IsActive = !src.IsActive;
-        Db.NewsSources.Update(src);
-        await Db.SaveChangesAsync();
+        ctx.NewsSources.Update(src);
+        await ctx.SaveChangesAsync(_cts.Token);
     }
 
     private async Task BulkEnableFilteredAsync()
     {
         _bulkWorking = true; _bulkMsg = "";
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var targets = FilteredSources.Where(s => !s.IsActive).ToList();
-        foreach (var s in targets) s.IsActive = true;
-        await Db.SaveChangesAsync();
+        foreach (var s in targets) { ctx.Attach(s); s.IsActive = true; }
+        await ctx.SaveChangesAsync(_cts.Token);
         _bulkMsg = $"✓ {targets.Count} fuentes activadas";
         _bulkWorking = false;
         _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
@@ -672,9 +683,10 @@ else
     private async Task BulkDisableFilteredAsync()
     {
         _bulkWorking = true; _bulkMsg = "";
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var targets = FilteredSources.Where(s => s.IsActive).ToList();
-        foreach (var s in targets) s.IsActive = false;
-        await Db.SaveChangesAsync();
+        foreach (var s in targets) { ctx.Attach(s); s.IsActive = false; }
+        await ctx.SaveChangesAsync(_cts.Token);
         _bulkMsg = $"✓ {targets.Count} fuentes desactivadas";
         _bulkWorking = false;
         _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
@@ -683,9 +695,10 @@ else
     private async Task BulkResetErrorsAsync()
     {
         _bulkWorking = true; _bulkMsg = "";
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var targets = FilteredSources.Where(s => s.LastError != null).ToList();
-        foreach (var s in targets) { s.LastError = null; s.FailedScans = 0; }
-        await Db.SaveChangesAsync();
+        foreach (var s in targets) { ctx.Attach(s); s.LastError = null; s.FailedScans = 0; }
+        await ctx.SaveChangesAsync(_cts.Token);
         _bulkMsg = $"✓ Errores limpiados en {targets.Count} fuentes";
         _bulkWorking = false;
         _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
@@ -697,9 +710,10 @@ else
         var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"¿Eliminar {count} fuentes filtradas?");
         if (!confirmed) return;
         _bulkWorking = true; _bulkMsg = "";
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var targets = FilteredSources.ToList();
-        foreach (var s in targets) { s.IsDeleted = true; _sources.Remove(s); }
-        await Db.SaveChangesAsync();
+        foreach (var s in targets) { ctx.Attach(s); s.IsDeleted = true; _sources.Remove(s); }
+        await ctx.SaveChangesAsync(_cts.Token);
         _bulkMsg = $"✓ {targets.Count} fuentes eliminadas";
         _bulkWorking = false;
         _ = Task.Delay(3000).ContinueWith(_ => { _bulkMsg = ""; InvokeAsync(StateHasChanged); });
@@ -710,18 +724,22 @@ else
         var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"Eliminar fuente '{src.Name}'?");
         if (confirmed)
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            ctx.Attach(src);
             src.IsDeleted = true;
-            Db.NewsSources.Update(src);
-            await Db.SaveChangesAsync();
+            ctx.NewsSources.Update(src);
+            await ctx.SaveChangesAsync(_cts.Token);
             _sources.Remove(src);
         }
     }
 
     private async Task ClearError(NewsSource src)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        ctx.Attach(src);
         src.LastError = null;
-        Db.NewsSources.Update(src);
-        await Db.SaveChangesAsync();
+        ctx.NewsSources.Update(src);
+        await ctx.SaveChangesAsync(_cts.Token);
         _errorSource = null;
         await LoadData();
     }
@@ -772,13 +790,14 @@ else
             var existingUrls = _sources.Select(s => s.Url).ToHashSet();
             int added = 0;
 
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             foreach (var (name, url, lang, cred, topic) in feeds)
             {
                 if (existingUrls.Contains(url)) continue;
 
                 var sectionId = ResolveSectionId(topic);
 
-                await Db.NewsSources.AddAsync(new NewsSource
+                await ctx.NewsSources.AddAsync(new NewsSource
                 {
                     Name = name,
                     Url = url,
@@ -794,7 +813,7 @@ else
 
             if (added > 0)
             {
-                await Db.SaveChangesAsync();
+                await ctx.SaveChangesAsync(_cts.Token);
                 await LoadData();
                 _seedMsg = $"✓ {added} fuentes de {workspace} añadidas (inactivas — actívalas desde la tabla)";
             }
@@ -1224,13 +1243,14 @@ else
 
     private async Task AddSelectedSources()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var toAdd = _discoveredSources
             .Where(s => s.Selected && !_sources.Any(e => e.Url == s.Url))
             .ToList();
 
         foreach (var ds in toAdd)
         {
-            await Db.NewsSources.AddAsync(new NewsSource
+            await ctx.NewsSources.AddAsync(new NewsSource
             {
                 Name = ds.Name,
                 Url = ds.Url,
@@ -1242,8 +1262,10 @@ else
             });
         }
 
-        await Db.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         CloseDiscoverModal();
         await LoadData();
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

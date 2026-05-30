@@ -7,8 +7,9 @@
 @using System.Security.Cryptography
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
+@implements IDisposable
 @inject UserManager<ApplicationUser> UserManager
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
 @inject IJSRuntime JS
@@ -174,6 +175,7 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private List<ApiToken> _tokens = new();
     private bool _showCreate;
     private bool _saving;
@@ -196,10 +198,12 @@
 
     private async Task LoadTokens()
     {
-        _tokens = await Db.ApiTokens
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _tokens = await ctx.ApiTokens
+            .AsNoTracking()
             .Where(t => t.UserId == _userId && !t.IsDeleted)
             .OrderByDescending(t => t.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private void OpenCreateModal()
@@ -227,6 +231,8 @@
         _saving = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
             // Generate random token
             var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
                 .Replace("+", "-").Replace("/", "_").Replace("=", "");
@@ -245,8 +251,8 @@
                 ExpiresAt = _form.ExpiryDays > 0 ? DateTime.UtcNow.AddDays(_form.ExpiryDays) : null
             };
 
-            await Db.ApiTokens.AddAsync(token);
-            await Db.SaveChangesAsync();
+            await ctx.ApiTokens.AddAsync(token, _cts.Token);
+            await ctx.SaveChangesAsync(_cts.Token);
 
             _newTokenValue = rawToken;
             CloseModal();
@@ -267,8 +273,13 @@
         var confirmed = await JS.InvokeAsync<bool>("confirmDialog", $"Revocar token '{token.Name}'?");
         if (confirmed)
         {
-            token.IsDeleted = true;
-            await Db.SaveChangesAsync();
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            var dbToken = await ctx.ApiTokens.FirstOrDefaultAsync(t => t.Id == token.Id, _cts.Token);
+            if (dbToken != null)
+            {
+                dbToken.IsDeleted = true;
+                await ctx.SaveChangesAsync(_cts.Token);
+            }
             _tokens.Remove(token);
         }
     }
@@ -278,6 +289,8 @@
 
     private static bool IsExpired(ApiToken t) =>
         t.ExpiresAt.HasValue && t.ExpiresAt.Value < DateTime.UtcNow;
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     private class TokenForm
     {

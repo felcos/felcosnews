@@ -1,8 +1,9 @@
 @page "/explore"
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Nav
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>Explorar — AgenteNews</PageTitle>
 
@@ -305,6 +306,8 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private bool IsLoading = true;
     private bool ShowArchived = true;
     private bool CompareMode = false;
@@ -329,11 +332,14 @@
         ToDate = Today;
         FromDate = Today.AddDays(-6); // last 7 days inclusive
 
-        Sections = await Ctx.NewsSections
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        Sections = await ctx.NewsSections
+            .AsNoTracking()
             .Where(s => s.IsPublic && !s.IsDeleted)
             .OrderBy(s => s.SortOrder)
             .Select(s => new SectionItem(s.Id, s.Name, s.Slug, s.Color ?? "#4a90e2", s.IconClass ?? "fa-newspaper"))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         await LoadEventsAsync();
         IsLoading = false;
@@ -344,6 +350,8 @@
         IsLoading = true;
         StateHasChanged();
 
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
         var fromUtc = DateTime.SpecifyKind(FromDate, DateTimeKind.Utc);
         var toUtc = DateTime.SpecifyKind(ToDate.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
 
@@ -351,7 +359,8 @@
             ? new[] { "Detected", "Archived" }
             : new[] { "Detected" };
 
-        Events = await Ctx.NewsEvents
+        Events = await ctx.NewsEvents
+            .AsNoTracking()
             .Include(e => e.Section)
             .Where(e => !e.IsDeleted
                      && eventTypeFilter.Contains(e.EventType)
@@ -374,7 +383,7 @@
                 e.Section.Slug,
                 e.Articles.Count(a => !a.IsDeleted && a.PublishedAt >= fromUtc && a.PublishedAt <= toUtc),
                 e.Tags))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         if (CompareMode)
             await LoadCurrentEventsAsync();
@@ -390,9 +399,12 @@
             return;
         }
 
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
         var ids = Events.Select(e => e.Id).ToList();
 
-        CurrentEvents = await Ctx.NewsEvents
+        CurrentEvents = await ctx.NewsEvents
+            .AsNoTracking()
             .Where(e => ids.Contains(e.Id) && !e.IsDeleted)
             .Select(e => new CurrentEventItem(
                 e.Id,
@@ -401,7 +413,7 @@
                 e.IsActive,
                 e.UpdatedAt,
                 e.Articles.Count(a => !a.IsDeleted)))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private async Task ToggleCompare()
@@ -473,4 +485,6 @@
         bool IsActive,
         DateTime UpdatedAt,
         int TotalArticles);
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

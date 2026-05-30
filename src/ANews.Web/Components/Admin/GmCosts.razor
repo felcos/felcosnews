@@ -1,8 +1,9 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @using ANews.Domain.Entities
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -148,6 +149,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<CostEntry> _entries = [];
     private decimal _totalCost, _todayCost;
@@ -172,10 +174,11 @@ else
     private async Task LoadData()
     {
         _loading = true; StateHasChanged();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var since = DateTime.UtcNow.Date.AddDays(-_period);
-        _entries = await Ctx.CostEntries
+        _entries = await ctx.CostEntries.AsNoTracking()
             .Include(e => e.Provider).Include(e => e.AgentExecution)
-            .Where(e => e.Date >= since).OrderByDescending(e => e.Date).ToListAsync();
+            .Where(e => e.Date >= since).OrderByDescending(e => e.Date).ToListAsync(_cts.Token);
         _totalCost = _entries.Sum(e => e.Cost);
         _todayCost = _entries.Where(e => e.Date == DateTime.UtcNow.Date).Sum(e => e.Cost);
         _totalInputTokens = _entries.Sum(e => e.InputTokens);
@@ -215,4 +218,6 @@ else
         if (t >= 1_000) return $"{t / 1_000.0:F1}K";
         return t.ToString();
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

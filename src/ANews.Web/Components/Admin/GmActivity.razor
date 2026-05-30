@@ -1,9 +1,10 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -316,6 +317,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private int _period = 30;
 
@@ -354,6 +356,8 @@ else
 
         try
         {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
         _userPage = 1;
         _profilePage = 1;
 
@@ -364,37 +368,37 @@ else
         var since = today.AddDays(-_period);
 
         // KPIs — single pass queries
-        _activeToday = await Ctx.UserActivities
+        _activeToday = await ctx.UserActivities.AsNoTracking()
             .Where(a => a.CreatedAt >= today)
-            .Select(a => a.UserId).Distinct().CountAsync();
+            .Select(a => a.UserId).Distinct().CountAsync(_cts.Token);
 
-        _activitiesToday = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= today);
-        _activitiesWeek = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= weekAgo);
-        _activitiesMonth = await Ctx.UserActivities.CountAsync(a => a.CreatedAt >= monthAgo);
-        _profilesAnalyzed = await Ctx.ReaderProfiles.CountAsync(p => p.LastAnalyzedAt != null);
+        _activitiesToday = await ctx.UserActivities.AsNoTracking().CountAsync(a => a.CreatedAt >= today, _cts.Token);
+        _activitiesWeek = await ctx.UserActivities.AsNoTracking().CountAsync(a => a.CreatedAt >= weekAgo, _cts.Token);
+        _activitiesMonth = await ctx.UserActivities.AsNoTracking().CountAsync(a => a.CreatedAt >= monthAgo, _cts.Token);
+        _profilesAnalyzed = await ctx.ReaderProfiles.AsNoTracking().CountAsync(p => p.LastAnalyzedAt != null, _cts.Token);
 
         // Activity by type for selected period
-        var rawByType = await Ctx.UserActivities
+        var rawByType = await ctx.UserActivities.AsNoTracking()
             .Where(a => a.CreatedAt >= since)
             .GroupBy(a => a.ActivityType)
             .Select(g => new { Type = g.Key, Count = g.Count() })
             .OrderByDescending(x => x.Count)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         _byType = rawByType.Select(x => new TypeStat(x.Type.ToString(), x.Count)).ToList();
         _totalPeriod = _byType.Sum(t => t.Count);
 
         // Top sections
-        _topSections = await Ctx.UserActivities
+        _topSections = await ctx.UserActivities.AsNoTracking()
             .Where(a => a.CreatedAt >= since && a.NewsSectionId != null)
             .GroupBy(a => a.NewsSectionId!.Value)
             .Select(g => new { SectionId = g.Key, Count = g.Count() })
             .OrderByDescending(x => x.Count)
             .Take(5)
-            .Join(Ctx.NewsSections, x => x.SectionId, s => s.Id, (x, s) => new SectionStat(s.Name, x.Count))
-            .ToListAsync();
+            .Join(ctx.NewsSections, x => x.SectionId, s => s.Id, (x, s) => new SectionStat(s.Name, x.Count))
+            .ToListAsync(_cts.Token);
 
         // Top users — group activities, then join with users and profiles
-        var activityGroups = await Ctx.UserActivities
+        var activityGroups = await ctx.UserActivities.AsNoTracking()
             .Where(a => a.CreatedAt >= since)
             .GroupBy(a => a.UserId)
             .Select(g => new
@@ -407,16 +411,16 @@ else
             })
             .OrderByDescending(x => x.Total)
             .Take(50)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         var userIds = activityGroups.Select(a => a.UserId).ToList();
-        var users = await Ctx.Users
+        var users = await ctx.Users.AsNoTracking()
             .Where(u => userIds.Contains(u.Id))
             .Select(u => new { u.Id, u.DisplayName, u.Email })
-            .ToDictionaryAsync(u => u.Id);
-        var profiles = await Ctx.ReaderProfiles
+            .ToDictionaryAsync(u => u.Id, _cts.Token);
+        var profiles = await ctx.ReaderProfiles.AsNoTracking()
             .Where(p => userIds.Contains(p.UserId))
-            .ToDictionaryAsync(p => p.UserId);
+            .ToDictionaryAsync(p => p.UserId, _cts.Token);
 
         _topUsers = activityGroups.Select(a =>
         {
@@ -431,12 +435,12 @@ else
         }).ToList();
 
         // Reader profiles
-        var allProfiles = await Ctx.ReaderProfiles.OrderByDescending(p => p.ArticlesRead).Take(100).ToListAsync();
+        var allProfiles = await ctx.ReaderProfiles.AsNoTracking().OrderByDescending(p => p.ArticlesRead).Take(100).ToListAsync(_cts.Token);
         var profileUserIds = allProfiles.Select(p => p.UserId).ToList();
-        var profileUsers = await Ctx.Users
+        var profileUsers = await ctx.Users.AsNoTracking()
             .Where(u => profileUserIds.Contains(u.Id))
             .Select(u => new { u.Id, u.DisplayName })
-            .ToDictionaryAsync(u => u.Id);
+            .ToDictionaryAsync(u => u.Id, _cts.Token);
 
         _profiles = allProfiles.Select(p =>
         {
@@ -451,17 +455,17 @@ else
         }).ToList();
 
         // Quotas
-        var rawQuotas = await Ctx.SectionQuotas
+        var rawQuotas = await ctx.SectionQuotas.AsNoTracking()
             .Include(q => q.Section)
             .OrderByDescending(q => q.CurrentReads)
             .Take(100)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         var quotaUserIds = rawQuotas.Select(q => q.UserId).Distinct().ToList();
-        var quotaUsers = await Ctx.Users
+        var quotaUsers = await ctx.Users.AsNoTracking()
             .Where(u => quotaUserIds.Contains(u.Id))
             .Select(u => new { u.Id, u.DisplayName })
-            .ToDictionaryAsync(u => u.Id);
+            .ToDictionaryAsync(u => u.Id, _cts.Token);
 
         _quotas = rawQuotas.Select(q =>
         {
@@ -519,6 +523,8 @@ else
         nameof(ActivityType.MorningBriefViewed) => "#0984e3",
         _ => "var(--accent)"
     };
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     record TypeStat(string Type, int Count);
     record SectionStat(string Name, int Count);

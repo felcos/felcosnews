@@ -5,8 +5,9 @@
 @using Microsoft.EntityFrameworkCore
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>Auditoria - Admin</PageTitle>
 
@@ -133,6 +134,8 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private List<AuditLogEntity> _auditLogs = new();
     private AuditLogEntity? _detail;
     private string _search = "";
@@ -152,7 +155,8 @@
 
     private async Task LoadData()
     {
-        var query = Db.AuditLogs.AsQueryable();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var query = ctx.AuditLogs.AsQueryable();
 
         if (!string.IsNullOrEmpty(_filterAction))
             query = query.Where(l => l.Action == _filterAction);
@@ -160,21 +164,24 @@
         if (_filterDate.HasValue)
             query = query.Where(l => l.Timestamp.Date == _filterDate.Value.Date);
 
-        var total = await query.CountAsync();
+        var total = await query.CountAsync(_cts.Token);
         _totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)_pageSize));
         if (_page >= _totalPages) _page = 0;
 
         _auditLogs = await query.IgnoreQueryFilters()
+            .AsNoTracking()
             .OrderByDescending(l => l.Timestamp)
             .Skip(_page * _pageSize)
             .Take(_pageSize)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private void ShowDetail(AuditLogEntity log) => _detail = log;
 
     private async Task PrevPage() { _page--; await LoadData(); }
     private async Task NextPage() { _page++; await LoadData(); }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     private static string FormatJson(string json)
     {

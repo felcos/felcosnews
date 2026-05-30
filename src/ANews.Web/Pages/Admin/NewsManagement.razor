@@ -1,7 +1,7 @@
 @page "/admin/news"
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout AdminLayout
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @inject ANews.Web.Services.ToastService Toast
 @using ANews.Domain.Entities
@@ -10,6 +10,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
 @using ANews.Web.Components.Shared
+@implements IDisposable
 
 <PageTitle>Gestión Noticias — Admin</PageTitle>
 
@@ -242,6 +243,8 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private string ActiveTab = "events";
     private string SearchTerm = "";
     private string? PriorityFilter;
@@ -259,14 +262,16 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Sections = await Ctx.NewsSections.OrderBy(s => s.Name).ToListAsync();
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        Sections = await ctx.NewsSections.AsNoTracking().OrderBy(s => s.Name).ToListAsync(_cts.Token);
         await LoadEventsAsync();
         await LoadPurgeStatsAsync();
     }
 
     private async Task LoadEventsAsync()
     {
-        var q = Ctx.NewsEvents.Where(e => !e.IsDeleted);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var q = ctx.NewsEvents.AsNoTracking().Where(e => !e.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(SearchTerm))
             q = q.Where(e => e.Title.Contains(SearchTerm));
@@ -275,7 +280,7 @@
         if (SectionFilter.HasValue)
             q = q.Where(e => e.NewsSectionId == SectionFilter.Value);
 
-        TotalItems = await q.CountAsync();
+        TotalItems = await q.CountAsync(_cts.Token);
 
         var ordered = (SortColumn, SortAsc) switch
         {
@@ -297,19 +302,20 @@
             .Select(e => new EventRow(e.Id, e.Title, e.Priority.ToString(),
                 e.ImpactScore, e.IsActive, e.NewsSectionId, e.Section.Name,
                 e.Articles.Count(a => !a.IsDeleted), e.CreatedAt))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private async Task LoadArticlesAsync()
     {
-        var q = Ctx.NewsArticles.Where(a => !a.IsDeleted);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var q = ctx.NewsArticles.AsNoTracking().Where(a => !a.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(SearchTerm))
             q = q.Where(a => a.Title.Contains(SearchTerm));
         if (SectionFilter.HasValue)
             q = q.Where(a => a.Event.NewsSectionId == SectionFilter.Value);
 
-        TotalItems = await q.CountAsync();
+        TotalItems = await q.CountAsync(_cts.Token);
 
         PagedArticles = await q
             .OrderByDescending(a => a.PublishedAt)
@@ -317,7 +323,7 @@
             .Take(PageSize)
             .Select(a => new ArticleRow(a.Id, a.Title, a.SourceName, a.SourceUrl,
                 a.Relevance, a.ArticleType.ToString(), a.PublishedAt))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private async Task SetTab(string tab)
@@ -359,11 +365,12 @@
 
     private async Task ToggleEventAsync(int id)
     {
-        var ev = await Ctx.NewsEvents.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var ev = await ctx.NewsEvents.FindAsync(new object[] { id }, _cts.Token);
         if (ev != null)
         {
             ev.IsActive = !ev.IsActive;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Info(ev.IsActive ? "Evento activado" : "Evento desactivado");
             await LoadEventsAsync();
         }
@@ -372,11 +379,12 @@
     private async Task DeleteEventAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este evento y todos sus artículos?")) return;
-        var ev = await Ctx.NewsEvents.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var ev = await ctx.NewsEvents.FindAsync(new object[] { id }, _cts.Token);
         if (ev != null)
         {
             ev.IsDeleted = true;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success("Evento eliminado");
             if (CurrentPage > 1 && PagedEvents.Count == 1) CurrentPage--;
             await LoadEventsAsync();
@@ -386,11 +394,12 @@
     private async Task DeleteArticleAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este artículo?")) return;
-        var art = await Ctx.NewsArticles.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var art = await ctx.NewsArticles.FindAsync(new object[] { id }, _cts.Token);
         if (art != null)
         {
             art.IsDeleted = true;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success("Artículo eliminado");
             if (CurrentPage > 1 && PagedArticles.Count == 1) CurrentPage--;
             await LoadArticlesAsync();
@@ -428,7 +437,8 @@
         _creatingEvent = true;
         try
         {
-            Ctx.NewsEvents.Add(new NewsEvent
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+            ctx.NewsEvents.Add(new NewsEvent
             {
                 Title = _newEvent.Title.Trim(),
                 Description = _newEvent.Description,
@@ -440,7 +450,7 @@
                 IsActive = true,
                 Tags = []
             });
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             _showCreateEvent = false;
             Toast.Success($"Evento \"{_newEvent.Title.Trim()}\" creado");
             CurrentPage = 1;
@@ -462,10 +472,11 @@
 
     private async Task LoadPurgeStatsAsync()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var now = DateTime.UtcNow;
-        _archivedCount   = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived"));
-        _archived30Count = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-30));
-        _archived90Count = await Ctx.NewsEvents.CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-90));
+        _archivedCount   = await ctx.NewsEvents.AsNoTracking().CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived"), _cts.Token);
+        _archived30Count = await ctx.NewsEvents.AsNoTracking().CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-30), _cts.Token);
+        _archived90Count = await ctx.NewsEvents.AsNoTracking().CountAsync(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < now.AddDays(-90), _cts.Token);
     }
 
     private void OpenPurgeConfirm(int days) { _purgeDays = days; _showPurgeConfirm = true; }
@@ -475,18 +486,21 @@
         _showPurgeConfirm = false;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
             var cutoff = DateTime.UtcNow.AddDays(-_purgeDays);
-            var toDelete = await Ctx.NewsEvents
+            var toDelete = await ctx.NewsEvents
                 .Where(e => !e.IsDeleted && (!e.IsActive || e.EventType == "Archived") && e.UpdatedAt < cutoff)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
             foreach (var ev in toDelete) ev.IsDeleted = true;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success($"Purgados {toDelete.Count} eventos con más de {_purgeDays} días");
             await LoadEventsAsync();
             await LoadPurgeStatsAsync();
         }
         catch (Exception ex) { Toast.Error($"Error al purgar: {ex.Message}"); }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     class NewEventForm
     {

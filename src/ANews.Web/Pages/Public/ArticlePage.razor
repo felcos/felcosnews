@@ -1,5 +1,5 @@
 @page "/article/{Id:int}"
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject ANews.Infrastructure.AI.AiProviderFactory AiFactory
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthStateProvider
@@ -10,6 +10,7 @@
 @using ANews.Infrastructure.Data
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <PageTitle>@(_article?.Title ?? "Artículo") — AgenteNews</PageTitle>
 
@@ -170,6 +171,8 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     [Parameter] public int Id { get; set; }
 
     private ANews.Domain.Entities.NewsArticle? _article;
@@ -184,20 +187,23 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _article = await Ctx.NewsArticles
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        _article = await ctx.NewsArticles
             .Include(a => a.Event)
                 .ThenInclude(e => e.Section)
             .Include(a => a.Source)
-            .FirstOrDefaultAsync(a => a.Id == Id && !a.IsDeleted);
+            .FirstOrDefaultAsync(a => a.Id == Id && !a.IsDeleted, _cts.Token);
 
         if (_article != null)
         {
             _summaryEs = _article.Summary;
-            _relatedArticles = await Ctx.NewsArticles
+            _relatedArticles = await ctx.NewsArticles
+                .AsNoTracking()
                 .Where(a => a.NewsEventId == _article.NewsEventId && a.Id != Id && !a.IsDeleted)
                 .OrderByDescending(a => a.PublishedAt)
                 .Take(5)
-                .ToListAsync();
+                .ToListAsync(_cts.Token);
 
             _ = TrackActivity(ActivityType.ArticleRead, sectionId: _article.Event?.NewsSectionId, eventId: _article.NewsEventId, articleId: _article.Id);
         }
@@ -251,11 +257,12 @@
                 {
                     _summaryEs = trimmed;
                     // Persist ES summary to DB
-                    var dbArticle = await Ctx.NewsArticles.FindAsync(_article.Id);
+                    await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+                    var dbArticle = await ctx.NewsArticles.FindAsync(new object[] { _article.Id }, _cts.Token);
                     if (dbArticle != null)
                     {
                         dbArticle.Summary = trimmed;
-                        await Ctx.SaveChangesAsync();
+                        await ctx.SaveChangesAsync(_cts.Token);
                         _article.Summary = trimmed;
                     }
                 }
@@ -285,13 +292,15 @@
     {
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
             var auth = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(auth.User.Identity?.IsAuthenticated ?? false)) return;
             var userName = auth.User.Identity?.Name;
             if (string.IsNullOrEmpty(userName)) return;
-            var user = await Ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName);
+            var user = await ctx.Users.FirstOrDefaultAsync(u => u.UserName == userName, _cts.Token);
             if (user == null) return;
-            Ctx.UserActivities.Add(new UserActivity
+            ctx.UserActivities.Add(new UserActivity
             {
                 UserId = user.Id,
                 ActivityType = type,
@@ -301,8 +310,10 @@
                 StoryThreadId = threadId,
                 Metadata = metadata
             });
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
         }
         catch { /* Never block UI */ }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

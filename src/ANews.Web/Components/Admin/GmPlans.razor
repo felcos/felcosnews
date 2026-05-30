@@ -1,9 +1,10 @@
-@inject ANews.Infrastructure.Data.AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
 @using ANews.Domain.Entities
 @using ANews.Domain.Enums
 @using ANews.Infrastructure.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (_loading)
 {
@@ -207,6 +208,7 @@ else
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private bool _loading = true;
     private List<PlanRow> _plans = [];
     private Dictionary<PlanTier, int> _tierCounts = new();
@@ -226,16 +228,18 @@ else
     private async Task LoadAsync()
     {
         _loading = true; StateHasChanged();
-        var plans = await Ctx.SubscriptionPlans
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var plans = await ctx.SubscriptionPlans.AsNoTracking()
             .Where(p => !p.IsDeleted)
             .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
-        var userCounts = await Ctx.Users
+        var userCounts = await ctx.Users.AsNoTracking()
             .Where(u => u.SubscriptionPlanId != null)
             .GroupBy(u => u.SubscriptionPlanId)
             .Select(g => new { PlanId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.PlanId!.Value, x => x.Count);
+            .ToDictionaryAsync(x => x.PlanId!.Value, x => x.Count, _cts.Token);
 
         _plans = plans.Select(p => new PlanRow(
             p.Id, p.Name, p.Tier, p.MonthlyPrice,
@@ -243,16 +247,16 @@ else
             userCounts.GetValueOrDefault(p.Id, 0), p.IsActive
         )).ToList();
 
-        _tierCounts = await Ctx.Users
+        _tierCounts = await ctx.Users.AsNoTracking()
             .GroupBy(u => u.PlanTier)
             .Select(g => new { Tier = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.Tier, x => x.Count);
+            .ToDictionaryAsync(x => x.Tier, x => x.Count, _cts.Token);
 
-        _userList = await Ctx.Users
+        _userList = await ctx.Users.AsNoTracking()
             .Where(u => u.IsActive)
             .OrderBy(u => u.Email)
             .Select(u => new UserOption(u.Id, u.Email ?? ""))
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
         _loading = false;
     }
 
@@ -265,7 +269,8 @@ else
 
     private async Task ShowEdit(int id)
     {
-        var p = await Ctx.SubscriptionPlans.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var p = await ctx.SubscriptionPlans.FindAsync(new object[] { id }, _cts.Token);
         if (p == null) return;
         _form = new PlanForm
         {
@@ -284,11 +289,12 @@ else
 
     private async Task LoadSectionLimits(Dictionary<string, int> existing)
     {
-        var sections = await Ctx.NewsSections
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var sections = await ctx.NewsSections.AsNoTracking()
             .Where(s => !s.IsDeleted)
             .OrderBy(s => s.Name)
             .Select(s => new { s.Name, s.Slug })
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         _form.SectionLimits = sections.Select(s => new SectionLimitRow
         {
@@ -310,9 +316,10 @@ else
             .Where(sl => sl.MaxReads != -1)
             .ToDictionary(sl => sl.Slug, sl => sl.MaxReads);
 
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         if (_editingId == 0)
         {
-            Ctx.SubscriptionPlans.Add(new SubscriptionPlan
+            ctx.SubscriptionPlans.Add(new SubscriptionPlan
             {
                 Name = _form.Name,
                 Description = _form.Description,
@@ -327,7 +334,7 @@ else
         }
         else
         {
-            var p = await Ctx.SubscriptionPlans.FindAsync(_editingId);
+            var p = await ctx.SubscriptionPlans.FindAsync(new object[] { _editingId }, _cts.Token);
             if (p != null)
             {
                 p.Name = _form.Name;
@@ -341,7 +348,7 @@ else
                 p.SortOrder = _form.SortOrder;
             }
         }
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         await LoadAsync();
         _showModal = false;
     }
@@ -349,8 +356,9 @@ else
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "Eliminar este plan?")) return;
-        var p = await Ctx.SubscriptionPlans.FindAsync(id);
-        if (p != null) { p.IsDeleted = true; await Ctx.SaveChangesAsync(); await LoadAsync(); }
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var p = await ctx.SubscriptionPlans.FindAsync(new object[] { id }, _cts.Token);
+        if (p != null) { p.IsDeleted = true; await ctx.SaveChangesAsync(_cts.Token); await LoadAsync(); }
     }
 
     private async Task AssignPlanAsync()
@@ -359,8 +367,9 @@ else
         if (_assignUserId == 0 || _assignPlanId == 0)
         { _assignError = "Selecciona usuario y plan"; return; }
 
-        var user = await Ctx.Users.FindAsync(_assignUserId);
-        var plan = await Ctx.SubscriptionPlans.FindAsync(_assignPlanId);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var user = await ctx.Users.FindAsync(new object[] { _assignUserId }, _cts.Token);
+        var plan = await ctx.SubscriptionPlans.FindAsync(new object[] { _assignPlanId }, _cts.Token);
         if (user == null || plan == null)
         { _assignError = "Usuario o plan no encontrado"; return; }
 
@@ -368,17 +377,17 @@ else
         user.SubscriptionPlanId = plan.Id;
 
         // Remove existing quotas for user
-        var existing = await Ctx.SectionQuotas.Where(q => q.UserId == user.Id).ToListAsync();
-        Ctx.SectionQuotas.RemoveRange(existing);
+        var existing = await ctx.SectionQuotas.Where(q => q.UserId == user.Id).ToListAsync(_cts.Token);
+        ctx.SectionQuotas.RemoveRange(existing);
 
         // Create new quotas from plan section limits
-        var sections = await Ctx.NewsSections.Where(s => !s.IsDeleted).ToListAsync();
+        var sections = await ctx.NewsSections.AsNoTracking().Where(s => !s.IsDeleted).ToListAsync(_cts.Token);
         var periodStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
         foreach (var section in sections)
         {
             var maxReads = plan.SectionLimits.GetValueOrDefault(section.Slug, plan.DefaultMaxReadsPerMonth);
-            Ctx.SectionQuotas.Add(new SectionQuota
+            ctx.SectionQuotas.Add(new SectionQuota
             {
                 UserId = user.Id,
                 NewsSectionId = section.Id,
@@ -389,11 +398,13 @@ else
             });
         }
 
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         await LoadAsync();
         _assignMsg = $"Plan '{plan.Name}' asignado a {user.Email}";
         _assignUserId = 0; _assignPlanId = 0;
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     record PlanRow(int Id, string Name, PlanTier Tier, decimal MonthlyPrice,
         int DefaultMaxReads, int FeaturesCount, int UserCount, bool IsActive);

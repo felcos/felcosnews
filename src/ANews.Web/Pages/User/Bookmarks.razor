@@ -7,9 +7,10 @@
 @using Microsoft.EntityFrameworkCore
 @attribute [Authorize]
 @inject UserManager<ApplicationUser> UserManager
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
+@implements IDisposable
 
 <PageTitle>Guardados - AgenteNews</PageTitle>
 
@@ -93,6 +94,7 @@
 }
 
 @code {
+    private CancellationTokenSource _cts = new();
     private List<Bookmark> _bookmarks = new();
     private Bookmark? _editingBookmark;
     private string _noteText = "";
@@ -109,20 +111,23 @@
 
     private async Task LoadBookmarks()
     {
-        _bookmarks = await Db.Set<Bookmark>()
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        _bookmarks = await ctx.Set<Bookmark>()
             .Include(b => b.Article)
                 .ThenInclude(a => a!.Source)
             .Include(b => b.Article)
                 .ThenInclude(a => a!.Event)
             .Where(b => b.UserId == _userId)
             .OrderByDescending(b => b.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
     }
 
     private async Task RemoveBookmark(Bookmark bm)
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        ctx.Attach(bm);
         bm.IsDeleted = true;
-        await Db.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         _bookmarks.Remove(bm);
     }
 
@@ -137,8 +142,12 @@
     private async Task SaveNote()
     {
         if (_editingBookmark == null) return;
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        ctx.Attach(_editingBookmark);
         _editingBookmark.Note = _noteText;
-        await Db.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
         _editingBookmark = null;
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

@@ -6,8 +6,9 @@
 @using Microsoft.EntityFrameworkCore
 @attribute [Authorize(Policy = "RequireAdmin")]
 @layout ANews.Web.Components.Layout.AdminLayout
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>Costes IA - Admin</PageTitle>
 
@@ -143,6 +144,8 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
+
     private List<CostEntry> _entries = new();
     private decimal _totalCost;
     private decimal _todayCost;
@@ -165,14 +168,16 @@
 
     private async Task LoadData()
     {
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
         var since = DateTime.UtcNow.Date.AddDays(-_period);
 
-        _entries = await Db.CostEntries
+        _entries = await ctx.CostEntries
+            .AsNoTracking()
             .Include(e => e.Provider)
             .Include(e => e.AgentExecution)
             .Where(e => e.Date >= since)
             .OrderByDescending(e => e.Date)
-            .ToListAsync();
+            .ToListAsync(_cts.Token);
 
         _totalCost        = _entries.Sum(e => e.Cost);
         _todayCost        = _entries.Where(e => e.Date == DateTime.UtcNow.Date).Sum(e => e.Cost);
@@ -215,6 +220,8 @@
                 $"{e.Date:dd/MM/yyyy},{e.Provider?.Name},{e.Operation},{e.InputTokens},{e.OutputTokens},{e.Cost:F6}"));
         await JS.InvokeVoidAsync("copyToClipboard", csv);
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     private static string FormatTokens(long t)
     {

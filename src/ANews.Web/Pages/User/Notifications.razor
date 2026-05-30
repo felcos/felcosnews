@@ -1,7 +1,7 @@
 @page "/user/notifications"
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
-@inject AppDbContext Ctx
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
 @inject IEnumerable<ANews.Domain.Interfaces.INotificationService> NotificationServices
@@ -14,6 +14,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
 @using System.Text.Json
+@implements IDisposable
 
 <PageTitle>Canales de Notificación — AgenteNews</PageTitle>
 
@@ -219,6 +220,7 @@
 <ToastContainer />
 
 @code {
+    private CancellationTokenSource _cts = new();
     private List<ChannelRow> Channels = [];
     private List<NotifLogRow> NotifLogs = [];
     private int CurrentUserId;
@@ -236,20 +238,24 @@
 
     private async Task LoadAsync()
     {
-        Channels = await Ctx.NotificationChannels
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        Channels = await ctx.NotificationChannels
             .Where(c => c.UserId == CurrentUserId && !c.IsDeleted)
             .Select(c => new ChannelRow(c.Id, c.Name, c.Type, c.IsActive, c.IsVerified,
                 c.TotalSent, c.TotalFailed, c.Config))
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
 
-        NotifLogs = await Ctx.NotificationLogs
+        NotifLogs = await ctx.NotificationLogs
             .Where(l => l.UserId == CurrentUserId)
             .OrderByDescending(l => l.SentAt)
             .Take(20)
             .Select(l => new NotifLogRow(
                 l.Channel != null ? l.Channel.Name : null,
                 l.Message, l.Sent, l.SentAt))
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
     }
 
     private void ShowAdd()
@@ -301,16 +307,18 @@
         IsSaving = true;
         try
         {
+            await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
             if (EditingId.HasValue)
             {
-                var ch = await Ctx.NotificationChannels.FindAsync(EditingId.Value);
+                var ch = await ctx.NotificationChannels.FindAsync(new object[] { EditingId.Value }, _cts.Token);
                 if (ch != null)
                 {
                     ch.Name = Form.Name.Trim();
                     ch.Config = config;
                     // If config changed, reset verification
                     ch.IsVerified = false;
-                    await Ctx.SaveChangesAsync();
+                    await ctx.SaveChangesAsync(_cts.Token);
                     Toast.Success("Canal actualizado. Vuelve a verificarlo si cambiaste la configuración.");
                 }
             }
@@ -325,8 +333,8 @@
                     IsActive = true,
                     VerificationToken = GenerateToken()
                 };
-                Ctx.NotificationChannels.Add(channel);
-                await Ctx.SaveChangesAsync();
+                ctx.NotificationChannels.Add(channel);
+                await ctx.SaveChangesAsync(_cts.Token);
                 Toast.Success("Canal guardado. Pulsa Verificar para confirmar que funciona.");
             }
 
@@ -356,12 +364,14 @@
 
     private async Task SendVerificationAsync(int channelId)
     {
-        var ch = await Ctx.NotificationChannels.FindAsync(channelId);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var ch = await ctx.NotificationChannels.FindAsync(new object[] { channelId }, _cts.Token);
         if (ch == null || string.IsNullOrEmpty(ch.Config)) return;
 
         var token = GenerateToken();
         ch.VerificationToken = token;
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
 
         var service = NotificationServices.FirstOrDefault(s => s.ChannelType == ch.Type);
         if (service != null)
@@ -372,14 +382,14 @@
             else
             {
                 ch.IsVerified = true;
-                await Ctx.SaveChangesAsync();
+                await ctx.SaveChangesAsync(_cts.Token);
                 Toast.Warning("Canal marcado como verificado (no hay servicio backend disponible).");
             }
         }
         else
         {
             ch.IsVerified = true;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success("Canal verificado.");
         }
         await LoadAsync();
@@ -387,11 +397,13 @@
 
     private async Task ToggleAsync(int id)
     {
-        var ch = await Ctx.NotificationChannels.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var ch = await ctx.NotificationChannels.FindAsync(new object[] { id }, _cts.Token);
         if (ch != null)
         {
             ch.IsActive = !ch.IsActive;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success(ch.IsActive ? "Canal activado." : "Canal desactivado.");
             await LoadAsync();
         }
@@ -399,7 +411,9 @@
 
     private async Task TestAsync(int id)
     {
-        var ch = await Ctx.NotificationChannels.FindAsync(id);
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        var ch = await ctx.NotificationChannels.FindAsync(new object[] { id }, _cts.Token);
         if (ch == null || string.IsNullOrEmpty(ch.Config)) return;
 
         var service = NotificationServices.FirstOrDefault(s => s.ChannelType == ch.Type);
@@ -426,13 +440,13 @@
             sent = true;
         }
 
-        Ctx.NotificationLogs.Add(new NotificationLog
+        ctx.NotificationLogs.Add(new NotificationLog
         {
             UserId = CurrentUserId, NotificationChannelId = id,
             Message = sent ? "Mensaje de prueba enviado" : $"Error: {errorMsg}",
             Sent = sent, SentAt = DateTime.UtcNow
         });
-        await Ctx.SaveChangesAsync();
+        await ctx.SaveChangesAsync(_cts.Token);
 
         if (sent) Toast.Success("Mensaje de prueba enviado correctamente.");
         else Toast.Error($"Error al enviar: {errorMsg}");
@@ -443,11 +457,13 @@
     private async Task DeleteAsync(int id)
     {
         if (!await JS.InvokeAsync<bool>("confirm", "¿Eliminar este canal?")) return;
-        var ch = await Ctx.NotificationChannels.FindAsync(id);
+
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+        var ch = await ctx.NotificationChannels.FindAsync(new object[] { id }, _cts.Token);
         if (ch != null)
         {
             ch.IsDeleted = true;
-            await Ctx.SaveChangesAsync();
+            await ctx.SaveChangesAsync(_cts.Token);
             Toast.Success("Canal eliminado.");
             await LoadAsync();
         }
@@ -480,4 +496,6 @@
         public string? Email { get; set; }
         public string? WebhookUrl { get; set; }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 }

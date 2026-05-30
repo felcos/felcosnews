@@ -7,9 +7,10 @@
 @attribute [Authorize]
 @layout ANews.Web.Components.Layout.UserLayout
 @inject UserManager<ApplicationUser> UserManager
-@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@implements IDisposable
 
 <PageTitle>Mi Panel - AgenteNews</PageTitle>
 
@@ -215,6 +216,7 @@
 </div>
 
 @code {
+    private CancellationTokenSource _cts = new();
     private string _displayName = "";
     private string _initials = "?";
     private int _moduleCount;
@@ -236,18 +238,22 @@
 
         var userId = user.Id;
 
-        _modules = await Db.Set<UserModule>()
+        await using AppDbContext ctx = await DbFactory.CreateDbContextAsync();
+
+        _modules = await ctx.Set<UserModule>()
             .Include(m => m.Keywords)
             .Where(m => m.UserId == userId)
             .OrderByDescending(m => m.CreatedAt)
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
 
-        _channels = await Db.Set<NotificationChannel>()
+        _channels = await ctx.Set<NotificationChannel>()
             .Where(c => c.UserId == userId)
-            .ToListAsync();
+            .AsNoTracking()
+            .ToListAsync(_cts.Token);
 
-        _bookmarkCount = await Db.Set<Bookmark>()
-            .CountAsync(b => b.UserId == userId);
+        _bookmarkCount = await ctx.Set<Bookmark>()
+            .CountAsync(b => b.UserId == userId, _cts.Token);
 
         _moduleCount = _modules.Count(m => m.IsActive);
         _channelCount = _channels.Count;
@@ -261,12 +267,13 @@
 
         if (allKeywords.Any())
         {
-            _recentEvents = await Db.Set<NewsEvent>()
+            _recentEvents = await ctx.Set<NewsEvent>()
                 .Include(e => e.Section)
                 .Where(e => e.IsActive)
                 .OrderByDescending(e => e.CreatedAt)
                 .Take(20)
-                .ToListAsync();
+                .AsNoTracking()
+                .ToListAsync(_cts.Token);
 
             // Filter by keyword relevance (simple contains check)
             _recentEvents = _recentEvents
@@ -279,14 +286,17 @@
 
         if (!_recentEvents.Any())
         {
-            _recentEvents = await Db.Set<NewsEvent>()
+            _recentEvents = await ctx.Set<NewsEvent>()
                 .Include(e => e.Section)
                 .Where(e => e.IsActive)
                 .OrderByDescending(e => e.ImpactScore)
                 .Take(5)
-                .ToListAsync();
+                .AsNoTracking()
+                .ToListAsync(_cts.Token);
         }
     }
+
+    public void Dispose() { _cts.Cancel(); _cts.Dispose(); }
 
     private string GetChannelIcon(ANews.Domain.Enums.NotificationChannelType type) => type switch
     {
