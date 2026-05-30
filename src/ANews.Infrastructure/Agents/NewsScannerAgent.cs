@@ -36,8 +36,22 @@ public class NewsScannerAgent : BaseAgent
 
         var httpFactory = services.GetRequiredService<IHttpClientFactory>();
 
-        foreach (var source in sources)
+        // Group by domain to throttle requests per site
+        var byDomain = sources.GroupBy(s =>
         {
+            try { return new Uri(s.Url).Host.ToLowerInvariant(); }
+            catch { return "unknown"; }
+        }).ToDictionary(g => g.Key, g => g.ToList());
+
+        var allSourcesOrdered = byDomain.Values
+            .SelectMany(g => g.Select((s, i) => (Source: s, DomainIndex: i)))
+            .OrderBy(x => x.DomainIndex) // Interleave domains to avoid hammering same site
+            .ThenBy(x => x.Source.Name)
+            .Select(x => x.Source);
+
+        foreach (var source in allSourcesOrdered)
+        {
+            if (ct.IsCancellationRequested) break;
             try
             {
                 int newArticles = source.Type switch
@@ -51,6 +65,7 @@ public class NewsScannerAgent : BaseAgent
                 source.LastScannedAt = DateTime.UtcNow;
                 source.SuccessfulScans++;
                 source.TotalArticlesFound += newArticles;
+                source.LastError = null; // Clear error on success
                 await LogAsync(ctx, execution, AgentLogLevel.Info, $"[{source.Name}] {newArticles} articulos nuevos");
             }
             catch (Exception ex)
@@ -62,6 +77,9 @@ public class NewsScannerAgent : BaseAgent
             }
 
             await ctx.SaveChangesAsync(ct);
+
+            // Small delay to avoid rate limiting (429)
+            await Task.Delay(200, ct);
         }
 
         execution.ItemsProcessed = sources.Count;
@@ -296,26 +314,38 @@ public class NewsScannerAgent : BaseAgent
         var doc = new HtmlAgilityPack.HtmlDocument();
         doc.LoadHtml(html);
 
-        // Extract base URL for resolving relative links
         Uri baseUri = new Uri(source.Url);
-
-        // Strategy: find article links in common news site patterns
-        // Look for links inside <article>, <h1>-<h3>, or common CSS class patterns
         var candidateNodes = new List<HtmlAgilityPack.HtmlNode>();
 
-        // 1. Links inside <article> tags
-        var articles = doc.DocumentNode.SelectNodes("//article//a[@href]");
-        if (articles != null) candidateNodes.AddRange(articles);
+        // XPath selectors from most specific to broadest
+        string[] selectors =
+        [
+            "//article//a[@href]",
+            "//h1/a[@href] | //h2/a[@href] | //h3/a[@href] | //h4/a[@href]",
+            "//a[@href][contains(@class,'title') or contains(@class,'headline') or contains(@class,'noticia') or contains(@class,'article') or contains(@class,'news') or contains(@class,'entry') or contains(@class,'story') or contains(@class,'link') or contains(@class,'enlace') or contains(@class,'titular')]",
+            // Parent containers with news-related classes
+            "//*[contains(@class,'article') or contains(@class,'noticia') or contains(@class,'story') or contains(@class,'card') or contains(@class,'item') or contains(@class,'post') or contains(@class,'teaser')]//a[@href]",
+            // Links inside <li> within <ul>/<ol> (common in RSS-like pages and sidebars)
+            "//main//li/a[@href] | //section//li/a[@href]",
+            // data-* attributes used by modern sites
+            "//a[@href][@data-title or @data-headline or @data-article-id]",
+            // Links with long visible text (likely article titles)
+            "//a[@href][string-length(normalize-space()) > 25]",
+        ];
 
-        // 2. Links inside heading tags (h1, h2, h3)
-        var headingLinks = doc.DocumentNode.SelectNodes("//h1/a[@href] | //h2/a[@href] | //h3/a[@href]");
-        if (headingLinks != null) candidateNodes.AddRange(headingLinks);
+        foreach (string selector in selectors)
+        {
+            try
+            {
+                var nodes = doc.DocumentNode.SelectNodes(selector);
+                if (nodes != null) candidateNodes.AddRange(nodes);
+            }
+            catch { /* XPath syntax error — skip */ }
 
-        // 3. Links with common news class/attribute patterns
-        var classLinks = doc.DocumentNode.SelectNodes("//a[@href][contains(@class,'title') or contains(@class,'headline') or contains(@class,'noticia') or contains(@class,'article') or contains(@class,'news') or contains(@class,'entry')]");
-        if (classLinks != null) candidateNodes.AddRange(classLinks);
+            // If we already have enough candidates, don't use broader selectors
+            if (candidateNodes.Count >= 20) break;
+        }
 
-        // Deduplicate by href
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var extractedLinks = new List<(string Url, string Title)>();
 
@@ -326,25 +356,27 @@ public class NewsScannerAgent : BaseAgent
 
             // Resolve relative URLs
             if (!Uri.TryCreate(baseUri, href, out Uri? fullUri)) continue;
-            string fullUrl = fullUri.AbsoluteUri;
+            string fullUrl = fullUri.GetLeftPart(UriPartial.Query); // Strip fragments
 
-            // Skip non-article links (home, categories, tags, images, etc.)
-            if (fullUrl.Contains("#") || fullUrl.EndsWith("/") && fullUrl.Count(c => c == '/') <= 3) continue;
-            if (fullUrl.Contains("/tag/") || fullUrl.Contains("/categoria/") || fullUrl.Contains("/category/")) continue;
-            if (fullUrl.Contains("/author/") || fullUrl.Contains("/autor/")) continue;
-            if (fullUrl.EndsWith(".jpg") || fullUrl.EndsWith(".png") || fullUrl.EndsWith(".gif")) continue;
+            // Skip navigation/utility links
+            string path = fullUri.AbsolutePath.ToLowerInvariant();
+            if (path.Length < 5) continue;
+            if (path is "/" or "/index.html" or "/index.php") continue;
+            if (path.Contains("/tag/") || path.Contains("/tags/")) continue;
+            if (path.Contains("/categoria/") || path.Contains("/category/") || path.Contains("/categorias/")) continue;
+            if (path.Contains("/author/") || path.Contains("/autor/") || path.Contains("/autores/")) continue;
+            if (path.Contains("/login") || path.Contains("/register") || path.Contains("/search")) continue;
+            if (path.Contains("/page/") || path.Contains("/pagina/")) continue;
+            if (path.EndsWith(".jpg") || path.EndsWith(".png") || path.EndsWith(".gif") || path.EndsWith(".css") || path.EndsWith(".js")) continue;
 
-            // Must be same domain
-            if (fullUri.Host != baseUri.Host) continue;
-
-            // Must have a path longer than just /
-            if (fullUri.AbsolutePath.Length < 5) continue;
+            // Must be same domain or subdomain
+            if (!fullUri.Host.EndsWith(baseUri.Host) && !baseUri.Host.EndsWith(fullUri.Host)) continue;
 
             if (!seen.Add(fullUrl)) continue;
 
             string title = node.InnerText.Trim();
-            // Skip if title is too short (probably not an article)
-            if (title.Length < 10) continue;
+            title = Regex.Replace(title, @"\s+", " "); // Normalize whitespace
+            if (title.Length < 15 || title.Length > 500) continue; // Too short = nav link, too long = scraped block
 
             extractedLinks.Add((fullUrl, title));
         }
