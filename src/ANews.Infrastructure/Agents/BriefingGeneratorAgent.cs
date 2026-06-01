@@ -38,17 +38,21 @@ public class BriefingGeneratorAgent : BaseAgent
         // Phase 1: Generate contextual briefings for high-impact events without one
         int briefingsCreated = await GenerateEventBriefingsAsync(ctx, aiProvider, execution, ct);
 
-        // Phase 2: Generate morning brief if none exists for today
+        // Phase 2: Generate morning brief (global) if none exists for today
         bool morningBriefCreated = await GenerateMorningBriefAsync(ctx, aiProvider, execution, ct);
+
+        // Phase 2b: Generate regional morning briefs
+        int regionalBriefs = await GenerateRegionalBriefsAsync(ctx, aiProvider, execution, ct);
 
         // Phase 3: Generate thread summaries for active story threads
         int threadSummaries = await UpdateStoryThreadSummariesAsync(ctx, aiProvider, execution, ct);
 
-        execution.ItemsProcessed = briefingsCreated + (morningBriefCreated ? 1 : 0) + threadSummaries;
+        execution.ItemsProcessed = briefingsCreated + (morningBriefCreated ? 1 : 0) + regionalBriefs + threadSummaries;
         execution.ItemsCreated = briefingsCreated;
         await LogAsync(ctx, execution, AgentLogLevel.Info,
             $"Generados: {briefingsCreated} briefings de evento, " +
-            $"{(morningBriefCreated ? "1 morning brief" : "morning brief ya existía")}, " +
+            $"{(morningBriefCreated ? "1 morning brief global" : "morning brief global ya existía")}, " +
+            $"{regionalBriefs} briefs regionales, " +
             $"{threadSummaries} resúmenes de hilo narrativo");
     }
 
@@ -248,6 +252,160 @@ public class BriefingGeneratorAgent : BaseAgent
             _logger.LogWarning(ex, "[BriefingGenerator] Error parsing morning brief");
             return false;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  Phase 2b: Regional morning briefs
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private static readonly Dictionary<string, (string DisplayName, string[] Keywords)> Regions = new()
+    {
+        ["espana"] = ("España", new[] { "españa", "spain", "madrid", "barcelona", "sevilla", "valencia", "bilbao", "málaga", "zaragoza", "murcia", "palma", "canarias", "galicia", "cataluña", "andalucía", "país vasco", "castilla", "aragón", "asturias", "cantabria", "navarra", "extremadura", "baleares", "la rioja", "ceuta", "melilla", "gobierno español", "congreso de los diputados", "moncloa", "tribunal supremo", "tribunal constitucional" }),
+        ["latam"] = ("Latinoamérica", new[] { "venezuela", "colombia", "méxico", "mexico", "brasil", "brazil", "argentina", "chile", "perú", "peru", "ecuador", "bolivia", "paraguay", "uruguay", "cuba", "panamá", "panama", "costa rica", "guatemala", "honduras", "el salvador", "nicaragua", "república dominicana", "puerto rico", "latinoamérica", "centroamérica", "sudamérica", "caribe", "caracas", "bogotá", "ciudad de méxico", "buenos aires", "santiago", "lima", "quito", "la paz", "asunción", "montevideo", "la habana", "mercosur", "oea" }),
+        ["europa"] = ("Europa", new[] { "europa", "europe", "unión europea", "bruselas", "estrasburgo", "francia", "france", "alemania", "germany", "italia", "italy", "portugal", "reino unido", "united kingdom", "londres", "london", "berlín", "berlin", "parís", "paris", "roma", "rome", "países bajos", "bélgica", "austria", "suiza", "grecia", "polonia", "rumanía", "hungría", "república checa", "suecia", "noruega", "dinamarca", "finlandia", "irlanda", "ucrania", "ukraine", "kiev", "kyiv", "moscú", "moscow", "rusia", "russia", "otan", "nato", "comisión europea", "parlamento europeo", "eurozona" }),
+        ["norteamerica"] = ("Norteamérica", new[] { "estados unidos", "united states", "usa", "eeuu", "ee.uu.", "washington", "new york", "nueva york", "california", "texas", "florida", "casa blanca", "white house", "congreso", "senado", "pentágono", "pentagon", "wall street", "silicon valley", "fbi", "cia", "canadá", "canada", "ottawa", "toronto" }),
+        ["orientemedio"] = ("Oriente Medio", new[] { "oriente medio", "middle east", "israel", "palestina", "palestine", "gaza", "cisjordania", "irán", "iran", "irak", "iraq", "siria", "syria", "líbano", "lebanon", "jordania", "jordan", "arabia saudí", "saudi", "emiratos", "qatar", "kuwait", "bahréin", "omán", "yemen", "turquía", "turkey", "estambul", "istanbul", "ankara", "jerusalén", "jerusalem", "tel aviv", "teherán", "tehran", "bagdad", "baghdad", "damasco", "damascus", "beirut", "hamas", "hezbollah", "hizbulá" }),
+        ["asia"] = ("Asia-Pacífico", new[] { "china", "japón", "japan", "corea", "korea", "india", "taiwán", "taiwan", "filipinas", "philippines", "indonesia", "vietnam", "tailandia", "thailand", "singapur", "singapore", "malasia", "malaysia", "australia", "nueva zelanda", "pekín", "beijing", "tokio", "tokyo", "seúl", "seoul", "nueva delhi", "new delhi", "hong kong", "shanghái", "shanghai", "asia", "pacífico", "pacific", "asean" }),
+        ["africa"] = ("África", new[] { "áfrica", "africa", "nigeria", "sudáfrica", "south africa", "egipto", "egypt", "kenia", "kenya", "etiopía", "ethiopia", "ghana", "marruecos", "morocco", "argelia", "algeria", "túnez", "tunisia", "libia", "libya", "congo", "camerún", "senegal", "mozambique", "angola", "nairobi", "el cairo", "cairo", "johannesburgo", "johannesburg", "unión africana" })
+    };
+
+    private async Task<int> GenerateRegionalBriefsAsync(
+        AppDbContext ctx, IAiProvider ai, AgentExecution execution, CancellationToken ct)
+    {
+        var today = DateTime.UtcNow.Date;
+        var since = DateTime.UtcNow.AddHours(-24);
+
+        // Load all detected events from last 24h with location
+        var allEvents = await ctx.NewsEvents
+            .Include(e => e.Section)
+            .Where(e => e.IsActive && e.EventType == "Detected" && e.CreatedAt >= since)
+            .OrderByDescending(e => e.ImpactScore)
+            .ToListAsync(ct);
+
+        // Check which regional briefs already exist for today
+        var existingRegions = await ctx.MorningBriefs
+            .Where(m => m.BriefDate == today && m.Region != null)
+            .Select(m => m.Region)
+            .ToListAsync(ct);
+
+        int created = 0;
+
+        foreach (var (regionKey, (displayName, keywords)) in Regions)
+        {
+            if (ct.IsCancellationRequested) break;
+            if (existingRegions.Contains(regionKey)) continue;
+
+            // Match events to this region by Location, Title or Description
+            var regionEvents = allEvents.Where(e => MatchesRegion(e, keywords)).ToList();
+
+            // Need at least 3 events for a meaningful regional brief
+            if (regionEvents.Count < 3) continue;
+
+            try
+            {
+                bool briefCreated = await GenerateRegionalBriefAsync(ctx, ai, execution, regionKey, displayName, regionEvents, today, ct);
+                if (briefCreated) created++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[BriefingGenerator] Error generando brief regional {Region}", regionKey);
+            }
+        }
+
+        return created;
+    }
+
+    private static bool MatchesRegion(NewsEvent ev, string[] keywords)
+    {
+        string searchText = $"{ev.Location} {ev.Title} {ev.Description}".ToLowerInvariant();
+        return keywords.Any(k => searchText.Contains(k));
+    }
+
+    private async Task<bool> GenerateRegionalBriefAsync(
+        AppDbContext ctx, IAiProvider ai, AgentExecution execution,
+        string regionKey, string displayName, List<NewsEvent> events,
+        DateTime today, CancellationToken ct)
+    {
+        var devThreads = await ctx.StoryThreads
+            .Where(t => (t.Status == StoryStatus.Developing || t.Status == StoryStatus.Active))
+            .OrderByDescending(t => t.MaxImpactScore)
+            .Take(10)
+            .ToListAsync(ct);
+
+        // Filter threads that mention this region
+        var regionThreads = devThreads
+            .Where(t => MatchesRegionText($"{t.Title} {t.Summary}", Regions[regionKey].Keywords))
+            .Take(3)
+            .ToList();
+
+        var eventList = string.Join("\n", events.Take(20).Select((e, i) =>
+            $"{i + 1}. [{e.Section?.Name}] {e.Title} | Impacto:{e.ImpactScore:F0} | Ubicación:{e.Location} | {Truncate(e.Description ?? "", 100)}"));
+
+        var threadList = regionThreads.Count > 0
+            ? string.Join("\n", regionThreads.Select(t => $"- {t.Title} ({t.EventCount} eventos, status: {t.Status})"))
+            : "(sin hilos activos en la región)";
+
+        var prompt =
+            $"Eres el editor jefe de AgenteNews. Prepara el BRIEFING REGIONAL de {displayName} del día.\n" +
+            $"Este briefing se centra EXCLUSIVAMENTE en eventos de {displayName}.\n" +
+            "Debe ser editorial, conciso y útil.\n\n" +
+            $"EVENTOS DE {displayName.ToUpperInvariant()} EN LAS ÚLTIMAS 24H:\n{eventList}\n\n" +
+            $"HILOS NARRATIVOS EN {displayName.ToUpperInvariant()}:\n{threadList}\n\n" +
+            "Genera el briefing regional con esta estructura:\n" +
+            $"1. TITULAR: una frase que resuma qué pasa hoy en {displayName}\n" +
+            "2. TOP 3 HISTORIAS: las 3 cosas que debes saber de esta región hoy (2-3 frases cada una)\n" +
+            "3. HISTORIA PROFUNDA: 1 tema regional para entender a fondo hoy (4-5 frases)\n" +
+            "4. EN DESARROLLO: 1-2 situaciones activas regionales que vigilar (2 frases cada una)\n" +
+            "5. SORPRESA: 1 noticia regional inesperada o poco cubierta (2 frases)\n\n" +
+            "Todo en español, tono profesional pero accesible. NO uses bullet points genéricos.\n" +
+            $"Escribe con conocimiento profundo de {displayName}.\n\n" +
+            "Responde en JSON:\n" +
+            "{\"headline\": \"...\",\n" +
+            " \"top_stories\": \"Historia 1: ...\\n\\nHistoria 2: ...\\n\\nHistoria 3: ...\",\n" +
+            " \"deep_dive\": \"...\",\n" +
+            " \"developing\": \"...\",\n" +
+            " \"surprise\": \"...\"}";
+
+        var response = await ai.CompleteAsync(new AiRequest
+        {
+            SystemPrompt = $"Eres el editor jefe regional de {displayName} en una agencia de noticias IA. Escribe briefings editoriales centrados en esta región. Responde SOLO con JSON válido.",
+            UserPrompt = prompt,
+            MaxTokens = 1500,
+            Temperature = 0.4,
+            OperationTag = "regional_brief"
+        }, ct);
+
+        if (!response.Success) return false;
+        TrackCostFromResponse(ctx, execution, response);
+
+        var json = ExtractJson(response.Content);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var brief = new MorningBrief
+        {
+            BriefDate = today,
+            Region = regionKey,
+            Headline = root.GetProperty("headline").GetString() ?? $"Briefing {displayName}",
+            TopStories = root.GetProperty("top_stories").GetString() ?? "",
+            DeepDive = root.TryGetProperty("deep_dive", out var dd) ? dd.GetString() : null,
+            Developing = root.TryGetProperty("developing", out var dev) ? dev.GetString() : null,
+            Surprise = root.TryGetProperty("surprise", out var sur) ? sur.GetString() : null,
+            TopStoriesCount = 3,
+            TotalEventsAnalyzed = events.Count,
+            GeneratedAt = DateTime.UtcNow
+        };
+        ctx.MorningBriefs.Add(brief);
+        await ctx.SaveChangesAsync(ct);
+
+        await LogAsync(ctx, execution, AgentLogLevel.Info, $"Brief regional [{displayName}]: {brief.Headline}");
+        return true;
+    }
+
+    private static bool MatchesRegionText(string text, string[] keywords)
+    {
+        string lower = text.ToLowerInvariant();
+        return keywords.Any(k => lower.Contains(k));
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

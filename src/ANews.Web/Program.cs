@@ -124,9 +124,18 @@ builder.Services.AddHttpClient("nominatim", c =>
 });
 builder.Services.AddHttpClient("rss", c =>
 {
-    c.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-    c.DefaultRequestHeaders.Add("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*");
+    c.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+    c.DefaultRequestHeaders.Add("Accept", "text/html, application/rss+xml, application/atom+xml, application/xml, text/xml, application/json, */*");
+    c.DefaultRequestHeaders.Add("Accept-Language", "es-ES,es;q=0.9,en;q=0.8");
+    c.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate");
     c.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate,
+    UseCookies = true,
+    CookieContainer = new System.Net.CookieContainer()
 });
 
 // Controllers (para API REST publica)

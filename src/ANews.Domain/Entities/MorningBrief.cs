@@ -3,6 +3,7 @@ namespace ANews.Domain.Entities;
 public class MorningBrief : BaseEntity
 {
     public DateTime BriefDate { get; set; } = DateTime.UtcNow.Date;
+    public string? Region { get; set; } // null = global, "espana", "latam", "europa", "norteamerica", "orientemedio", "asia", "africa"
     public required string Headline { get; set; }
     public required string TopStories { get; set; }
     public string? DeepDive { get; set; }

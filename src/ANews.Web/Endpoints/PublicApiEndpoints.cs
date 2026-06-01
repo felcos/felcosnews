@@ -225,10 +225,10 @@ public static class PublicApiEndpoints
             return Results.Json(new { Data = threads });
         }).AllowAnonymous().RequireRateLimiting("api");
 
-        app.MapGet("/api/v1/morning-brief", async (AppDbContext ctx) =>
+        app.MapGet("/api/v1/morning-brief", async (string? region, AppDbContext ctx) =>
         {
             var brief = await ctx.MorningBriefs
-                .Where(b => !b.IsDeleted)
+                .Where(b => !b.IsDeleted && b.Region == region) // null = global
                 .OrderByDescending(b => b.BriefDate)
                 .FirstOrDefaultAsync();
 
@@ -237,9 +237,25 @@ public static class PublicApiEndpoints
 
             return Results.Json(new
             {
-                brief.Id, brief.BriefDate, brief.Headline, brief.TopStories,
+                brief.Id, brief.BriefDate, brief.Region, brief.Headline, brief.TopStories,
                 brief.DeepDive, brief.Developing, brief.Surprise, brief.GeneratedAt
             });
+        }).AllowAnonymous().RequireRateLimiting("api");
+
+        app.MapGet("/api/v1/morning-briefs", async (AppDbContext ctx) =>
+        {
+            var today = DateTime.UtcNow.Date;
+            var briefs = await ctx.MorningBriefs
+                .Where(b => !b.IsDeleted && b.BriefDate == today)
+                .OrderBy(b => b.Region == null ? "" : b.Region) // Global first
+                .Select(b => new
+                {
+                    b.Id, b.BriefDate, b.Region, b.Headline,
+                    b.TopStoriesCount, b.TotalEventsAnalyzed, b.GeneratedAt
+                })
+                .ToListAsync();
+
+            return Results.Json(new { Data = briefs });
         }).AllowAnonymous().RequireRateLimiting("api");
 
         app.MapGet("/api/v1/events/{id}/briefing", async (int id, AppDbContext ctx) =>

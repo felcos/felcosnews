@@ -162,7 +162,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<int>
 
         builder.Entity<MorningBrief>(e =>
         {
-            e.HasIndex(m => m.BriefDate).IsUnique();
+            e.HasIndex(m => new { m.BriefDate, m.Region }).IsUnique();
         });
 
         builder.Entity<NewsSource>(e =>

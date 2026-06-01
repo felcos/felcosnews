@@ -67,7 +67,7 @@ public class AiProviderFactory
         {
             AiProviderType.Claude => new ClaudeProvider(apiKey, model, _logger),
             AiProviderType.OpenAI => new OpenAiProvider(apiKey, model, _logger),
-            AiProviderType.Kimi => new KimiProvider(apiKey, model, baseUrl ?? "https://api.moonshot.cn/v1", _logger),
+            AiProviderType.Kimi => new KimiProvider(apiKey, model, baseUrl ?? "https://api.moonshot.ai/v1", _logger),
             AiProviderType.Gemini => new GeminiProvider(apiKey, model, _logger),
             AiProviderType.Groq => new OpenAiProvider(apiKey, model, _logger, "https://api.groq.com/openai/v1"),
             AiProviderType.Custom => new OpenAiProvider(apiKey, model, _logger, baseUrl),
