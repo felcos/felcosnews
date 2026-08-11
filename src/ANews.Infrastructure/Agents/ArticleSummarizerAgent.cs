@@ -14,7 +14,7 @@ public class ArticleSummarizerAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.ArticleSummarizer;
     protected override string AgentName => "ArticleSummarizerAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromMinutes(45);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(6);
 
     public ArticleSummarizerAgent(IServiceProvider services, ILogger<ArticleSummarizerAgent> logger)
         : base(services, logger) { }

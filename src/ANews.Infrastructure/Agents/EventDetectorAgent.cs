@@ -15,7 +15,7 @@ public class EventDetectorAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.EventDetector;
     protected override string AgentName => "EventDetectorAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(2);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(8);
 
     public EventDetectorAgent(IServiceProvider services, ILogger<EventDetectorAgent> logger)
         : base(services, logger) { }

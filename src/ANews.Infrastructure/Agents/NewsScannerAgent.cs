@@ -16,7 +16,7 @@ public class NewsScannerAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.NewsScanner;
     protected override string AgentName => "NewsScannerAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(1);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(6);
 
     public NewsScannerAgent(IServiceProvider services, ILogger<NewsScannerAgent> logger)
         : base(services, logger) { }

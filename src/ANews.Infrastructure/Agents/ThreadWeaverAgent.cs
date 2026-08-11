@@ -14,7 +14,7 @@ public class ThreadWeaverAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.ThreadWeaver;
     protected override string AgentName => "ThreadWeaverAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(3);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(12);
 
     public ThreadWeaverAgent(IServiceProvider services, ILogger<ThreadWeaverAgent> logger)
         : base(services, logger) { }

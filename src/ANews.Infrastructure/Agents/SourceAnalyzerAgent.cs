@@ -14,7 +14,7 @@ public class SourceAnalyzerAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.SourceAnalyzer;
     protected override string AgentName => "SourceAnalyzerAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(12);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromDays(3);
 
     public SourceAnalyzerAgent(IServiceProvider services, ILogger<SourceAnalyzerAgent> logger)
         : base(services, logger) { }

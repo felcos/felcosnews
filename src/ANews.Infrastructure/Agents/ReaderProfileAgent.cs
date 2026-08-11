@@ -14,7 +14,7 @@ public class ReaderProfileAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.ReaderProfileAnalyzer;
     protected override string AgentName => "ReaderProfileAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(6);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(24);
 
     public ReaderProfileAgent(IServiceProvider services, ILogger<ReaderProfileAgent> logger)
         : base(services, logger) { }

@@ -15,7 +15,7 @@ public class TelegramEditorialAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.TelegramEditorial;
     protected override string AgentName => "TelegramEditorialAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromMinutes(30);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(4);
 
     private readonly ITelegramBotClient? _bot;
     private readonly string? _channelId;

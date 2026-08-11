@@ -19,7 +19,7 @@ public class ModuleReportAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.ModuleReportGenerator;
     protected override string AgentName => "ModuleReportAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(6);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(24);
 
     public ModuleReportAgent(IServiceProvider services, ILogger<ModuleReportAgent> logger)
         : base(services, logger) { }

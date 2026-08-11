@@ -19,7 +19,7 @@ public class TranslatorAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.Translator;
     protected override string AgentName => "TranslatorAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(1);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(6);
 
     public TranslatorAgent(IServiceProvider services, ILogger<TranslatorAgent> logger)
         : base(services, logger) { }

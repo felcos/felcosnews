@@ -14,7 +14,7 @@ public class BriefingGeneratorAgent : BaseAgent
 {
     protected override AgentType AgentType => AgentType.BriefingGenerator;
     protected override string AgentName => "BriefingGeneratorAgent";
-    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(4);
+    protected override TimeSpan DefaultInterval => TimeSpan.FromHours(12);
 
     public BriefingGeneratorAgent(IServiceProvider services, ILogger<BriefingGeneratorAgent> logger)
         : base(services, logger) { }

@@ -78,6 +78,7 @@ public static class DependencyInjection
         services.AddSingleton<ReaderProfileAgent>();
         services.AddSingleton<ModuleReportAgent>();
         services.AddSingleton<TranslatorAgent>();
+        services.AddSingleton<DatabaseCleanupAgent>();
         services.AddHostedService(sp => sp.GetRequiredService<NewsScannerAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<EventDetectorAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<AlertGeneratorAgent>());
@@ -92,6 +93,7 @@ public static class DependencyInjection
         services.AddHostedService(sp => sp.GetRequiredService<ReaderProfileAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<ModuleReportAgent>());
         services.AddHostedService(sp => sp.GetRequiredService<TranslatorAgent>());
+        services.AddHostedService(sp => sp.GetRequiredService<DatabaseCleanupAgent>());
 
         return services;
     }
